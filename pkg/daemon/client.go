@@ -153,6 +153,329 @@ func (c *Client) IsValidPath(path string) <-chan Result[bool] {
 	return ch
 }
 
+// QueryPathInfo retrieves the metadata for the given store path. If the path
+// is not found in the store, the result Value is nil with no error.
+func (c *Client) QueryPathInfo(path string) <-chan Result[*PathInfo] {
+	ch := make(chan Result[*PathInfo], 1)
+
+	go func() {
+		var info *PathInfo
+
+		err := c.doOp(OpQueryPathInfo,
+			func(w io.Writer) error {
+				return wire.WriteString(w, path)
+			},
+			func(r io.Reader) error {
+				found, err := wire.ReadBool(r)
+				if err != nil {
+					return err
+				}
+
+				if !found {
+					return nil
+				}
+
+				info, err = ReadPathInfo(r, path)
+
+				return err
+			},
+		)
+
+		ch <- Result[*PathInfo]{Value: info, Err: err}
+	}()
+
+	return ch
+}
+
+// QueryPathFromHashPart looks up a store path by its hash part. If nothing
+// is found, the result Value is an empty string with no error.
+func (c *Client) QueryPathFromHashPart(hashPart string) <-chan Result[string] {
+	ch := make(chan Result[string], 1)
+
+	go func() {
+		var storePath string
+
+		err := c.doOp(OpQueryPathFromHashPart,
+			func(w io.Writer) error {
+				return wire.WriteString(w, hashPart)
+			},
+			func(r io.Reader) error {
+				s, err := wire.ReadString(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				storePath = s
+
+				return nil
+			},
+		)
+
+		ch <- Result[string]{Value: storePath, Err: err}
+	}()
+
+	return ch
+}
+
+// QueryAllValidPaths returns all valid store paths known to the daemon.
+func (c *Client) QueryAllValidPaths() <-chan Result[[]string] {
+	ch := make(chan Result[[]string], 1)
+
+	go func() {
+		var paths []string
+
+		err := c.doOp(OpQueryAllValidPaths,
+			nil,
+			func(r io.Reader) error {
+				ss, err := ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				paths = ss
+
+				return nil
+			},
+		)
+
+		ch <- Result[[]string]{Value: paths, Err: err}
+	}()
+
+	return ch
+}
+
+// QueryValidPaths returns the subset of the given paths that are valid. If
+// substituteOk is true, the daemon may attempt to substitute missing paths.
+func (c *Client) QueryValidPaths(paths []string, substituteOk bool) <-chan Result[[]string] {
+	ch := make(chan Result[[]string], 1)
+
+	go func() {
+		var valid []string
+
+		err := c.doOp(OpQueryValidPaths,
+			func(w io.Writer) error {
+				if err := WriteStrings(w, paths); err != nil {
+					return err
+				}
+
+				return wire.WriteBool(w, substituteOk)
+			},
+			func(r io.Reader) error {
+				ss, err := ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				valid = ss
+
+				return nil
+			},
+		)
+
+		ch <- Result[[]string]{Value: valid, Err: err}
+	}()
+
+	return ch
+}
+
+// QuerySubstitutablePaths returns the subset of the given paths that can be
+// substituted from a binary cache or other substitute source.
+func (c *Client) QuerySubstitutablePaths(paths []string) <-chan Result[[]string] {
+	ch := make(chan Result[[]string], 1)
+
+	go func() {
+		var substitutable []string
+
+		err := c.doOp(OpQuerySubstitutablePaths,
+			func(w io.Writer) error {
+				return WriteStrings(w, paths)
+			},
+			func(r io.Reader) error {
+				ss, err := ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				substitutable = ss
+
+				return nil
+			},
+		)
+
+		ch <- Result[[]string]{Value: substitutable, Err: err}
+	}()
+
+	return ch
+}
+
+// QueryValidDerivers returns the derivations known to have produced the given
+// store path.
+func (c *Client) QueryValidDerivers(path string) <-chan Result[[]string] {
+	ch := make(chan Result[[]string], 1)
+
+	go func() {
+		var derivers []string
+
+		err := c.doOp(OpQueryValidDerivers,
+			func(w io.Writer) error {
+				return wire.WriteString(w, path)
+			},
+			func(r io.Reader) error {
+				ss, err := ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				derivers = ss
+
+				return nil
+			},
+		)
+
+		ch <- Result[[]string]{Value: derivers, Err: err}
+	}()
+
+	return ch
+}
+
+// QueryReferrers returns the set of store paths that reference (depend on)
+// the given path.
+func (c *Client) QueryReferrers(path string) <-chan Result[[]string] {
+	ch := make(chan Result[[]string], 1)
+
+	go func() {
+		var referrers []string
+
+		err := c.doOp(OpQueryReferrers,
+			func(w io.Writer) error {
+				return wire.WriteString(w, path)
+			},
+			func(r io.Reader) error {
+				ss, err := ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				referrers = ss
+
+				return nil
+			},
+		)
+
+		ch <- Result[[]string]{Value: referrers, Err: err}
+	}()
+
+	return ch
+}
+
+// QueryDerivationOutputMap returns a map from output names to store paths
+// for the given derivation.
+func (c *Client) QueryDerivationOutputMap(drvPath string) <-chan Result[map[string]string] {
+	ch := make(chan Result[map[string]string], 1)
+
+	go func() {
+		var outputs map[string]string
+
+		err := c.doOp(OpQueryDerivationOutputMap,
+			func(w io.Writer) error {
+				return wire.WriteString(w, drvPath)
+			},
+			func(r io.Reader) error {
+				m, err := ReadStringMap(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				outputs = m
+
+				return nil
+			},
+		)
+
+		ch <- Result[map[string]string]{Value: outputs, Err: err}
+	}()
+
+	return ch
+}
+
+// QueryMissing determines which of the given paths need to be built,
+// substituted, or are unknown. It also reports the expected download and
+// unpacked NAR sizes.
+func (c *Client) QueryMissing(paths []string) <-chan Result[*MissingInfo] {
+	ch := make(chan Result[*MissingInfo], 1)
+
+	go func() {
+		var info MissingInfo
+
+		err := c.doOp(OpQueryMissing,
+			func(w io.Writer) error {
+				return WriteStrings(w, paths)
+			},
+			func(r io.Reader) error {
+				var err error
+
+				info.WillBuild, err = ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				info.WillSubstitute, err = ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				info.Unknown, err = ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				info.DownloadSize, err = wire.ReadUint64(r)
+				if err != nil {
+					return err
+				}
+
+				info.NarSize, err = wire.ReadUint64(r)
+
+				return err
+			},
+		)
+
+		ch <- Result[*MissingInfo]{Value: &info, Err: err}
+	}()
+
+	return ch
+}
+
+// QueryRealisation looks up content-addressed realisations for the given
+// output identifier.
+func (c *Client) QueryRealisation(outputID string) <-chan Result[[]string] {
+	ch := make(chan Result[[]string], 1)
+
+	go func() {
+		var realisations []string
+
+		err := c.doOp(OpQueryRealisation,
+			func(w io.Writer) error {
+				return wire.WriteString(w, outputID)
+			},
+			func(r io.Reader) error {
+				ss, err := ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				realisations = ss
+
+				return nil
+			},
+		)
+
+		ch <- Result[[]string]{Value: realisations, Err: err}
+	}()
+
+	return ch
+}
+
 // newClient creates a Client from an existing connection, applies options,
 // and performs the handshake.
 func newClient(conn net.Conn, opts ...ConnectOption) (*Client, error) {
