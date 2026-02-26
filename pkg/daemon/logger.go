@@ -7,9 +7,9 @@ import (
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
-// maxStringSize is the maximum size in bytes for strings read from the daemon
-// stderr channel. This guards against malformed or malicious payloads.
-const maxStringSize = 64 * 1024 * 1024 // 64 MiB
+// MaxStringSize is the maximum size in bytes for strings read from the daemon
+// protocol. This guards against malformed or malicious payloads.
+const MaxStringSize = 64 * 1024 * 1024 // 64 MiB
 
 // ProcessStderr reads and dispatches log/activity messages from the daemon's
 // stderr channel. The daemon interleaves these messages before the actual
@@ -36,7 +36,7 @@ func ProcessStderr(r io.Reader, logs chan<- LogMessage) error {
 			return readDaemonError(r)
 
 		case LogNext:
-			text, err := wire.ReadString(r, maxStringSize)
+			text, err := wire.ReadString(r, MaxStringSize)
 			if err != nil {
 				return &ProtocolError{Op: "read LogNext text", Err: err}
 			}
@@ -92,7 +92,7 @@ func ProcessStderr(r io.Reader, logs chan<- LogMessage) error {
 
 // readDaemonError parses a DaemonError from the daemon's stderr channel.
 func readDaemonError(r io.Reader) error {
-	errType, err := wire.ReadString(r, maxStringSize)
+	errType, err := wire.ReadString(r, MaxStringSize)
 	if err != nil {
 		return &ProtocolError{Op: "read error type", Err: err}
 	}
@@ -102,12 +102,12 @@ func readDaemonError(r io.Reader) error {
 		return &ProtocolError{Op: "read error level", Err: err}
 	}
 
-	name, err := wire.ReadString(r, maxStringSize)
+	name, err := wire.ReadString(r, MaxStringSize)
 	if err != nil {
 		return &ProtocolError{Op: "read error name", Err: err}
 	}
 
-	message, err := wire.ReadString(r, maxStringSize)
+	message, err := wire.ReadString(r, MaxStringSize)
 	if err != nil {
 		return &ProtocolError{Op: "read error message", Err: err}
 	}
@@ -129,7 +129,7 @@ func readDaemonError(r io.Reader) error {
 			return &ProtocolError{Op: "read trace havePos", Err: err}
 		}
 
-		traceMsg, err := wire.ReadString(r, maxStringSize)
+		traceMsg, err := wire.ReadString(r, MaxStringSize)
 		if err != nil {
 			return &ProtocolError{Op: "read trace message", Err: err}
 		}
@@ -166,7 +166,7 @@ func readActivity(r io.Reader) (*Activity, error) {
 		return nil, &ProtocolError{Op: "read activity type", Err: err}
 	}
 
-	text, err := wire.ReadString(r, maxStringSize)
+	text, err := wire.ReadString(r, MaxStringSize)
 	if err != nil {
 		return nil, &ProtocolError{Op: "read activity text", Err: err}
 	}
@@ -246,7 +246,7 @@ func readFields(r io.Reader, count uint64) ([]LogField, error) {
 			fields[i] = LogField{Int: v, IsInt: true}
 
 		case 1: // string field
-			s, err := wire.ReadString(r, maxStringSize)
+			s, err := wire.ReadString(r, MaxStringSize)
 			if err != nil {
 				return nil, &ProtocolError{Op: "read field string value", Err: err}
 			}

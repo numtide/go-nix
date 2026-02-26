@@ -235,6 +235,8 @@ const (
 
 // PathInfo holds the metadata for a store path, as returned by QueryPathInfo.
 type PathInfo struct {
+	// StorePath is the store path this info describes.
+	StorePath string
 	// Deriver is the store path of the derivation that produced this path, if known.
 	Deriver string
 	// NarHash is the hash of the NAR serialisation of the path contents (e.g. "sha256:...").
