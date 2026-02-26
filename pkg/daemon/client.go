@@ -604,9 +604,45 @@ func (c *Client) EnsurePath(path string) <-chan Result[struct{}] {
 	return ch
 }
 
-// BuildDerivation builds a derivation given its path and definition.
-// TODO: Not yet implemented — serializing a BasicDerivation is complex.
-// func (c *Client) BuildDerivation(drvPath string, drv BasicDerivation, mode BuildMode) <-chan Result[*BuildResult] {}
+// BuildDerivation builds a derivation given its store path and definition.
+// The derivation is serialized as a BasicDerivation on the wire, and mode
+// controls rebuild behaviour. Returns a channel that will receive exactly
+// one Result containing the BuildResult.
+func (c *Client) BuildDerivation(drvPath string, drv *BasicDerivation, mode BuildMode) <-chan Result[*BuildResult] {
+	ch := make(chan Result[*BuildResult], 1)
+
+	go func() {
+		var result *BuildResult
+
+		err := c.doOp(OpBuildDerivation,
+			func(w io.Writer) error {
+				if err := wire.WriteString(w, drvPath); err != nil {
+					return err
+				}
+
+				if err := WriteBasicDerivation(w, drv); err != nil {
+					return err
+				}
+
+				return wire.WriteUint64(w, uint64(mode))
+			},
+			func(r io.Reader) error {
+				br, err := ReadBuildResult(r)
+				if err != nil {
+					return err
+				}
+
+				result = br
+
+				return nil
+			},
+		)
+
+		ch <- Result[*BuildResult]{Value: result, Err: err}
+	}()
+
+	return ch
+}
 
 // QueryRealisation looks up content-addressed realisations for the given
 // output identifier.

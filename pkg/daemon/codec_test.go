@@ -90,6 +90,168 @@ func TestWriteReadPathInfoRoundTrip(t *testing.T) {
 	assert.Equal(t, info, got)
 }
 
+func TestWriteBasicDerivation(t *testing.T) {
+	drv := &daemon.BasicDerivation{
+		Outputs: map[string]daemon.DerivationOutput{
+			"out": {Path: "/nix/store/abc-out", HashAlgorithm: "", Hash: ""},
+			"dev": {Path: "/nix/store/abc-dev", HashAlgorithm: "", Hash: ""},
+		},
+		Inputs:   []string{"/nix/store/def-input", "/nix/store/ghi-input"},
+		Platform: "x86_64-linux",
+		Builder:  "/nix/store/bash/bin/bash",
+		Args:     []string{"-e", "builder.sh"},
+		Env:      map[string]string{"out": "/nix/store/abc-out", "dev": "/nix/store/abc-dev"},
+	}
+
+	var buf bytes.Buffer
+	err := daemon.WriteBasicDerivation(&buf, drv)
+	assert.NoError(t, err)
+
+	// Verify outputs count = 2
+	count, err := wire.ReadUint64(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(2), count)
+
+	// First output should be "dev" (sorted)
+	name, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "dev", name)
+
+	path, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/store/abc-dev", path)
+
+	hashAlgo, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "", hashAlgo)
+
+	hash, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "", hash)
+
+	// Second output should be "out"
+	name, err = wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "out", name)
+
+	path, err = wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/store/abc-out", path)
+
+	_, err = wire.ReadString(&buf, daemon.MaxStringSize) // hashAlgo
+	assert.NoError(t, err)
+
+	_, err = wire.ReadString(&buf, daemon.MaxStringSize) // hash
+	assert.NoError(t, err)
+
+	// Verify inputs count = 2
+	count, err = wire.ReadUint64(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(2), count)
+
+	input1, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/store/def-input", input1)
+
+	input2, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/store/ghi-input", input2)
+
+	// Verify platform
+	platform, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "x86_64-linux", platform)
+
+	// Verify builder
+	builder, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/store/bash/bin/bash", builder)
+
+	// Verify args count = 2
+	count, err = wire.ReadUint64(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(2), count)
+
+	arg1, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "-e", arg1)
+
+	arg2, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "builder.sh", arg2)
+
+	// Verify env count = 2 (sorted: "dev" < "out")
+	count, err = wire.ReadUint64(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(2), count)
+
+	key1, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "dev", key1)
+
+	val1, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/store/abc-dev", val1)
+
+	key2, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "out", key2)
+
+	val2, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/store/abc-out", val2)
+
+	// Buffer should be fully consumed
+	assert.Equal(t, 0, buf.Len())
+}
+
+func TestWriteBasicDerivationEmpty(t *testing.T) {
+	drv := &daemon.BasicDerivation{
+		Outputs:  map[string]daemon.DerivationOutput{},
+		Inputs:   []string{},
+		Platform: "x86_64-linux",
+		Builder:  "/bin/sh",
+		Args:     []string{},
+		Env:      map[string]string{},
+	}
+
+	var buf bytes.Buffer
+	err := daemon.WriteBasicDerivation(&buf, drv)
+	assert.NoError(t, err)
+
+	// Outputs count = 0
+	count, err := wire.ReadUint64(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(0), count)
+
+	// Inputs count = 0
+	count, err = wire.ReadUint64(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(0), count)
+
+	// Platform
+	platform, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "x86_64-linux", platform)
+
+	// Builder
+	builder, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/bin/sh", builder)
+
+	// Args count = 0
+	count, err = wire.ReadUint64(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(0), count)
+
+	// Env count = 0
+	count, err = wire.ReadUint64(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(0), count)
+
+	assert.Equal(t, 0, buf.Len())
+}
+
 func TestReadBuildResult(t *testing.T) {
 	var buf bytes.Buffer
 	writeTestUint64(&buf, 0)              // status = Built

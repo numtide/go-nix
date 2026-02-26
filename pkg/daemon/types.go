@@ -370,6 +370,33 @@ type LogMessage struct {
 	Result *ActivityResult
 }
 
+// BasicDerivation represents a derivation for BuildDerivation.
+// This is the wire format, not the full derivation with input derivations.
+type BasicDerivation struct {
+	// Outputs maps output names to their output definitions.
+	Outputs map[string]DerivationOutput
+	// Inputs is the list of input store paths (sources).
+	Inputs []string
+	// Platform is the system type, e.g. "x86_64-linux".
+	Platform string
+	// Builder is the path to the builder executable.
+	Builder string
+	// Args is the list of arguments to the builder.
+	Args []string
+	// Env maps environment variable names to their values.
+	Env map[string]string
+}
+
+// DerivationOutput represents a single output of a derivation.
+type DerivationOutput struct {
+	// Path is the store path of the output (empty for floating/deferred outputs).
+	Path string
+	// HashAlgorithm is the hash algorithm descriptor, e.g. "r:sha256" (empty for input-addressed).
+	HashAlgorithm string
+	// Hash is the expected hash in Nix base32 (empty if not fixed-output).
+	Hash string
+}
+
 // AddToStoreItem represents a single store path item to be added via AddMultipleToStore.
 type AddToStoreItem struct {
 	// Info is the path metadata.

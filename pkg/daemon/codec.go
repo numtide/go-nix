@@ -186,6 +186,65 @@ func WritePathInfo(w io.Writer, info *PathInfo) error {
 	return wire.WriteString(w, info.CA)
 }
 
+// WriteBasicDerivation writes a BasicDerivation to the wire. Outputs are
+// written sorted by name; environment variables are written sorted by key.
+func WriteBasicDerivation(w io.Writer, drv *BasicDerivation) error {
+	// Outputs: count + sorted entries.
+	outputNames := make([]string, 0, len(drv.Outputs))
+	for name := range drv.Outputs {
+		outputNames = append(outputNames, name)
+	}
+
+	sort.Strings(outputNames)
+
+	if err := wire.WriteUint64(w, uint64(len(outputNames))); err != nil {
+		return err
+	}
+
+	for _, name := range outputNames {
+		out := drv.Outputs[name]
+
+		if err := wire.WriteString(w, name); err != nil {
+			return err
+		}
+
+		if err := wire.WriteString(w, out.Path); err != nil {
+			return err
+		}
+
+		if err := wire.WriteString(w, out.HashAlgorithm); err != nil {
+			return err
+		}
+
+		if err := wire.WriteString(w, out.Hash); err != nil {
+			return err
+		}
+	}
+
+	// Inputs: count + strings.
+	if err := WriteStrings(w, drv.Inputs); err != nil {
+		return err
+	}
+
+	// Platform.
+	if err := wire.WriteString(w, drv.Platform); err != nil {
+		return err
+	}
+
+	// Builder.
+	if err := wire.WriteString(w, drv.Builder); err != nil {
+		return err
+	}
+
+	// Args: count + strings.
+	if err := WriteStrings(w, drv.Args); err != nil {
+		return err
+	}
+
+	// Env: count + sorted key/value pairs.
+	return WriteStringMap(w, drv.Env)
+}
+
 // ReadBuildResult reads a BuildResult from the wire.
 func ReadBuildResult(r io.Reader) (*BuildResult, error) {
 	status, err := wire.ReadUint64(r)

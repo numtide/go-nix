@@ -734,6 +734,104 @@ func TestClientFindRoots(t *testing.T) {
 	assert.Equal(t, map[string]string{"/proc/1/root": "/nix/store/abc-test"}, result.Value)
 }
 
+func TestClientBuildDerivation(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	drv := &daemon.BasicDerivation{
+		Outputs: map[string]daemon.DerivationOutput{
+			"out": {Path: "/nix/store/abc-out", HashAlgorithm: "", Hash: ""},
+		},
+		Inputs:   []string{"/nix/store/def-input"},
+		Platform: "x86_64-linux",
+		Builder:  "/nix/store/bash/bin/bash",
+		Args:     []string{"-e", "builder.sh"},
+		Env:      map[string]string{"out": "/nix/store/abc-out"},
+	}
+
+	go func() {
+		mock.handshake()
+
+		var buf [8]byte
+
+		io.ReadFull(mock.conn, buf[:]) // op
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpBuildDerivation), op)
+
+		// Read drvPath
+		wire.ReadString(mock.conn, 64*1024)
+
+		// Read outputs count
+		io.ReadFull(mock.conn, buf[:])
+		count := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(1), count)
+
+		// Read output: name, path, hashAlgo, hash
+		wire.ReadString(mock.conn, 64*1024)
+		wire.ReadString(mock.conn, 64*1024)
+		wire.ReadString(mock.conn, 64*1024)
+		wire.ReadString(mock.conn, 64*1024)
+
+		// Read inputs count + paths
+		io.ReadFull(mock.conn, buf[:])
+		wire.ReadString(mock.conn, 64*1024)
+
+		// Read platform, builder
+		wire.ReadString(mock.conn, 64*1024)
+		wire.ReadString(mock.conn, 64*1024)
+
+		// Read args count + args
+		io.ReadFull(mock.conn, buf[:])
+		wire.ReadString(mock.conn, 64*1024)
+		wire.ReadString(mock.conn, 64*1024)
+
+		// Read env count + entries
+		io.ReadFull(mock.conn, buf[:])
+		wire.ReadString(mock.conn, 64*1024)
+		wire.ReadString(mock.conn, 64*1024)
+
+		// Read build mode
+		io.ReadFull(mock.conn, buf[:])
+
+		// Send LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+
+		// Send BuildResult: status=Built(0), errorMsg="", timesBuilt=1,
+		// isNonDeterministic=false, startTime=100, stopTime=200, builtOutputs count=0
+		binary.LittleEndian.PutUint64(buf[:], 0) // Built
+		mock.conn.Write(buf[:])
+
+		writeWireStringTo(mock.conn, "") // errorMsg
+
+		binary.LittleEndian.PutUint64(buf[:], 1) // timesBuilt
+		mock.conn.Write(buf[:])
+
+		binary.LittleEndian.PutUint64(buf[:], 0) // isNonDeterministic
+		mock.conn.Write(buf[:])
+
+		binary.LittleEndian.PutUint64(buf[:], 100) // startTime
+		mock.conn.Write(buf[:])
+
+		binary.LittleEndian.PutUint64(buf[:], 200) // stopTime
+		mock.conn.Write(buf[:])
+
+		binary.LittleEndian.PutUint64(buf[:], 0) // builtOutputs count
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.BuildDerivation("/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
+	assert.NoError(t, result.Err)
+	assert.Equal(t, daemon.BuildStatusBuilt, result.Value.Status)
+	assert.Equal(t, uint64(1), result.Value.TimesBuilt)
+	assert.Equal(t, uint64(100), result.Value.StartTime)
+	assert.Equal(t, uint64(200), result.Value.StopTime)
+}
+
 func TestClientAddBuildLog(t *testing.T) {
 	mock, clientConn := newMockDaemon(t)
 	defer mock.conn.Close()
