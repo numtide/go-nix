@@ -638,6 +638,284 @@ func (c *Client) QueryRealisation(outputID string) <-chan Result[[]string] {
 	return ch
 }
 
+// AddTempRoot adds a temporary GC root for the given store path. Temporary
+// roots prevent the garbage collector from deleting the path for the duration
+// of the daemon session.
+func (c *Client) AddTempRoot(path string) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		err := c.doOp(OpAddTempRoot,
+			func(w io.Writer) error {
+				return wire.WriteString(w, path)
+			},
+			nil,
+		)
+
+		ch <- Result[struct{}]{Err: err}
+	}()
+
+	return ch
+}
+
+// AddIndirectRoot adds an indirect GC root. The path should be a symlink
+// outside the store that points to a store path.
+func (c *Client) AddIndirectRoot(path string) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		err := c.doOp(OpAddIndirectRoot,
+			func(w io.Writer) error {
+				return wire.WriteString(w, path)
+			},
+			nil,
+		)
+
+		ch <- Result[struct{}]{Err: err}
+	}()
+
+	return ch
+}
+
+// AddPermRoot adds a permanent GC root linking gcRoot to storePath. Returns
+// the resulting root path.
+func (c *Client) AddPermRoot(storePath string, gcRoot string) <-chan Result[string] {
+	ch := make(chan Result[string], 1)
+
+	go func() {
+		var resultPath string
+
+		err := c.doOp(OpAddPermRoot,
+			func(w io.Writer) error {
+				if err := wire.WriteString(w, storePath); err != nil {
+					return err
+				}
+
+				return wire.WriteString(w, gcRoot)
+			},
+			func(r io.Reader) error {
+				s, err := wire.ReadString(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				resultPath = s
+
+				return nil
+			},
+		)
+
+		ch <- Result[string]{Value: resultPath, Err: err}
+	}()
+
+	return ch
+}
+
+// AddSignatures attaches the given signatures to a store path.
+func (c *Client) AddSignatures(path string, sigs []string) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		err := c.doOp(OpAddSignatures,
+			func(w io.Writer) error {
+				if err := wire.WriteString(w, path); err != nil {
+					return err
+				}
+
+				return WriteStrings(w, sigs)
+			},
+			nil,
+		)
+
+		ch <- Result[struct{}]{Err: err}
+	}()
+
+	return ch
+}
+
+// RegisterDrvOutput registers a content-addressed realisation for a
+// derivation output.
+func (c *Client) RegisterDrvOutput(realisation string) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		err := c.doOp(OpRegisterDrvOutput,
+			func(w io.Writer) error {
+				return wire.WriteString(w, realisation)
+			},
+			nil,
+		)
+
+		ch <- Result[struct{}]{Err: err}
+	}()
+
+	return ch
+}
+
+// AddToStoreNar imports a NAR into the store. The info parameter describes
+// the path metadata, and source provides the NAR data to stream.
+// If repair is true, the path is repaired even if it already exists.
+// If dontCheckSigs is true, signature verification is skipped.
+func (c *Client) AddToStoreNar(info *PathInfo, source io.Reader, repair bool, dontCheckSigs bool) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		c.mu.Lock()
+
+		// Write operation code.
+		if err := wire.WriteUint64(c.w, uint64(OpAddToStoreNar)); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar write op", Err: err}}
+
+			return
+		}
+
+		// Write PathInfo.
+		if err := WritePathInfo(c.w, info); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar write path info", Err: err}}
+
+			return
+		}
+
+		// Write repair and dontCheckSigs flags.
+		if err := wire.WriteBool(c.w, repair); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar write repair", Err: err}}
+
+			return
+		}
+
+		if err := wire.WriteBool(c.w, dontCheckSigs); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar write dontCheckSigs", Err: err}}
+
+			return
+		}
+
+		// Flush before streaming.
+		if err := c.w.Flush(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar flush", Err: err}}
+
+			return
+		}
+
+		// Stream NAR data as framed.
+		fw := NewFramedWriter(c.w)
+		if _, err := io.Copy(fw, source); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar stream data", Err: err}}
+
+			return
+		}
+
+		if err := fw.Close(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar close framed writer", Err: err}}
+
+			return
+		}
+
+		// Flush again after framed data.
+		if err := c.w.Flush(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar flush after stream", Err: err}}
+
+			return
+		}
+
+		// Drain stderr log messages until LogLast.
+		if err := ProcessStderr(c.r, c.logs); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: err}
+
+			return
+		}
+
+		c.mu.Unlock()
+		ch <- Result[struct{}]{}
+	}()
+
+	return ch
+}
+
+// AddBuildLog uploads a build log for the given derivation path. The log
+// data is streamed from the provided reader.
+func (c *Client) AddBuildLog(drvPath string, log io.Reader) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		c.mu.Lock()
+
+		// Write operation code.
+		if err := wire.WriteUint64(c.w, uint64(OpAddBuildLog)); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog write op", Err: err}}
+
+			return
+		}
+
+		// Write derivation path.
+		if err := wire.WriteString(c.w, drvPath); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog write drvPath", Err: err}}
+
+			return
+		}
+
+		// Flush before streaming.
+		if err := c.w.Flush(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog flush", Err: err}}
+
+			return
+		}
+
+		// Stream log data as framed.
+		fw := NewFramedWriter(c.w)
+		if _, err := io.Copy(fw, log); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog stream data", Err: err}}
+
+			return
+		}
+
+		if err := fw.Close(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog close framed writer", Err: err}}
+
+			return
+		}
+
+		// Flush again after framed data.
+		if err := c.w.Flush(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog flush after stream", Err: err}}
+
+			return
+		}
+
+		// Drain stderr log messages until LogLast.
+		if err := ProcessStderr(c.r, c.logs); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: err}
+
+			return
+		}
+
+		c.mu.Unlock()
+		ch <- Result[struct{}]{}
+	}()
+
+	return ch
+}
+
+// AddMultipleToStore imports multiple paths into the store in a single
+// operation using nested framing.
+// TODO: Not yet implemented — nested framing makes this complex.
+// func (c *Client) AddMultipleToStore(...) <-chan Result[struct{}] {}
+
 // mutexReadCloser wraps an io.ReadCloser and releases a mutex when closed.
 // This is used by NarFromPath to hold the connection lock while the caller
 // reads the streamed NAR data.

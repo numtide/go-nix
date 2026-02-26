@@ -1,9 +1,11 @@
 package daemon_test
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
@@ -452,4 +454,289 @@ func TestClientBuildPathsWithResults(t *testing.T) {
 	assert.False(t, result.Value[0].IsNonDeterministic)
 	assert.Equal(t, uint64(1700000000), result.Value[0].StartTime)
 	assert.Equal(t, uint64(1700000060), result.Value[0].StopTime)
+}
+
+func TestClientAddTempRoot(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+
+		var buf [8]byte
+
+		io.ReadFull(mock.conn, buf[:]) // op
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpAddTempRoot), op)
+
+		wire.ReadString(mock.conn, 64*1024) // path
+
+		// LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.AddTempRoot("/nix/store/abc-test")
+	assert.NoError(t, result.Err)
+}
+
+func TestClientAddIndirectRoot(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+
+		var buf [8]byte
+
+		io.ReadFull(mock.conn, buf[:]) // op
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpAddIndirectRoot), op)
+
+		wire.ReadString(mock.conn, 64*1024) // path
+
+		// LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.AddIndirectRoot("/home/user/result")
+	assert.NoError(t, result.Err)
+}
+
+func TestClientAddPermRoot(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+
+		var buf [8]byte
+
+		io.ReadFull(mock.conn, buf[:]) // op
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpAddPermRoot), op)
+
+		wire.ReadString(mock.conn, 64*1024) // storePath
+		wire.ReadString(mock.conn, 64*1024) // gcRoot
+
+		// LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+
+		// Response: result path string
+		writeWireStringTo(mock.conn, "/nix/var/nix/gcroots/auto/abc")
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.AddPermRoot("/nix/store/abc-test", "/home/user/result")
+	assert.NoError(t, result.Err)
+	assert.Equal(t, "/nix/var/nix/gcroots/auto/abc", result.Value)
+}
+
+func TestClientAddSignatures(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+
+		var buf [8]byte
+
+		io.ReadFull(mock.conn, buf[:]) // op
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpAddSignatures), op)
+
+		wire.ReadString(mock.conn, 64*1024) // path
+
+		// Read sigs: count + strings
+		io.ReadFull(mock.conn, buf[:]) // count
+		count := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(2), count)
+		wire.ReadString(mock.conn, 64*1024) // sig 1
+		wire.ReadString(mock.conn, 64*1024) // sig 2
+
+		// LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.AddSignatures("/nix/store/abc-test", []string{"sig1", "sig2"})
+	assert.NoError(t, result.Err)
+}
+
+func TestClientRegisterDrvOutput(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+
+		var buf [8]byte
+
+		io.ReadFull(mock.conn, buf[:]) // op
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpRegisterDrvOutput), op)
+
+		wire.ReadString(mock.conn, 64*1024) // realisation
+
+		// LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.RegisterDrvOutput("sha256:abc!out")
+	assert.NoError(t, result.Err)
+}
+
+func TestClientAddToStoreNar(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	narData := []byte("fake-nar-content-for-testing")
+
+	info := &daemon.PathInfo{
+		StorePath:  "/nix/store/abc-test",
+		Deriver:    "/nix/store/xyz-test.drv",
+		NarHash:    "sha256:fakehash",
+		References: []string{},
+		NarSize:    uint64(len(narData)),
+		Sigs:       []string{},
+	}
+
+	go func() {
+		var buf [8]byte
+
+		mock.handshake()
+
+		io.ReadFull(mock.conn, buf[:]) // op
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpAddToStoreNar), op)
+
+		// Read PathInfo: storePath, deriver, narHash, refs, regTime, narSize, ultimate, sigs, ca
+		wire.ReadString(mock.conn, 64*1024) // storePath
+		wire.ReadString(mock.conn, 64*1024) // deriver
+		wire.ReadString(mock.conn, 64*1024) // narHash
+
+		io.ReadFull(mock.conn, buf[:]) // refs count = 0
+
+		io.ReadFull(mock.conn, buf[:]) // registrationTime
+		io.ReadFull(mock.conn, buf[:]) // narSize
+		io.ReadFull(mock.conn, buf[:]) // ultimate
+
+		io.ReadFull(mock.conn, buf[:]) // sigs count = 0
+
+		wire.ReadString(mock.conn, 64*1024) // ca
+
+		io.ReadFull(mock.conn, buf[:]) // repair
+		io.ReadFull(mock.conn, buf[:]) // dontCheckSigs
+
+		// Read framed NAR data
+		var received bytes.Buffer
+
+		for {
+			io.ReadFull(mock.conn, buf[:])
+			frameLen := binary.LittleEndian.Uint64(buf[:])
+
+			if frameLen == 0 {
+				break
+			}
+
+			data := make([]byte, frameLen)
+			io.ReadFull(mock.conn, data)
+			received.Write(data)
+
+			// Skip padding
+			pad := (8 - (frameLen % 8)) % 8
+			if pad > 0 {
+				io.ReadFull(mock.conn, make([]byte, pad))
+			}
+		}
+
+		assert.Equal(t, narData, received.Bytes())
+
+		// LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.AddToStoreNar(info, bytes.NewReader(narData), false, true)
+	assert.NoError(t, result.Err)
+}
+
+func TestClientAddBuildLog(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	logContent := "building '/nix/store/abc-test.drv'...\nok\n"
+
+	go func() {
+		var buf [8]byte
+
+		mock.handshake()
+
+		io.ReadFull(mock.conn, buf[:]) // op
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpAddBuildLog), op)
+
+		wire.ReadString(mock.conn, 64*1024) // drvPath
+
+		// Read framed log data
+		var received bytes.Buffer
+
+		for {
+			io.ReadFull(mock.conn, buf[:])
+			frameLen := binary.LittleEndian.Uint64(buf[:])
+
+			if frameLen == 0 {
+				break
+			}
+
+			data := make([]byte, frameLen)
+			io.ReadFull(mock.conn, data)
+			received.Write(data)
+
+			// Skip padding
+			pad := (8 - (frameLen % 8)) % 8
+			if pad > 0 {
+				io.ReadFull(mock.conn, make([]byte, pad))
+			}
+		}
+
+		assert.Equal(t, logContent, received.String())
+
+		// LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.AddBuildLog("/nix/store/abc-test.drv", strings.NewReader(logContent))
+	assert.NoError(t, result.Err)
 }
