@@ -911,6 +911,163 @@ func (c *Client) AddBuildLog(drvPath string, log io.Reader) <-chan Result[struct
 	return ch
 }
 
+// FindRoots returns the set of GC roots known to the daemon. The map keys
+// are the root link paths and the values are the store paths they point to.
+func (c *Client) FindRoots() <-chan Result[map[string]string] {
+	ch := make(chan Result[map[string]string], 1)
+
+	go func() {
+		var roots map[string]string
+
+		err := c.doOp(OpFindRoots,
+			nil,
+			func(r io.Reader) error {
+				m, err := ReadStringMap(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				roots = m
+
+				return nil
+			},
+		)
+
+		ch <- Result[map[string]string]{Value: roots, Err: err}
+	}()
+
+	return ch
+}
+
+// CollectGarbage performs a garbage collection operation on the store.
+func (c *Client) CollectGarbage(options *GCOptions) <-chan Result[*GCResult] {
+	ch := make(chan Result[*GCResult], 1)
+
+	go func() {
+		var result GCResult
+
+		err := c.doOp(OpCollectGarbage,
+			func(w io.Writer) error {
+				if err := wire.WriteUint64(w, uint64(options.Action)); err != nil {
+					return err
+				}
+
+				if err := WriteStrings(w, options.PathsToDelete); err != nil {
+					return err
+				}
+
+				if err := wire.WriteBool(w, options.IgnoreLiveness); err != nil {
+					return err
+				}
+
+				if err := wire.WriteUint64(w, options.MaxFreed); err != nil {
+					return err
+				}
+
+				// Three deprecated fields, always zero.
+				for i := 0; i < 3; i++ {
+					if err := wire.WriteUint64(w, 0); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			func(r io.Reader) error {
+				paths, err := ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				result.Paths = paths
+
+				bytesFreed, err := wire.ReadUint64(r)
+				if err != nil {
+					return err
+				}
+
+				result.BytesFreed = bytesFreed
+
+				// Deprecated field, ignored.
+				_, err = wire.ReadUint64(r)
+
+				return err
+			},
+		)
+
+		ch <- Result[*GCResult]{Value: &result, Err: err}
+	}()
+
+	return ch
+}
+
+// OptimiseStore asks the daemon to optimise the Nix store by hard-linking
+// identical files.
+func (c *Client) OptimiseStore() <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		err := c.doOp(OpOptimiseStore, nil, nil)
+		ch <- Result[struct{}]{Err: err}
+	}()
+
+	return ch
+}
+
+// VerifyStore checks the consistency of the Nix store. If checkContents is
+// true, the contents of each path are verified against their hash. If repair
+// is true, inconsistencies are repaired. Returns true if errors were found.
+func (c *Client) VerifyStore(checkContents bool, repair bool) <-chan Result[bool] {
+	ch := make(chan Result[bool], 1)
+
+	go func() {
+		var errorsFound bool
+
+		err := c.doOp(OpVerifyStore,
+			func(w io.Writer) error {
+				if err := wire.WriteBool(w, checkContents); err != nil {
+					return err
+				}
+
+				return wire.WriteBool(w, repair)
+			},
+			func(r io.Reader) error {
+				v, err := wire.ReadBool(r)
+				if err != nil {
+					return err
+				}
+
+				errorsFound = v
+
+				return nil
+			},
+		)
+
+		ch <- Result[bool]{Value: errorsFound, Err: err}
+	}()
+
+	return ch
+}
+
+// SetOptions sends the client build settings to the daemon. This should
+// typically be called once after connecting.
+func (c *Client) SetOptions(settings *ClientSettings) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		err := c.doOp(OpSetOptions,
+			func(w io.Writer) error {
+				return WriteClientSettings(w, settings)
+			},
+			nil,
+		)
+
+		ch <- Result[struct{}]{Err: err}
+	}()
+
+	return ch
+}
+
 // AddMultipleToStore imports multiple paths into the store in a single
 // operation using nested framing.
 // TODO: Not yet implemented — nested framing makes this complex.

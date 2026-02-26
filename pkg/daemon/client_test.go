@@ -687,6 +687,37 @@ func TestClientAddToStoreNar(t *testing.T) {
 	assert.NoError(t, result.Err)
 }
 
+func TestClientFindRoots(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+
+		var buf [8]byte
+
+		io.ReadFull(mock.conn, buf[:]) // op code
+
+		// LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+
+		// Map: count=1
+		binary.LittleEndian.PutUint64(buf[:], 1)
+		mock.conn.Write(buf[:])
+		writeWireStringTo(mock.conn, "/proc/1/root")
+		writeWireStringTo(mock.conn, "/nix/store/abc-test")
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.FindRoots()
+	assert.NoError(t, result.Err)
+	assert.Equal(t, map[string]string{"/proc/1/root": "/nix/store/abc-test"}, result.Value)
+}
+
 func TestClientAddBuildLog(t *testing.T) {
 	mock, clientConn := newMockDaemon(t)
 	defer mock.conn.Close()
