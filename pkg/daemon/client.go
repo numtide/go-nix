@@ -446,6 +446,168 @@ func (c *Client) QueryMissing(paths []string) <-chan Result[*MissingInfo] {
 	return ch
 }
 
+// NarFromPath streams the NAR serialisation of the given store path.
+// The returned io.ReadCloser holds the connection lock; the caller MUST close
+// it when done to allow further operations on the client.
+func (c *Client) NarFromPath(path string) <-chan Result[io.ReadCloser] {
+	ch := make(chan Result[io.ReadCloser], 1)
+
+	go func() {
+		c.mu.Lock()
+
+		// Write operation code.
+		if err := wire.WriteUint64(c.w, uint64(OpNarFromPath)); err != nil {
+			c.mu.Unlock()
+			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath write op", Err: err}}
+
+			return
+		}
+
+		// Write request payload.
+		if err := wire.WriteString(c.w, path); err != nil {
+			c.mu.Unlock()
+			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath write request", Err: err}}
+
+			return
+		}
+
+		// Flush buffered writer.
+		if err := c.w.Flush(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath flush", Err: err}}
+
+			return
+		}
+
+		// Drain stderr log messages until LogLast.
+		if err := ProcessStderr(c.r, c.logs); err != nil {
+			c.mu.Unlock()
+			ch <- Result[io.ReadCloser]{Err: err}
+
+			return
+		}
+
+		// Read the NAR data as a bytes field. ReadBytes returns a limited
+		// reader over the wire content; wrapping it in mutexReadCloser
+		// ensures the mutex is released when the caller closes the reader.
+		_, rc, err := wire.ReadBytes(c.r)
+		if err != nil {
+			c.mu.Unlock()
+			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath read response", Err: err}}
+
+			return
+		}
+
+		ch <- Result[io.ReadCloser]{Value: &mutexReadCloser{ReadCloser: rc, mu: &c.mu}}
+	}()
+
+	return ch
+}
+
+// BuildPaths asks the daemon to build the given set of derivation paths or
+// store paths. mode controls rebuild behaviour.
+func (c *Client) BuildPaths(paths []string, mode BuildMode) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		err := c.doOp(OpBuildPaths,
+			func(w io.Writer) error {
+				if err := WriteStrings(w, paths); err != nil {
+					return err
+				}
+
+				return wire.WriteUint64(w, uint64(mode))
+			},
+			func(r io.Reader) error {
+				// Daemon responds with a "1" to acknowledge.
+				_, err := wire.ReadUint64(r)
+
+				return err
+			},
+		)
+
+		ch <- Result[struct{}]{Err: err}
+	}()
+
+	return ch
+}
+
+// BuildPathsWithResults is like BuildPaths but returns a BuildResult for each
+// derived path. Requires protocol >= 1.34.
+func (c *Client) BuildPathsWithResults(paths []string, mode BuildMode) <-chan Result[[]BuildResult] {
+	ch := make(chan Result[[]BuildResult], 1)
+
+	go func() {
+		var results []BuildResult
+
+		err := c.doOp(OpBuildPathsWithResults,
+			func(w io.Writer) error {
+				if err := WriteStrings(w, paths); err != nil {
+					return err
+				}
+
+				return wire.WriteUint64(w, uint64(mode))
+			},
+			func(r io.Reader) error {
+				count, err := wire.ReadUint64(r)
+				if err != nil {
+					return err
+				}
+
+				results = make([]BuildResult, count)
+				for i := uint64(0); i < count; i++ {
+					// Each entry is a DerivedPath string (ignored) followed by a BuildResult.
+					_, err := wire.ReadString(r, MaxStringSize)
+					if err != nil {
+						return err
+					}
+
+					br, err := ReadBuildResult(r)
+					if err != nil {
+						return err
+					}
+
+					results[i] = *br
+				}
+
+				return nil
+			},
+		)
+
+		ch <- Result[[]BuildResult]{Value: results, Err: err}
+	}()
+
+	return ch
+}
+
+// EnsurePath ensures that the given store path is valid by building or
+// substituting it if necessary.
+func (c *Client) EnsurePath(path string) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		err := c.doOp(OpEnsurePath,
+			func(w io.Writer) error {
+				return wire.WriteString(w, path)
+			},
+			func(r io.Reader) error {
+				// Daemon responds with a "1" to acknowledge.
+				_, err := wire.ReadUint64(r)
+
+				return err
+			},
+		)
+
+		ch <- Result[struct{}]{Err: err}
+	}()
+
+	return ch
+}
+
+// BuildDerivation builds a derivation given its path and definition.
+// TODO: Not yet implemented — serializing a BasicDerivation is complex.
+// func (c *Client) BuildDerivation(drvPath string, drv BasicDerivation, mode BuildMode) <-chan Result[*BuildResult] {}
+
 // QueryRealisation looks up content-addressed realisations for the given
 // output identifier.
 func (c *Client) QueryRealisation(outputID string) <-chan Result[[]string] {
@@ -474,6 +636,23 @@ func (c *Client) QueryRealisation(outputID string) <-chan Result[[]string] {
 	}()
 
 	return ch
+}
+
+// mutexReadCloser wraps an io.ReadCloser and releases a mutex when closed.
+// This is used by NarFromPath to hold the connection lock while the caller
+// reads the streamed NAR data.
+type mutexReadCloser struct {
+	io.ReadCloser
+	mu   *sync.Mutex
+	once sync.Once
+}
+
+// Close closes the underlying reader and releases the mutex exactly once.
+func (m *mutexReadCloser) Close() error {
+	err := m.ReadCloser.Close()
+	m.once.Do(func() { m.mu.Unlock() })
+
+	return err
 }
 
 // newClient creates a Client from an existing connection, applies options,
