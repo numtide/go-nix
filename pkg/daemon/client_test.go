@@ -69,6 +69,22 @@ func (m *mockDaemon) respondIsValidPath(valid bool) {
 	m.conn.Write(buf[:])
 }
 
+func TestClientConnectWrongMagic(t *testing.T) {
+	server, clientConn := net.Pipe()
+	defer server.Close()
+	defer clientConn.Close()
+
+	go func() {
+		var buf [8]byte
+		io.ReadFull(server, buf[:]) // read client magic
+		binary.LittleEndian.PutUint64(buf[:], 0xdeadbeef)
+		server.Write(buf[:])
+	}()
+
+	_, err := daemon.NewClientFromConn(clientConn)
+	assert.Error(t, err)
+}
+
 func TestClientConnect(t *testing.T) {
 	mock, clientConn := newMockDaemon(t)
 	defer mock.conn.Close()

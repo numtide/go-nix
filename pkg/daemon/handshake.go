@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net"
 
 	"github.com/nix-community/go-nix/pkg/wire"
 )
@@ -16,18 +15,8 @@ type HandshakeInfo struct {
 	Trust            TrustLevel
 }
 
-// Handshake performs the Nix daemon protocol handshake over a connection.
-// It uses buffered I/O internally.
-func Handshake(conn net.Conn) (*HandshakeInfo, error) {
-	r := bufio.NewReader(conn)
-	w := bufio.NewWriter(conn)
-
-	return handshakeWithBufIO(r, w)
-}
-
 // handshakeWithBufIO performs the Nix daemon protocol handshake using the
-// provided buffered reader and writer. This allows both the standalone
-// Handshake function and the Client to share the same handshake logic.
+// provided buffered reader and writer.
 func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	// 1. Client sends ClientMagic — flush.
 	if err := wire.WriteUint64(w, ClientMagic); err != nil {
