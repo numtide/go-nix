@@ -1104,10 +1104,96 @@ func (c *Client) SetOptions(settings *ClientSettings) <-chan Result[struct{}] {
 	return ch
 }
 
-// AddMultipleToStore imports multiple paths into the store in a single
-// operation using nested framing.
-// TODO: Not yet implemented — nested framing makes this complex.
-// func (c *Client) AddMultipleToStore(...) <-chan Result[struct{}] {}
+// AddMultipleToStore imports multiple store paths into the store in a single
+// operation. Each item consists of a PathInfo and a NAR data reader. If repair
+// is true, existing paths are repaired. If dontCheckSigs is true, signature
+// verification is skipped.
+func (c *Client) AddMultipleToStore(items []AddToStoreItem, repair bool, dontCheckSigs bool) <-chan Result[struct{}] {
+	ch := make(chan Result[struct{}], 1)
+
+	go func() {
+		c.mu.Lock()
+
+		// Write operation code.
+		if err := wire.WriteUint64(c.w, uint64(OpAddMultipleToStore)); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write op", Err: err}}
+
+			return
+		}
+
+		// Write repair flag.
+		if err := wire.WriteBool(c.w, repair); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write repair", Err: err}}
+
+			return
+		}
+
+		// Write dontCheckSigs flag.
+		if err := wire.WriteBool(c.w, dontCheckSigs); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write dontCheckSigs", Err: err}}
+
+			return
+		}
+
+		// Write item count.
+		if err := wire.WriteUint64(c.w, uint64(len(items))); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write count", Err: err}}
+
+			return
+		}
+
+		// Write each item: PathInfo + framed NAR data.
+		for i := 0; i < len(items); i++ {
+			if err := WritePathInfo(c.w, &items[i].Info); err != nil {
+				c.mu.Unlock()
+				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write path info", Err: err}}
+
+				return
+			}
+
+			fw := NewFramedWriter(c.w)
+
+			if _, err := io.Copy(fw, items[i].Source); err != nil {
+				c.mu.Unlock()
+				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore stream data", Err: err}}
+
+				return
+			}
+
+			if err := fw.Close(); err != nil {
+				c.mu.Unlock()
+				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore close framed writer", Err: err}}
+
+				return
+			}
+		}
+
+		// Flush the buffered writer after all items.
+		if err := c.w.Flush(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore flush", Err: err}}
+
+			return
+		}
+
+		// Drain stderr log messages until LogLast.
+		if err := ProcessStderr(c.r, c.logs); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: err}
+
+			return
+		}
+
+		c.mu.Unlock()
+		ch <- Result[struct{}]{}
+	}()
+
+	return ch
+}
 
 // mutexReadCloser wraps an io.ReadCloser and releases a mutex when closed.
 // This is used by NarFromPath to hold the connection lock while the caller

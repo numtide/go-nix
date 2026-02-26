@@ -1,6 +1,9 @@
 package daemon
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+)
 
 // Protocol handshake constants.
 const (
@@ -401,6 +404,6 @@ type DerivationOutput struct {
 type AddToStoreItem struct {
 	// Info is the path metadata.
 	Info PathInfo
-	// Source is the path to the NAR content source (used during encoding).
-	Source string
+	// Source is the NAR content reader (used during encoding).
+	Source io.Reader
 }

@@ -885,3 +885,194 @@ func TestClientAddBuildLog(t *testing.T) {
 	result := <-client.AddBuildLog("/nix/store/abc-test.drv", strings.NewReader(logContent))
 	assert.NoError(t, result.Err)
 }
+
+func TestClientAddMultipleToStore(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	narData1 := []byte("fake-nar-content-item-1")
+	narData2 := []byte("fake-nar-content-item-2")
+
+	items := []daemon.AddToStoreItem{
+		{
+			Info: daemon.PathInfo{
+				StorePath:  "/nix/store/aaa-first",
+				Deriver:    "/nix/store/aaa-first.drv",
+				NarHash:    "sha256:hash1",
+				References: []string{},
+				NarSize:    uint64(len(narData1)),
+				Sigs:       []string{},
+			},
+			Source: bytes.NewReader(narData1),
+		},
+		{
+			Info: daemon.PathInfo{
+				StorePath:  "/nix/store/bbb-second",
+				Deriver:    "/nix/store/bbb-second.drv",
+				NarHash:    "sha256:hash2",
+				References: []string{"/nix/store/aaa-first"},
+				NarSize:    uint64(len(narData2)),
+				Sigs:       []string{},
+			},
+			Source: bytes.NewReader(narData2),
+		},
+	}
+
+	go func() {
+		var buf [8]byte
+
+		mock.handshake()
+
+		// Read op code.
+		io.ReadFull(mock.conn, buf[:])
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
+
+		// Read repair.
+		io.ReadFull(mock.conn, buf[:])
+		repair := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(1), repair) // true
+
+		// Read dontCheckSigs.
+		io.ReadFull(mock.conn, buf[:])
+		dontCheckSigs := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(0), dontCheckSigs) // false
+
+		// Read count.
+		io.ReadFull(mock.conn, buf[:])
+		count := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(2), count)
+
+		// Read item 1: PathInfo + framed NAR data.
+		wire.ReadString(mock.conn, 64*1024) // storePath
+		wire.ReadString(mock.conn, 64*1024) // deriver
+		wire.ReadString(mock.conn, 64*1024) // narHash
+
+		io.ReadFull(mock.conn, buf[:]) // refs count = 0
+
+		io.ReadFull(mock.conn, buf[:]) // registrationTime
+		io.ReadFull(mock.conn, buf[:]) // narSize
+		io.ReadFull(mock.conn, buf[:]) // ultimate
+
+		io.ReadFull(mock.conn, buf[:]) // sigs count = 0
+
+		wire.ReadString(mock.conn, 64*1024) // ca
+
+		// Read framed NAR data for item 1.
+		var received1 bytes.Buffer
+
+		for {
+			io.ReadFull(mock.conn, buf[:])
+			frameLen := binary.LittleEndian.Uint64(buf[:])
+
+			if frameLen == 0 {
+				break
+			}
+
+			data := make([]byte, frameLen)
+			io.ReadFull(mock.conn, data)
+			received1.Write(data)
+
+			pad := (8 - (frameLen % 8)) % 8
+			if pad > 0 {
+				io.ReadFull(mock.conn, make([]byte, pad))
+			}
+		}
+
+		assert.Equal(t, narData1, received1.Bytes())
+
+		// Read item 2: PathInfo + framed NAR data.
+		wire.ReadString(mock.conn, 64*1024) // storePath
+		wire.ReadString(mock.conn, 64*1024) // deriver
+		wire.ReadString(mock.conn, 64*1024) // narHash
+
+		io.ReadFull(mock.conn, buf[:]) // refs count
+
+		refCount := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(1), refCount)
+
+		wire.ReadString(mock.conn, 64*1024) // ref[0]
+
+		io.ReadFull(mock.conn, buf[:]) // registrationTime
+		io.ReadFull(mock.conn, buf[:]) // narSize
+		io.ReadFull(mock.conn, buf[:]) // ultimate
+
+		io.ReadFull(mock.conn, buf[:]) // sigs count = 0
+
+		wire.ReadString(mock.conn, 64*1024) // ca
+
+		// Read framed NAR data for item 2.
+		var received2 bytes.Buffer
+
+		for {
+			io.ReadFull(mock.conn, buf[:])
+			frameLen := binary.LittleEndian.Uint64(buf[:])
+
+			if frameLen == 0 {
+				break
+			}
+
+			data := make([]byte, frameLen)
+			io.ReadFull(mock.conn, data)
+			received2.Write(data)
+
+			pad := (8 - (frameLen % 8)) % 8
+			if pad > 0 {
+				io.ReadFull(mock.conn, make([]byte, pad))
+			}
+		}
+
+		assert.Equal(t, narData2, received2.Bytes())
+
+		// Send LogLast.
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.AddMultipleToStore(items, true, false)
+	assert.NoError(t, result.Err)
+}
+
+func TestClientAddMultipleToStoreEmpty(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		var buf [8]byte
+
+		mock.handshake()
+
+		// Read op code.
+		io.ReadFull(mock.conn, buf[:])
+		op := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
+
+		// Read repair.
+		io.ReadFull(mock.conn, buf[:])
+
+		// Read dontCheckSigs.
+		io.ReadFull(mock.conn, buf[:])
+
+		// Read count.
+		io.ReadFull(mock.conn, buf[:])
+		count := binary.LittleEndian.Uint64(buf[:])
+		assert.Equal(t, uint64(0), count)
+
+		// No items to read.
+
+		// Send LogLast.
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		mock.conn.Write(buf[:])
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result := <-client.AddMultipleToStore(nil, false, false)
+	assert.NoError(t, result.Err)
+}
