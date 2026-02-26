@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 
 	"github.com/nix-community/go-nix/pkg/wire"
@@ -21,6 +22,13 @@ func Handshake(conn net.Conn) (*HandshakeInfo, error) {
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
 
+	return handshakeWithBufIO(r, w)
+}
+
+// handshakeWithBufIO performs the Nix daemon protocol handshake using the
+// provided buffered reader and writer. This allows both the standalone
+// Handshake function and the Client to share the same handshake logic.
+func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	// 1. Client sends ClientMagic — flush.
 	if err := wire.WriteUint64(w, ClientMagic); err != nil {
 		return nil, &ProtocolError{Op: "handshake write client magic", Err: err}
