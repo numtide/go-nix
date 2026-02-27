@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"io"
 	"net"
@@ -118,9 +119,9 @@ func TestClientIsValidPath(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.IsValidPath("/nix/store/abc-test")
-	assert.NoError(t, result.Err)
-	assert.True(t, result.Value)
+	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
+	assert.True(t, valid)
 }
 
 func TestClientIsValidPathFalse(t *testing.T) {
@@ -136,9 +137,9 @@ func TestClientIsValidPathFalse(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.IsValidPath("/nix/store/nonexistent")
-	assert.NoError(t, result.Err)
-	assert.False(t, result.Value)
+	valid, err := client.IsValidPath(context.Background(), "/nix/store/nonexistent")
+	assert.NoError(t, err)
+	assert.False(t, valid)
 }
 
 func TestClientWithLogChannel(t *testing.T) {
@@ -270,18 +271,18 @@ func TestClientQueryPathInfo(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.QueryPathInfo("/nix/store/abc-test")
-	assert.NoError(t, result.Err)
-	assert.NotNil(t, result.Value)
-	assert.Equal(t, expected.StorePath, result.Value.StorePath)
-	assert.Equal(t, expected.Deriver, result.Value.Deriver)
-	assert.Equal(t, expected.NarHash, result.Value.NarHash)
-	assert.Equal(t, expected.References, result.Value.References)
-	assert.Equal(t, expected.RegistrationTime, result.Value.RegistrationTime)
-	assert.Equal(t, expected.NarSize, result.Value.NarSize)
-	assert.Equal(t, expected.Ultimate, result.Value.Ultimate)
-	assert.Equal(t, expected.Sigs, result.Value.Sigs)
-	assert.Equal(t, expected.CA, result.Value.CA)
+	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
+	assert.NotNil(t, info)
+	assert.Equal(t, expected.StorePath, info.StorePath)
+	assert.Equal(t, expected.Deriver, info.Deriver)
+	assert.Equal(t, expected.NarHash, info.NarHash)
+	assert.Equal(t, expected.References, info.References)
+	assert.Equal(t, expected.RegistrationTime, info.RegistrationTime)
+	assert.Equal(t, expected.NarSize, info.NarSize)
+	assert.Equal(t, expected.Ultimate, info.Ultimate)
+	assert.Equal(t, expected.Sigs, info.Sigs)
+	assert.Equal(t, expected.CA, info.CA)
 }
 
 func TestClientQueryPathInfoNotFound(t *testing.T) {
@@ -297,9 +298,9 @@ func TestClientQueryPathInfoNotFound(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.QueryPathInfo("/nix/store/nonexistent")
-	assert.NoError(t, result.Err)
-	assert.Nil(t, result.Value)
+	info, err := client.QueryPathInfo(context.Background(), "/nix/store/nonexistent")
+	assert.NoError(t, err)
+	assert.Nil(t, info)
 }
 
 func TestClientNarFromPath(t *testing.T) {
@@ -337,17 +338,17 @@ func TestClientNarFromPath(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.NarFromPath("/nix/store/abc-test")
-	assert.NoError(t, result.Err)
+	rc, err := client.NarFromPath(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
 
 	// The returned data is the complete NAR including wire formatting.
-	data, err := io.ReadAll(result.Value)
+	data, err := io.ReadAll(rc)
 	assert.NoError(t, err)
 	assert.True(t, len(data) > 0)
 	// Check that the NAR contains the file content.
 	assert.Contains(t, string(data), fileContent)
 
-	err = result.Value.Close()
+	err = rc.Close()
 	assert.NoError(t, err)
 }
 
@@ -365,8 +366,8 @@ func TestClientBuildPaths(t *testing.T) {
 		assert.Equal(t, uint64(daemon.OpBuildPaths), op)
 
 		// Read paths (count + strings)
-		io.ReadFull(mock.conn, buf[:])        // count = 1
-		wire.ReadString(mock.conn, 64*1024)   // path
+		io.ReadFull(mock.conn, buf[:])      // count = 1
+		wire.ReadString(mock.conn, 64*1024) // path
 
 		// Read build mode
 		io.ReadFull(mock.conn, buf[:]) // mode
@@ -384,8 +385,8 @@ func TestClientBuildPaths(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.BuildPaths([]string{"/nix/store/abc-test.drv"}, daemon.BuildModeNormal)
-	assert.NoError(t, result.Err)
+	err = client.BuildPaths(context.Background(), []string{"/nix/store/abc-test.drv"}, daemon.BuildModeNormal)
+	assert.NoError(t, err)
 }
 
 func TestClientEnsurePath(t *testing.T) {
@@ -416,8 +417,8 @@ func TestClientEnsurePath(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.EnsurePath("/nix/store/abc-test")
-	assert.NoError(t, result.Err)
+	err = client.EnsurePath(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
 }
 
 func TestClientBuildPathsWithResults(t *testing.T) {
@@ -434,7 +435,7 @@ func TestClientBuildPathsWithResults(t *testing.T) {
 		assert.Equal(t, uint64(daemon.OpBuildPathsWithResults), op)
 
 		// Read paths (count + strings)
-		io.ReadFull(mock.conn, buf[:]) // count = 1
+		io.ReadFull(mock.conn, buf[:])      // count = 1
 		wire.ReadString(mock.conn, 64*1024) // path
 
 		// Read build mode
@@ -454,8 +455,8 @@ func TestClientBuildPathsWithResults(t *testing.T) {
 		// BuildResult fields
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.BuildStatusBuilt)) // status
 		mock.conn.Write(buf[:])
-		writeWireStringTo(mock.conn, "")  // errorMsg
-		binary.LittleEndian.PutUint64(buf[:], 1) // timesBuilt
+		writeWireStringTo(mock.conn, "")                                       // errorMsg
+		binary.LittleEndian.PutUint64(buf[:], 1)                              // timesBuilt
 		mock.conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 0) // isNonDeterministic
 		mock.conn.Write(buf[:])
@@ -471,18 +472,19 @@ func TestClientBuildPathsWithResults(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.BuildPathsWithResults(
+	results, err := client.BuildPathsWithResults(
+		context.Background(),
 		[]string{"/nix/store/abc-test.drv!out"},
 		daemon.BuildModeNormal,
 	)
-	assert.NoError(t, result.Err)
-	assert.Len(t, result.Value, 1)
-	assert.Equal(t, daemon.BuildStatusBuilt, result.Value[0].Status)
-	assert.Equal(t, "", result.Value[0].ErrorMsg)
-	assert.Equal(t, uint64(1), result.Value[0].TimesBuilt)
-	assert.False(t, result.Value[0].IsNonDeterministic)
-	assert.Equal(t, uint64(1700000000), result.Value[0].StartTime)
-	assert.Equal(t, uint64(1700000060), result.Value[0].StopTime)
+	assert.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, daemon.BuildStatusBuilt, results[0].Status)
+	assert.Equal(t, "", results[0].ErrorMsg)
+	assert.Equal(t, uint64(1), results[0].TimesBuilt)
+	assert.False(t, results[0].IsNonDeterministic)
+	assert.Equal(t, uint64(1700000000), results[0].StartTime)
+	assert.Equal(t, uint64(1700000060), results[0].StopTime)
 }
 
 func TestClientAddTempRoot(t *testing.T) {
@@ -509,8 +511,8 @@ func TestClientAddTempRoot(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.AddTempRoot("/nix/store/abc-test")
-	assert.NoError(t, result.Err)
+	err = client.AddTempRoot(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
 }
 
 func TestClientAddIndirectRoot(t *testing.T) {
@@ -537,8 +539,8 @@ func TestClientAddIndirectRoot(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.AddIndirectRoot("/home/user/result")
-	assert.NoError(t, result.Err)
+	err = client.AddIndirectRoot(context.Background(), "/home/user/result")
+	assert.NoError(t, err)
 }
 
 func TestClientAddPermRoot(t *testing.T) {
@@ -569,9 +571,9 @@ func TestClientAddPermRoot(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.AddPermRoot("/nix/store/abc-test", "/home/user/result")
-	assert.NoError(t, result.Err)
-	assert.Equal(t, "/nix/var/nix/gcroots/auto/abc", result.Value)
+	resultPath, err := client.AddPermRoot(context.Background(), "/nix/store/abc-test", "/home/user/result")
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/var/nix/gcroots/auto/abc", resultPath)
 }
 
 func TestClientAddSignatures(t *testing.T) {
@@ -605,8 +607,8 @@ func TestClientAddSignatures(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.AddSignatures("/nix/store/abc-test", []string{"sig1", "sig2"})
-	assert.NoError(t, result.Err)
+	err = client.AddSignatures(context.Background(), "/nix/store/abc-test", []string{"sig1", "sig2"})
+	assert.NoError(t, err)
 }
 
 func TestClientRegisterDrvOutput(t *testing.T) {
@@ -633,8 +635,8 @@ func TestClientRegisterDrvOutput(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.RegisterDrvOutput("sha256:abc!out")
-	assert.NoError(t, result.Err)
+	err = client.RegisterDrvOutput(context.Background(), "sha256:abc!out")
+	assert.NoError(t, err)
 }
 
 func TestClientAddToStoreNar(t *testing.T) {
@@ -712,8 +714,8 @@ func TestClientAddToStoreNar(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.AddToStoreNar(info, bytes.NewReader(narData), false, true)
-	assert.NoError(t, result.Err)
+	err = client.AddToStoreNar(context.Background(), info, bytes.NewReader(narData), false, true)
+	assert.NoError(t, err)
 }
 
 func TestClientFindRoots(t *testing.T) {
@@ -742,9 +744,9 @@ func TestClientFindRoots(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.FindRoots()
-	assert.NoError(t, result.Err)
-	assert.Equal(t, map[string]string{"/proc/1/root": "/nix/store/abc-test"}, result.Value)
+	roots, err := client.FindRoots(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]string{"/proc/1/root": "/nix/store/abc-test"}, roots)
 }
 
 func TestClientBuildDerivation(t *testing.T) {
@@ -837,12 +839,12 @@ func TestClientBuildDerivation(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.BuildDerivation("/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
-	assert.NoError(t, result.Err)
-	assert.Equal(t, daemon.BuildStatusBuilt, result.Value.Status)
-	assert.Equal(t, uint64(1), result.Value.TimesBuilt)
-	assert.Equal(t, uint64(100), result.Value.StartTime)
-	assert.Equal(t, uint64(200), result.Value.StopTime)
+	result, err := client.BuildDerivation(context.Background(), "/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
+	assert.NoError(t, err)
+	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
+	assert.Equal(t, uint64(1), result.TimesBuilt)
+	assert.Equal(t, uint64(100), result.StartTime)
+	assert.Equal(t, uint64(200), result.StopTime)
 }
 
 func TestClientAddBuildLog(t *testing.T) {
@@ -895,8 +897,8 @@ func TestClientAddBuildLog(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.AddBuildLog("/nix/store/abc-test.drv", strings.NewReader(logContent))
-	assert.NoError(t, result.Err)
+	err = client.AddBuildLog(context.Background(), "/nix/store/abc-test.drv", strings.NewReader(logContent))
+	assert.NoError(t, err)
 }
 
 func TestClientAddMultipleToStore(t *testing.T) {
@@ -1004,8 +1006,8 @@ func TestClientAddMultipleToStore(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.AddMultipleToStore(items, true, false)
-	assert.NoError(t, result.Err)
+	err = client.AddMultipleToStore(context.Background(), items, true, false)
+	assert.NoError(t, err)
 }
 
 func TestClientAddMultipleToStoreEmpty(t *testing.T) {
@@ -1050,6 +1052,6 @@ func TestClientAddMultipleToStoreEmpty(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	result := <-client.AddMultipleToStore(nil, false, false)
-	assert.NoError(t, result.Err)
+	err = client.AddMultipleToStore(context.Background(), nil, false, false)
+	assert.NoError(t, err)
 }

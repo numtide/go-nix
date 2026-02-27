@@ -2,19 +2,17 @@ package daemon
 
 import (
 	"bufio"
-	"bytes"
+	"context"
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
-// Result wraps a value or error from an async operation.
-type Result[T any] struct {
-	Value T
-	Err   error
-}
+// noDeadline is the zero time used to clear connection deadlines.
+var noDeadline time.Time //nolint:gochecknoglobals
 
 // Client connects to a Nix daemon and provides methods to interact with it.
 type Client struct {
@@ -76,8 +74,105 @@ func (c *Client) Info() *HandshakeInfo {
 	return c.info
 }
 
-// doOp is the internal operation dispatcher. It serializes operations on the
-// connection by holding the mutex for the entire request-response cycle.
+// lockForCtx acquires the mutex and registers a context cancellation callback
+// that sets a deadline on the connection to break blocked I/O. Returns a
+// cancel function that must be called to deregister the callback and reset the
+// deadline. On error paths the caller should call release() then c.mu.Unlock().
+func (c *Client) lockForCtx(ctx context.Context) func() bool {
+	c.mu.Lock()
+
+	return context.AfterFunc(ctx, func() {
+		c.conn.SetDeadline(time.Now()) //nolint:errcheck // break blocked I/O
+	})
+}
+
+// release deregisters a context cancellation callback and resets the
+// connection deadline. Used on error paths in Do/DoStreaming.
+func (c *Client) release(cancel func() bool) {
+	cancel()
+	c.conn.SetDeadline(noDeadline) //nolint:errcheck // best-effort reset
+	c.mu.Unlock()
+}
+
+// Do executes a simple (non-streaming) operation. It locks the connection,
+// writes the operation code, copies req to the wire (if non-nil), flushes,
+// drains stderr, and returns an OpResponse for reading the reply. The caller
+// must call OpResponse.Close when done.
+func (c *Client) Do(
+	ctx context.Context, op Operation, req io.Reader,
+) (*OpResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	cancel := c.lockForCtx(ctx)
+
+	if err := wire.WriteUint64(c.w, uint64(op)); err != nil {
+		c.release(cancel)
+
+		return nil, &ProtocolError{Op: op.String() + " write op", Err: err}
+	}
+
+	if req != nil {
+		if _, err := io.Copy(c.w, req); err != nil {
+			c.release(cancel)
+
+			return nil, &ProtocolError{Op: op.String() + " write request", Err: err}
+		}
+	}
+
+	if err := c.w.Flush(); err != nil {
+		c.release(cancel)
+
+		return nil, &ProtocolError{Op: op.String() + " flush", Err: err}
+	}
+
+	if err := ProcessStderr(c.r, c.logs); err != nil {
+		c.release(cancel)
+
+		return nil, err
+	}
+
+	return &OpResponse{
+		r:      c.r,
+		conn:   c.conn,
+		mu:     &c.mu,
+		cancel: cancel,
+	}, nil
+}
+
+// DoStreaming starts a streaming operation. It locks the connection, writes
+// the operation code, and returns an OpWriter for multi-phase request
+// writing. The caller must eventually call OpWriter.CloseRequest or
+// OpWriter.Abort.
+func (c *Client) DoStreaming(
+	ctx context.Context, op Operation,
+) (*OpWriter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	cancel := c.lockForCtx(ctx)
+
+	if err := wire.WriteUint64(c.w, uint64(op)); err != nil {
+		c.release(cancel)
+
+		return nil, &ProtocolError{Op: op.String() + " write op", Err: err}
+	}
+
+	return &OpWriter{
+		w:      c.w,
+		r:      c.r,
+		conn:   c.conn,
+		mu:     &c.mu,
+		logs:   c.logs,
+		op:     op,
+		cancel: cancel,
+	}, nil
+}
+
+// doOp is the internal operation dispatcher. It serializes operations on
+// the connection by holding the mutex for the entire request-response cycle.
 //
 // Sequence:
 //  1. Lock mutex
@@ -88,9 +183,18 @@ func (c *Client) Info() *HandshakeInfo {
 //  6. Call readResp(c.r) if non-nil
 //  7. Unlock mutex
 //  8. Return any error
-func (c *Client) doOp(op Operation, writeReq func(w io.Writer) error, readResp func(r io.Reader) error) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *Client) doOp(
+	ctx context.Context,
+	op Operation,
+	writeReq func(w io.Writer) error,
+	readResp func(r io.Reader) error,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	cancel := c.lockForCtx(ctx)
+	defer c.release(cancel)
 
 	// Write operation code.
 	if err := wire.WriteUint64(c.w, uint64(op)); err != nil {
@@ -125,986 +229,762 @@ func (c *Client) doOp(op Operation, writeReq func(w io.Writer) error, readResp f
 }
 
 // IsValidPath checks whether the given store path is valid (exists in the
-// store). It returns a channel that will receive exactly one Result.
-func (c *Client) IsValidPath(path string) <-chan Result[bool] {
-	ch := make(chan Result[bool], 1)
+// store).
+func (c *Client) IsValidPath(ctx context.Context, path string) (bool, error) {
+	var valid bool
 
-	go func() {
-		var valid bool
+	err := c.doOp(ctx, OpIsValidPath,
+		func(w io.Writer) error {
+			return wire.WriteString(w, path)
+		},
+		func(r io.Reader) error {
+			v, err := wire.ReadBool(r)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpIsValidPath,
-			func(w io.Writer) error {
-				return wire.WriteString(w, path)
-			},
-			func(r io.Reader) error {
-				v, err := wire.ReadBool(r)
-				if err != nil {
-					return err
-				}
+			valid = v
 
-				valid = v
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[bool]{Value: valid, Err: err}
-	}()
-
-	return ch
+	return valid, err
 }
 
 // QueryPathInfo retrieves the metadata for the given store path. If the path
-// is not found in the store, the result Value is nil with no error.
-func (c *Client) QueryPathInfo(path string) <-chan Result[*PathInfo] {
-	ch := make(chan Result[*PathInfo], 1)
+// is not found in the store, the result is nil with no error.
+func (c *Client) QueryPathInfo(ctx context.Context, path string) (*PathInfo, error) {
+	var info *PathInfo
 
-	go func() {
-		var info *PathInfo
-
-		err := c.doOp(OpQueryPathInfo,
-			func(w io.Writer) error {
-				return wire.WriteString(w, path)
-			},
-			func(r io.Reader) error {
-				found, err := wire.ReadBool(r)
-				if err != nil {
-					return err
-				}
-
-				if !found {
-					return nil
-				}
-
-				info, err = ReadPathInfo(r, path)
-
+	err := c.doOp(ctx, OpQueryPathInfo,
+		func(w io.Writer) error {
+			return wire.WriteString(w, path)
+		},
+		func(r io.Reader) error {
+			found, err := wire.ReadBool(r)
+			if err != nil {
 				return err
-			},
-		)
+			}
 
-		ch <- Result[*PathInfo]{Value: info, Err: err}
-	}()
+			if !found {
+				return nil
+			}
 
-	return ch
+			info, err = ReadPathInfo(r, path)
+
+			return err
+		},
+	)
+
+	return info, err
 }
 
 // QueryPathFromHashPart looks up a store path by its hash part. If nothing
-// is found, the result Value is an empty string with no error.
-func (c *Client) QueryPathFromHashPart(hashPart string) <-chan Result[string] {
-	ch := make(chan Result[string], 1)
+// is found, the result is an empty string with no error.
+func (c *Client) QueryPathFromHashPart(ctx context.Context, hashPart string) (string, error) {
+	var storePath string
 
-	go func() {
-		var storePath string
+	err := c.doOp(ctx, OpQueryPathFromHashPart,
+		func(w io.Writer) error {
+			return wire.WriteString(w, hashPart)
+		},
+		func(r io.Reader) error {
+			s, err := wire.ReadString(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpQueryPathFromHashPart,
-			func(w io.Writer) error {
-				return wire.WriteString(w, hashPart)
-			},
-			func(r io.Reader) error {
-				s, err := wire.ReadString(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			storePath = s
 
-				storePath = s
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[string]{Value: storePath, Err: err}
-	}()
-
-	return ch
+	return storePath, err
 }
 
 // QueryAllValidPaths returns all valid store paths known to the daemon.
-func (c *Client) QueryAllValidPaths() <-chan Result[[]string] {
-	ch := make(chan Result[[]string], 1)
+func (c *Client) QueryAllValidPaths(ctx context.Context) ([]string, error) {
+	var paths []string
 
-	go func() {
-		var paths []string
+	err := c.doOp(ctx, OpQueryAllValidPaths,
+		nil,
+		func(r io.Reader) error {
+			ss, err := ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpQueryAllValidPaths,
-			nil,
-			func(r io.Reader) error {
-				ss, err := ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			paths = ss
 
-				paths = ss
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[[]string]{Value: paths, Err: err}
-	}()
-
-	return ch
+	return paths, err
 }
 
 // QueryValidPaths returns the subset of the given paths that are valid. If
 // substituteOk is true, the daemon may attempt to substitute missing paths.
-func (c *Client) QueryValidPaths(paths []string, substituteOk bool) <-chan Result[[]string] {
-	ch := make(chan Result[[]string], 1)
+func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substituteOk bool) ([]string, error) {
+	var valid []string
 
-	go func() {
-		var valid []string
+	err := c.doOp(ctx, OpQueryValidPaths,
+		func(w io.Writer) error {
+			if err := WriteStrings(w, paths); err != nil {
+				return err
+			}
 
-		err := c.doOp(OpQueryValidPaths,
-			func(w io.Writer) error {
-				if err := WriteStrings(w, paths); err != nil {
-					return err
-				}
+			return wire.WriteBool(w, substituteOk)
+		},
+		func(r io.Reader) error {
+			ss, err := ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-				return wire.WriteBool(w, substituteOk)
-			},
-			func(r io.Reader) error {
-				ss, err := ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			valid = ss
 
-				valid = ss
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[[]string]{Value: valid, Err: err}
-	}()
-
-	return ch
+	return valid, err
 }
 
 // QuerySubstitutablePaths returns the subset of the given paths that can be
 // substituted from a binary cache or other substitute source.
-func (c *Client) QuerySubstitutablePaths(paths []string) <-chan Result[[]string] {
-	ch := make(chan Result[[]string], 1)
+func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([]string, error) {
+	var substitutable []string
 
-	go func() {
-		var substitutable []string
+	err := c.doOp(ctx, OpQuerySubstitutablePaths,
+		func(w io.Writer) error {
+			return WriteStrings(w, paths)
+		},
+		func(r io.Reader) error {
+			ss, err := ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpQuerySubstitutablePaths,
-			func(w io.Writer) error {
-				return WriteStrings(w, paths)
-			},
-			func(r io.Reader) error {
-				ss, err := ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			substitutable = ss
 
-				substitutable = ss
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[[]string]{Value: substitutable, Err: err}
-	}()
-
-	return ch
+	return substitutable, err
 }
 
 // QueryValidDerivers returns the derivations known to have produced the given
 // store path.
-func (c *Client) QueryValidDerivers(path string) <-chan Result[[]string] {
-	ch := make(chan Result[[]string], 1)
+func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string, error) {
+	var derivers []string
 
-	go func() {
-		var derivers []string
+	err := c.doOp(ctx, OpQueryValidDerivers,
+		func(w io.Writer) error {
+			return wire.WriteString(w, path)
+		},
+		func(r io.Reader) error {
+			ss, err := ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpQueryValidDerivers,
-			func(w io.Writer) error {
-				return wire.WriteString(w, path)
-			},
-			func(r io.Reader) error {
-				ss, err := ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			derivers = ss
 
-				derivers = ss
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[[]string]{Value: derivers, Err: err}
-	}()
-
-	return ch
+	return derivers, err
 }
 
 // QueryReferrers returns the set of store paths that reference (depend on)
 // the given path.
-func (c *Client) QueryReferrers(path string) <-chan Result[[]string] {
-	ch := make(chan Result[[]string], 1)
+func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, error) {
+	var referrers []string
 
-	go func() {
-		var referrers []string
+	err := c.doOp(ctx, OpQueryReferrers,
+		func(w io.Writer) error {
+			return wire.WriteString(w, path)
+		},
+		func(r io.Reader) error {
+			ss, err := ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpQueryReferrers,
-			func(w io.Writer) error {
-				return wire.WriteString(w, path)
-			},
-			func(r io.Reader) error {
-				ss, err := ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			referrers = ss
 
-				referrers = ss
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[[]string]{Value: referrers, Err: err}
-	}()
-
-	return ch
+	return referrers, err
 }
 
 // QueryDerivationOutputMap returns a map from output names to store paths
 // for the given derivation.
-func (c *Client) QueryDerivationOutputMap(drvPath string) <-chan Result[map[string]string] {
-	ch := make(chan Result[map[string]string], 1)
+func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (map[string]string, error) {
+	var outputs map[string]string
 
-	go func() {
-		var outputs map[string]string
+	err := c.doOp(ctx, OpQueryDerivationOutputMap,
+		func(w io.Writer) error {
+			return wire.WriteString(w, drvPath)
+		},
+		func(r io.Reader) error {
+			m, err := ReadStringMap(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpQueryDerivationOutputMap,
-			func(w io.Writer) error {
-				return wire.WriteString(w, drvPath)
-			},
-			func(r io.Reader) error {
-				m, err := ReadStringMap(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			outputs = m
 
-				outputs = m
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[map[string]string]{Value: outputs, Err: err}
-	}()
-
-	return ch
+	return outputs, err
 }
 
 // QueryMissing determines which of the given paths need to be built,
 // substituted, or are unknown. It also reports the expected download and
 // unpacked NAR sizes.
-func (c *Client) QueryMissing(paths []string) <-chan Result[*MissingInfo] {
-	ch := make(chan Result[*MissingInfo], 1)
+func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo, error) {
+	var info MissingInfo
 
-	go func() {
-		var info MissingInfo
+	err := c.doOp(ctx, OpQueryMissing,
+		func(w io.Writer) error {
+			return WriteStrings(w, paths)
+		},
+		func(r io.Reader) error {
+			var err error
 
-		err := c.doOp(OpQueryMissing,
-			func(w io.Writer) error {
-				return WriteStrings(w, paths)
-			},
-			func(r io.Reader) error {
-				var err error
-
-				info.WillBuild, err = ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
-
-				info.WillSubstitute, err = ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
-
-				info.Unknown, err = ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
-
-				info.DownloadSize, err = wire.ReadUint64(r)
-				if err != nil {
-					return err
-				}
-
-				info.NarSize, err = wire.ReadUint64(r)
-
+			info.WillBuild, err = ReadStrings(r, MaxStringSize)
+			if err != nil {
 				return err
-			},
-		)
+			}
 
-		ch <- Result[*MissingInfo]{Value: &info, Err: err}
-	}()
+			info.WillSubstitute, err = ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-	return ch
+			info.Unknown, err = ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
+
+			info.DownloadSize, err = wire.ReadUint64(r)
+			if err != nil {
+				return err
+			}
+
+			info.NarSize, err = wire.ReadUint64(r)
+
+			return err
+		},
+	)
+
+	return &info, err
 }
 
-// NarFromPath returns the NAR serialisation of the given store path.
-// The complete NAR is buffered in memory before returning. The returned
-// io.ReadCloser does not hold the connection lock.
-func (c *Client) NarFromPath(path string) <-chan Result[io.ReadCloser] {
-	ch := make(chan Result[io.ReadCloser], 1)
+// NarFromPath returns the NAR serialisation of the given store path as a
+// streaming reader. The returned io.ReadCloser holds the connection lock;
+// the caller must read the complete NAR and call Close to release it.
+func (c *Client) NarFromPath(
+	ctx context.Context, path string,
+) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	cancel := c.lockForCtx(ctx)
+
+	// Write operation code.
+	if err := wire.WriteUint64(c.w, uint64(OpNarFromPath)); err != nil {
+		c.release(cancel)
+
+		return nil, &ProtocolError{Op: "NarFromPath write op", Err: err}
+	}
+
+	// Write request payload.
+	if err := wire.WriteString(c.w, path); err != nil {
+		c.release(cancel)
+
+		return nil, &ProtocolError{Op: "NarFromPath write request", Err: err}
+	}
+
+	// Flush buffered writer.
+	if err := c.w.Flush(); err != nil {
+		c.release(cancel)
+
+		return nil, &ProtocolError{Op: "NarFromPath flush", Err: err}
+	}
+
+	// Drain stderr log messages until LogLast.
+	if err := ProcessStderr(c.r, c.logs); err != nil {
+		c.release(cancel)
+
+		return nil, err
+	}
+
+	// The daemon sends raw NAR data (self-delimiting format). Use io.Pipe
+	// with a goroutine running copyNAR to stream the data without buffering
+	// the entire NAR in memory.
+	pr, pw := io.Pipe()
 
 	go func() {
-		c.mu.Lock()
-
-		// Write operation code.
-		if err := wire.WriteUint64(c.w, uint64(OpNarFromPath)); err != nil {
-			c.mu.Unlock()
-			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath write op", Err: err}}
-
-			return
-		}
-
-		// Write request payload.
-		if err := wire.WriteString(c.w, path); err != nil {
-			c.mu.Unlock()
-			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath write request", Err: err}}
-
-			return
-		}
-
-		// Flush buffered writer.
-		if err := c.w.Flush(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath flush", Err: err}}
-
-			return
-		}
-
-		// Drain stderr log messages until LogLast.
-		if err := ProcessStderr(c.r, c.logs); err != nil {
-			c.mu.Unlock()
-			ch <- Result[io.ReadCloser]{Err: err}
-
-			return
-		}
-
-		// The daemon sends raw NAR data (self-delimiting format). Use
-		// copyNAR to read exactly one complete NAR into a buffer.
-		var buf bytes.Buffer
-
-		if err := copyNAR(&buf, c.r); err != nil {
-			c.mu.Unlock()
-			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath read NAR", Err: err}}
-
-			return
-		}
-
-		c.mu.Unlock()
-
-		ch <- Result[io.ReadCloser]{Value: io.NopCloser(bytes.NewReader(buf.Bytes()))}
+		err := copyNAR(pw, c.r)
+		c.release(cancel)
+		pw.CloseWithError(err)
 	}()
 
-	return ch
+	return pr, nil
 }
 
 // BuildPaths asks the daemon to build the given set of derivation paths or
 // store paths. mode controls rebuild behaviour.
-func (c *Client) BuildPaths(paths []string, mode BuildMode) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
-
-	go func() {
-		err := c.doOp(OpBuildPaths,
-			func(w io.Writer) error {
-				if err := WriteStrings(w, paths); err != nil {
-					return err
-				}
-
-				return wire.WriteUint64(w, uint64(mode))
-			},
-			func(r io.Reader) error {
-				// Daemon responds with a "1" to acknowledge.
-				_, err := wire.ReadUint64(r)
-
+func (c *Client) BuildPaths(ctx context.Context, paths []string, mode BuildMode) error {
+	return c.doOp(ctx, OpBuildPaths,
+		func(w io.Writer) error {
+			if err := WriteStrings(w, paths); err != nil {
 				return err
-			},
-		)
+			}
 
-		ch <- Result[struct{}]{Err: err}
-	}()
+			return wire.WriteUint64(w, uint64(mode))
+		},
+		func(r io.Reader) error {
+			// Daemon responds with a "1" to acknowledge.
+			_, err := wire.ReadUint64(r)
 
-	return ch
+			return err
+		},
+	)
 }
 
 // BuildPathsWithResults is like BuildPaths but returns a BuildResult for each
 // derived path. Requires protocol >= 1.34.
-func (c *Client) BuildPathsWithResults(paths []string, mode BuildMode) <-chan Result[[]BuildResult] {
-	ch := make(chan Result[[]BuildResult], 1)
+func (c *Client) BuildPathsWithResults(ctx context.Context, paths []string, mode BuildMode) ([]BuildResult, error) {
+	var results []BuildResult
 
-	go func() {
-		var results []BuildResult
+	err := c.doOp(ctx, OpBuildPathsWithResults,
+		func(w io.Writer) error {
+			if err := WriteStrings(w, paths); err != nil {
+				return err
+			}
 
-		err := c.doOp(OpBuildPathsWithResults,
-			func(w io.Writer) error {
-				if err := WriteStrings(w, paths); err != nil {
-					return err
-				}
+			return wire.WriteUint64(w, uint64(mode))
+		},
+		func(r io.Reader) error {
+			count, err := wire.ReadUint64(r)
+			if err != nil {
+				return err
+			}
 
-				return wire.WriteUint64(w, uint64(mode))
-			},
-			func(r io.Reader) error {
-				count, err := wire.ReadUint64(r)
+			results = make([]BuildResult, count)
+			for i := uint64(0); i < count; i++ {
+				// Each entry is a DerivedPath string (ignored) followed by a BuildResult.
+				_, err := wire.ReadString(r, MaxStringSize)
 				if err != nil {
 					return err
 				}
 
-				results = make([]BuildResult, count)
-				for i := uint64(0); i < count; i++ {
-					// Each entry is a DerivedPath string (ignored) followed by a BuildResult.
-					_, err := wire.ReadString(r, MaxStringSize)
-					if err != nil {
-						return err
-					}
-
-					br, err := ReadBuildResult(r)
-					if err != nil {
-						return err
-					}
-
-					results[i] = *br
-				}
-
-				return nil
-			},
-		)
-
-		ch <- Result[[]BuildResult]{Value: results, Err: err}
-	}()
-
-	return ch
-}
-
-// EnsurePath ensures that the given store path is valid by building or
-// substituting it if necessary.
-func (c *Client) EnsurePath(path string) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
-
-	go func() {
-		err := c.doOp(OpEnsurePath,
-			func(w io.Writer) error {
-				return wire.WriteString(w, path)
-			},
-			func(r io.Reader) error {
-				// Daemon responds with a "1" to acknowledge.
-				_, err := wire.ReadUint64(r)
-
-				return err
-			},
-		)
-
-		ch <- Result[struct{}]{Err: err}
-	}()
-
-	return ch
-}
-
-// BuildDerivation builds a derivation given its store path and definition.
-// The derivation is serialized as a BasicDerivation on the wire, and mode
-// controls rebuild behaviour. Returns a channel that will receive exactly
-// one Result containing the BuildResult.
-func (c *Client) BuildDerivation(drvPath string, drv *BasicDerivation, mode BuildMode) <-chan Result[*BuildResult] {
-	ch := make(chan Result[*BuildResult], 1)
-
-	go func() {
-		var result *BuildResult
-
-		err := c.doOp(OpBuildDerivation,
-			func(w io.Writer) error {
-				if err := wire.WriteString(w, drvPath); err != nil {
-					return err
-				}
-
-				if err := WriteBasicDerivation(w, drv); err != nil {
-					return err
-				}
-
-				return wire.WriteUint64(w, uint64(mode))
-			},
-			func(r io.Reader) error {
 				br, err := ReadBuildResult(r)
 				if err != nil {
 					return err
 				}
 
-				result = br
+				results[i] = *br
+			}
 
-				return nil
-			},
-		)
+			return nil
+		},
+	)
 
-		ch <- Result[*BuildResult]{Value: result, Err: err}
-	}()
+	return results, err
+}
 
-	return ch
+// EnsurePath ensures that the given store path is valid by building or
+// substituting it if necessary.
+func (c *Client) EnsurePath(ctx context.Context, path string) error {
+	return c.doOp(ctx, OpEnsurePath,
+		func(w io.Writer) error {
+			return wire.WriteString(w, path)
+		},
+		func(r io.Reader) error {
+			// Daemon responds with a "1" to acknowledge.
+			_, err := wire.ReadUint64(r)
+
+			return err
+		},
+	)
+}
+
+// BuildDerivation builds a derivation given its store path and definition.
+// The derivation is serialized as a BasicDerivation on the wire, and mode
+// controls rebuild behaviour.
+func (c *Client) BuildDerivation(
+	ctx context.Context, drvPath string, drv *BasicDerivation, mode BuildMode,
+) (*BuildResult, error) {
+	var result *BuildResult
+
+	err := c.doOp(ctx, OpBuildDerivation,
+		func(w io.Writer) error {
+			if err := wire.WriteString(w, drvPath); err != nil {
+				return err
+			}
+
+			if err := WriteBasicDerivation(w, drv); err != nil {
+				return err
+			}
+
+			return wire.WriteUint64(w, uint64(mode))
+		},
+		func(r io.Reader) error {
+			br, err := ReadBuildResult(r)
+			if err != nil {
+				return err
+			}
+
+			result = br
+
+			return nil
+		},
+	)
+
+	return result, err
 }
 
 // QueryRealisation looks up content-addressed realisations for the given
 // output identifier.
-func (c *Client) QueryRealisation(outputID string) <-chan Result[[]string] {
-	ch := make(chan Result[[]string], 1)
+func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]string, error) {
+	var realisations []string
 
-	go func() {
-		var realisations []string
+	err := c.doOp(ctx, OpQueryRealisation,
+		func(w io.Writer) error {
+			return wire.WriteString(w, outputID)
+		},
+		func(r io.Reader) error {
+			ss, err := ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpQueryRealisation,
-			func(w io.Writer) error {
-				return wire.WriteString(w, outputID)
-			},
-			func(r io.Reader) error {
-				ss, err := ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			realisations = ss
 
-				realisations = ss
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[[]string]{Value: realisations, Err: err}
-	}()
-
-	return ch
+	return realisations, err
 }
 
 // AddTempRoot adds a temporary GC root for the given store path. Temporary
 // roots prevent the garbage collector from deleting the path for the duration
 // of the daemon session.
-func (c *Client) AddTempRoot(path string) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
-
-	go func() {
-		err := c.doOp(OpAddTempRoot,
-			func(w io.Writer) error {
-				return wire.WriteString(w, path)
-			},
-			nil,
-		)
-
-		ch <- Result[struct{}]{Err: err}
-	}()
-
-	return ch
+func (c *Client) AddTempRoot(ctx context.Context, path string) error {
+	return c.doOp(ctx, OpAddTempRoot,
+		func(w io.Writer) error {
+			return wire.WriteString(w, path)
+		},
+		nil,
+	)
 }
 
 // AddIndirectRoot adds an indirect GC root. The path should be a symlink
 // outside the store that points to a store path.
-func (c *Client) AddIndirectRoot(path string) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
-
-	go func() {
-		err := c.doOp(OpAddIndirectRoot,
-			func(w io.Writer) error {
-				return wire.WriteString(w, path)
-			},
-			nil,
-		)
-
-		ch <- Result[struct{}]{Err: err}
-	}()
-
-	return ch
+func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
+	return c.doOp(ctx, OpAddIndirectRoot,
+		func(w io.Writer) error {
+			return wire.WriteString(w, path)
+		},
+		nil,
+	)
 }
 
 // AddPermRoot adds a permanent GC root linking gcRoot to storePath. Returns
 // the resulting root path.
-func (c *Client) AddPermRoot(storePath string, gcRoot string) <-chan Result[string] {
-	ch := make(chan Result[string], 1)
+func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot string) (string, error) {
+	var resultPath string
 
-	go func() {
-		var resultPath string
+	err := c.doOp(ctx, OpAddPermRoot,
+		func(w io.Writer) error {
+			if err := wire.WriteString(w, storePath); err != nil {
+				return err
+			}
 
-		err := c.doOp(OpAddPermRoot,
-			func(w io.Writer) error {
-				if err := wire.WriteString(w, storePath); err != nil {
-					return err
-				}
+			return wire.WriteString(w, gcRoot)
+		},
+		func(r io.Reader) error {
+			s, err := wire.ReadString(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-				return wire.WriteString(w, gcRoot)
-			},
-			func(r io.Reader) error {
-				s, err := wire.ReadString(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			resultPath = s
 
-				resultPath = s
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[string]{Value: resultPath, Err: err}
-	}()
-
-	return ch
+	return resultPath, err
 }
 
 // AddSignatures attaches the given signatures to a store path.
-func (c *Client) AddSignatures(path string, sigs []string) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
+func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) error {
+	return c.doOp(ctx, OpAddSignatures,
+		func(w io.Writer) error {
+			if err := wire.WriteString(w, path); err != nil {
+				return err
+			}
 
-	go func() {
-		err := c.doOp(OpAddSignatures,
-			func(w io.Writer) error {
-				if err := wire.WriteString(w, path); err != nil {
-					return err
-				}
-
-				return WriteStrings(w, sigs)
-			},
-			nil,
-		)
-
-		ch <- Result[struct{}]{Err: err}
-	}()
-
-	return ch
+			return WriteStrings(w, sigs)
+		},
+		nil,
+	)
 }
 
 // RegisterDrvOutput registers a content-addressed realisation for a
 // derivation output.
-func (c *Client) RegisterDrvOutput(realisation string) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
-
-	go func() {
-		err := c.doOp(OpRegisterDrvOutput,
-			func(w io.Writer) error {
-				return wire.WriteString(w, realisation)
-			},
-			nil,
-		)
-
-		ch <- Result[struct{}]{Err: err}
-	}()
-
-	return ch
+func (c *Client) RegisterDrvOutput(ctx context.Context, realisation string) error {
+	return c.doOp(ctx, OpRegisterDrvOutput,
+		func(w io.Writer) error {
+			return wire.WriteString(w, realisation)
+		},
+		nil,
+	)
 }
 
 // AddToStoreNar imports a NAR into the store. The info parameter describes
 // the path metadata, and source provides the NAR data to stream.
 // If repair is true, the path is repaired even if it already exists.
 // If dontCheckSigs is true, signature verification is skipped.
-func (c *Client) AddToStoreNar(info *PathInfo, source io.Reader, repair bool, dontCheckSigs bool) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
+func (c *Client) AddToStoreNar(
+	ctx context.Context, info *PathInfo, source io.Reader, repair, dontCheckSigs bool,
+) error {
+	ow, err := c.DoStreaming(ctx, OpAddToStoreNar)
+	if err != nil {
+		return err
+	}
 
-	go func() {
-		c.mu.Lock()
+	// Write PathInfo.
+	if err := WritePathInfo(ow, info); err != nil {
+		ow.Abort()
 
-		// Write operation code.
-		if err := wire.WriteUint64(c.w, uint64(OpAddToStoreNar)); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar write op", Err: err}}
+		return &ProtocolError{Op: "AddToStoreNar write path info", Err: err}
+	}
 
-			return
-		}
+	// Write repair and dontCheckSigs flags.
+	if err := wire.WriteBool(ow, repair); err != nil {
+		ow.Abort()
 
-		// Write PathInfo.
-		if err := WritePathInfo(c.w, info); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar write path info", Err: err}}
+		return &ProtocolError{Op: "AddToStoreNar write repair", Err: err}
+	}
 
-			return
-		}
+	if err := wire.WriteBool(ow, dontCheckSigs); err != nil {
+		ow.Abort()
 
-		// Write repair and dontCheckSigs flags.
-		if err := wire.WriteBool(c.w, repair); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar write repair", Err: err}}
+		return &ProtocolError{Op: "AddToStoreNar write dontCheckSigs", Err: err}
+	}
 
-			return
-		}
+	// Flush before streaming.
+	if err := ow.Flush(); err != nil {
+		ow.Abort()
 
-		if err := wire.WriteBool(c.w, dontCheckSigs); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar write dontCheckSigs", Err: err}}
+		return &ProtocolError{Op: "AddToStoreNar flush", Err: err}
+	}
 
-			return
-		}
+	// Stream NAR data as framed.
+	fw := ow.NewFramedWriter()
+	if _, err := io.Copy(fw, source); err != nil {
+		ow.Abort()
 
-		// Flush before streaming.
-		if err := c.w.Flush(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar flush", Err: err}}
+		return &ProtocolError{Op: "AddToStoreNar stream data", Err: err}
+	}
 
-			return
-		}
+	if err := fw.Close(); err != nil {
+		ow.Abort()
 
-		// Stream NAR data as framed.
-		fw := NewFramedWriter(c.w)
-		if _, err := io.Copy(fw, source); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar stream data", Err: err}}
+		return &ProtocolError{Op: "AddToStoreNar close framed writer", Err: err}
+	}
 
-			return
-		}
+	resp, err := ow.CloseRequest()
+	if err != nil {
+		return err
+	}
 
-		if err := fw.Close(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar close framed writer", Err: err}}
-
-			return
-		}
-
-		// Flush again after framed data.
-		if err := c.w.Flush(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddToStoreNar flush after stream", Err: err}}
-
-			return
-		}
-
-		// Drain stderr log messages until LogLast.
-		if err := ProcessStderr(c.r, c.logs); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: err}
-
-			return
-		}
-
-		c.mu.Unlock()
-		ch <- Result[struct{}]{}
-	}()
-
-	return ch
+	return resp.Close()
 }
 
 // AddBuildLog uploads a build log for the given derivation path. The log
 // data is streamed from the provided reader.
-func (c *Client) AddBuildLog(drvPath string, log io.Reader) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
+func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader) error {
+	ow, err := c.DoStreaming(ctx, OpAddBuildLog)
+	if err != nil {
+		return err
+	}
 
-	go func() {
-		c.mu.Lock()
+	// Write derivation path.
+	if err := wire.WriteString(ow, drvPath); err != nil {
+		ow.Abort()
 
-		// Write operation code.
-		if err := wire.WriteUint64(c.w, uint64(OpAddBuildLog)); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog write op", Err: err}}
+		return &ProtocolError{Op: "AddBuildLog write drvPath", Err: err}
+	}
 
-			return
-		}
+	// Flush before streaming.
+	if err := ow.Flush(); err != nil {
+		ow.Abort()
 
-		// Write derivation path.
-		if err := wire.WriteString(c.w, drvPath); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog write drvPath", Err: err}}
+		return &ProtocolError{Op: "AddBuildLog flush", Err: err}
+	}
 
-			return
-		}
+	// Stream log data as framed.
+	fw := ow.NewFramedWriter()
+	if _, err := io.Copy(fw, log); err != nil {
+		ow.Abort()
 
-		// Flush before streaming.
-		if err := c.w.Flush(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog flush", Err: err}}
+		return &ProtocolError{Op: "AddBuildLog stream data", Err: err}
+	}
 
-			return
-		}
+	if err := fw.Close(); err != nil {
+		ow.Abort()
 
-		// Stream log data as framed.
-		fw := NewFramedWriter(c.w)
-		if _, err := io.Copy(fw, log); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog stream data", Err: err}}
+		return &ProtocolError{Op: "AddBuildLog close framed writer", Err: err}
+	}
 
-			return
-		}
+	resp, err := ow.CloseRequest()
+	if err != nil {
+		return err
+	}
 
-		if err := fw.Close(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog close framed writer", Err: err}}
-
-			return
-		}
-
-		// Flush again after framed data.
-		if err := c.w.Flush(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddBuildLog flush after stream", Err: err}}
-
-			return
-		}
-
-		// Drain stderr log messages until LogLast.
-		if err := ProcessStderr(c.r, c.logs); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: err}
-
-			return
-		}
-
-		c.mu.Unlock()
-		ch <- Result[struct{}]{}
-	}()
-
-	return ch
+	return resp.Close()
 }
 
 // FindRoots returns the set of GC roots known to the daemon. The map keys
 // are the root link paths and the values are the store paths they point to.
-func (c *Client) FindRoots() <-chan Result[map[string]string] {
-	ch := make(chan Result[map[string]string], 1)
+func (c *Client) FindRoots(ctx context.Context) (map[string]string, error) {
+	var roots map[string]string
 
-	go func() {
-		var roots map[string]string
+	err := c.doOp(ctx, OpFindRoots,
+		nil,
+		func(r io.Reader) error {
+			m, err := ReadStringMap(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
 
-		err := c.doOp(OpFindRoots,
-			nil,
-			func(r io.Reader) error {
-				m, err := ReadStringMap(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+			roots = m
 
-				roots = m
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[map[string]string]{Value: roots, Err: err}
-	}()
-
-	return ch
+	return roots, err
 }
 
 // CollectGarbage performs a garbage collection operation on the store.
-func (c *Client) CollectGarbage(options *GCOptions) <-chan Result[*GCResult] {
-	ch := make(chan Result[*GCResult], 1)
+func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCResult, error) {
+	var result GCResult
 
-	go func() {
-		var result GCResult
-
-		err := c.doOp(OpCollectGarbage,
-			func(w io.Writer) error {
-				if err := wire.WriteUint64(w, uint64(options.Action)); err != nil {
-					return err
-				}
-
-				if err := WriteStrings(w, options.PathsToDelete); err != nil {
-					return err
-				}
-
-				if err := wire.WriteBool(w, options.IgnoreLiveness); err != nil {
-					return err
-				}
-
-				if err := wire.WriteUint64(w, options.MaxFreed); err != nil {
-					return err
-				}
-
-				// Three deprecated fields, always zero.
-				for i := 0; i < 3; i++ {
-					if err := wire.WriteUint64(w, 0); err != nil {
-						return err
-					}
-				}
-
-				return nil
-			},
-			func(r io.Reader) error {
-				paths, err := ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
-
-				result.Paths = paths
-
-				bytesFreed, err := wire.ReadUint64(r)
-				if err != nil {
-					return err
-				}
-
-				result.BytesFreed = bytesFreed
-
-				// Deprecated field, ignored.
-				_, err = wire.ReadUint64(r)
-
+	err := c.doOp(ctx, OpCollectGarbage,
+		func(w io.Writer) error {
+			if err := wire.WriteUint64(w, uint64(options.Action)); err != nil {
 				return err
-			},
-		)
+			}
 
-		ch <- Result[*GCResult]{Value: &result, Err: err}
-	}()
+			if err := WriteStrings(w, options.PathsToDelete); err != nil {
+				return err
+			}
 
-	return ch
+			if err := wire.WriteBool(w, options.IgnoreLiveness); err != nil {
+				return err
+			}
+
+			if err := wire.WriteUint64(w, options.MaxFreed); err != nil {
+				return err
+			}
+
+			// Three deprecated fields, always zero.
+			for i := 0; i < 3; i++ {
+				if err := wire.WriteUint64(w, 0); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		func(r io.Reader) error {
+			paths, err := ReadStrings(r, MaxStringSize)
+			if err != nil {
+				return err
+			}
+
+			result.Paths = paths
+
+			bytesFreed, err := wire.ReadUint64(r)
+			if err != nil {
+				return err
+			}
+
+			result.BytesFreed = bytesFreed
+
+			// Deprecated field, ignored.
+			_, err = wire.ReadUint64(r)
+
+			return err
+		},
+	)
+
+	return &result, err
 }
 
 // OptimiseStore asks the daemon to optimise the Nix store by hard-linking
 // identical files.
-func (c *Client) OptimiseStore() <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
-
-	go func() {
-		err := c.doOp(OpOptimiseStore, nil, nil)
-		ch <- Result[struct{}]{Err: err}
-	}()
-
-	return ch
+func (c *Client) OptimiseStore(ctx context.Context) error {
+	return c.doOp(ctx, OpOptimiseStore, nil, nil)
 }
 
 // VerifyStore checks the consistency of the Nix store. If checkContents is
 // true, the contents of each path are verified against their hash. If repair
 // is true, inconsistencies are repaired. Returns true if errors were found.
-func (c *Client) VerifyStore(checkContents bool, repair bool) <-chan Result[bool] {
-	ch := make(chan Result[bool], 1)
+func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair bool) (bool, error) {
+	var errorsFound bool
 
-	go func() {
-		var errorsFound bool
+	err := c.doOp(ctx, OpVerifyStore,
+		func(w io.Writer) error {
+			if err := wire.WriteBool(w, checkContents); err != nil {
+				return err
+			}
 
-		err := c.doOp(OpVerifyStore,
-			func(w io.Writer) error {
-				if err := wire.WriteBool(w, checkContents); err != nil {
-					return err
-				}
+			return wire.WriteBool(w, repair)
+		},
+		func(r io.Reader) error {
+			v, err := wire.ReadBool(r)
+			if err != nil {
+				return err
+			}
 
-				return wire.WriteBool(w, repair)
-			},
-			func(r io.Reader) error {
-				v, err := wire.ReadBool(r)
-				if err != nil {
-					return err
-				}
+			errorsFound = v
 
-				errorsFound = v
+			return nil
+		},
+	)
 
-				return nil
-			},
-		)
-
-		ch <- Result[bool]{Value: errorsFound, Err: err}
-	}()
-
-	return ch
+	return errorsFound, err
 }
 
 // SetOptions sends the client build settings to the daemon. This should
 // typically be called once after connecting.
-func (c *Client) SetOptions(settings *ClientSettings) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
-
-	go func() {
-		err := c.doOp(OpSetOptions,
-			func(w io.Writer) error {
-				return WriteClientSettings(w, settings)
-			},
-			nil,
-		)
-
-		ch <- Result[struct{}]{Err: err}
-	}()
-
-	return ch
+func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error {
+	return c.doOp(ctx, OpSetOptions,
+		func(w io.Writer) error {
+			return WriteClientSettings(w, settings)
+		},
+		nil,
+	)
 }
 
 // AddMultipleToStore imports multiple store paths into the store in a single
@@ -1114,129 +994,84 @@ func (c *Client) SetOptions(settings *ClientSettings) <-chan Result[struct{}] {
 //
 // Wire format:
 //
-//	[OpAddMultipleToStore]  ← raw connection
-//	[repair (bool)]         ← raw connection
-//	[dontCheckSigs (bool)]  ← raw connection
+//	[OpAddMultipleToStore]  <- raw connection
+//	[repair (bool)]         <- raw connection
+//	[dontCheckSigs (bool)]  <- raw connection
 //	[flush]
 //	[SINGLE FramedWriter wrapping ALL of the following:]
 //	  [count (uint64)]
 //	  For each item:
 //	    [WritePathInfo]
 //	    [NAR data via io.Copy]
-//	[FramedWriter.Close()]  ← zero-length terminator
+//	[FramedWriter.Close()]  <- zero-length terminator
 //	[flush]
 //	[ProcessStderr]
-func (c *Client) AddMultipleToStore(items []AddToStoreItem, repair bool, dontCheckSigs bool) <-chan Result[struct{}] {
-	ch := make(chan Result[struct{}], 1)
+func (c *Client) AddMultipleToStore(
+	ctx context.Context, items []AddToStoreItem, repair, dontCheckSigs bool,
+) error {
+	ow, err := c.DoStreaming(ctx, OpAddMultipleToStore)
+	if err != nil {
+		return err
+	}
 
-	go func() {
-		c.mu.Lock()
+	// Write repair and dontCheckSigs flags (outside framed stream).
+	if err := wire.WriteBool(ow, repair); err != nil {
+		ow.Abort()
 
-		// Write operation code.
-		if err := wire.WriteUint64(c.w, uint64(OpAddMultipleToStore)); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write op", Err: err}}
+		return &ProtocolError{Op: "AddMultipleToStore write repair", Err: err}
+	}
 
-			return
+	if err := wire.WriteBool(ow, dontCheckSigs); err != nil {
+		ow.Abort()
+
+		return &ProtocolError{Op: "AddMultipleToStore write dontCheckSigs", Err: err}
+	}
+
+	// Flush before entering framed mode.
+	if err := ow.Flush(); err != nil {
+		ow.Abort()
+
+		return &ProtocolError{Op: "AddMultipleToStore flush", Err: err}
+	}
+
+	// Create a single FramedWriter that wraps all item data.
+	fw := ow.NewFramedWriter()
+
+	// Write count inside the framed stream.
+	if err := wire.WriteUint64(fw, uint64(len(items))); err != nil {
+		ow.Abort()
+
+		return &ProtocolError{Op: "AddMultipleToStore write count", Err: err}
+	}
+
+	// Write each item: PathInfo + NAR data, all inside the framed stream.
+	for i := 0; i < len(items); i++ {
+		if err := WritePathInfo(fw, &items[i].Info); err != nil {
+			ow.Abort()
+
+			return &ProtocolError{Op: "AddMultipleToStore write path info", Err: err}
 		}
 
-		// Write repair and dontCheckSigs flags (outside framed stream).
-		if err := wire.WriteBool(c.w, repair); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write repair", Err: err}}
+		if _, err := io.Copy(fw, items[i].Source); err != nil {
+			ow.Abort()
 
-			return
+			return &ProtocolError{Op: "AddMultipleToStore stream NAR", Err: err}
 		}
+	}
 
-		if err := wire.WriteBool(c.w, dontCheckSigs); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write dontCheckSigs", Err: err}}
+	// Close the framed writer (sends zero-length terminator).
+	if err := fw.Close(); err != nil {
+		ow.Abort()
 
-			return
-		}
+		return &ProtocolError{Op: "AddMultipleToStore close framed writer", Err: err}
+	}
 
-		// Flush before entering framed mode.
-		if err := c.w.Flush(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore flush", Err: err}}
+	resp, err := ow.CloseRequest()
+	if err != nil {
+		return err
+	}
 
-			return
-		}
-
-		// Create a single FramedWriter that wraps all item data.
-		fw := NewFramedWriter(c.w)
-
-		// Write count inside the framed stream.
-		if err := wire.WriteUint64(fw, uint64(len(items))); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write count", Err: err}}
-
-			return
-		}
-
-		// Write each item: PathInfo + NAR data, all inside the framed stream.
-		for i := 0; i < len(items); i++ {
-			if err := WritePathInfo(fw, &items[i].Info); err != nil {
-				c.mu.Unlock()
-				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write path info", Err: err}}
-
-				return
-			}
-
-			if _, err := io.Copy(fw, items[i].Source); err != nil {
-				c.mu.Unlock()
-				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore stream NAR", Err: err}}
-
-				return
-			}
-		}
-
-		// Close the framed writer (sends zero-length terminator).
-		if err := fw.Close(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore close framed writer", Err: err}}
-
-			return
-		}
-
-		// Flush after framed data.
-		if err := c.w.Flush(); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore flush after stream", Err: err}}
-
-			return
-		}
-
-		// Drain stderr log messages until LogLast.
-		if err := ProcessStderr(c.r, c.logs); err != nil {
-			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: err}
-
-			return
-		}
-
-		c.mu.Unlock()
-		ch <- Result[struct{}]{}
-	}()
-
-	return ch
-}
-
-// mutexReadCloser wraps an io.ReadCloser and releases a mutex when closed.
-// This is used by NarFromPath to hold the connection lock while the caller
-// reads the streamed NAR data.
-type mutexReadCloser struct {
-	io.ReadCloser
-	mu   *sync.Mutex
-	once sync.Once
-}
-
-// Close closes the underlying reader and releases the mutex exactly once.
-func (m *mutexReadCloser) Close() error {
-	err := m.ReadCloser.Close()
-	m.once.Do(func() { m.mu.Unlock() })
-
-	return err
+	return resp.Close()
 }
 
 // newClient creates a Client from an existing connection, applies options,

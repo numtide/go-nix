@@ -4,6 +4,7 @@ package daemon_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"strings"
 	"testing"
@@ -34,11 +35,11 @@ func connectOrSkip(t *testing.T, opts ...daemon.ConnectOption) *daemon.Client {
 func anyValidPath(t *testing.T, client *daemon.Client) string {
 	t.Helper()
 
-	result := <-client.QueryAllValidPaths()
-	require.NoError(t, result.Err)
-	require.True(t, len(result.Value) > 0, "store has no valid paths")
+	paths, err := client.QueryAllValidPaths(context.Background())
+	require.NoError(t, err)
+	require.True(t, len(paths) > 0, "store has no valid paths")
 
-	return result.Value[0]
+	return paths[0]
 }
 
 // --- Connection & Handshake ---
@@ -56,8 +57,8 @@ func TestIntegrationSetOptions(t *testing.T) {
 	client := connectOrSkip(t)
 
 	settings := daemon.DefaultClientSettings()
-	result := <-client.SetOptions(settings)
-	assert.NoError(t, result.Err)
+	err := client.SetOptions(context.Background(), settings)
+	assert.NoError(t, err)
 }
 
 func TestIntegrationLogChannel(t *testing.T) {
@@ -67,8 +68,8 @@ func TestIntegrationLogChannel(t *testing.T) {
 	assert.NotNil(t, client.Logs())
 
 	// Run an operation that may produce log messages.
-	result := <-client.QueryAllValidPaths()
-	assert.NoError(t, result.Err)
+	_, err := client.QueryAllValidPaths(context.Background())
+	assert.NoError(t, err)
 }
 
 // --- Validity & Path Queries ---
@@ -77,36 +78,36 @@ func TestIntegrationIsValidPath(t *testing.T) {
 	client := connectOrSkip(t)
 
 	// A path that definitely doesn't exist.
-	result := <-client.IsValidPath("/nix/store/00000000000000000000000000000000-nonexistent")
-	assert.NoError(t, result.Err)
-	assert.False(t, result.Value)
+	valid, err := client.IsValidPath(context.Background(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	assert.NoError(t, err)
+	assert.False(t, valid)
 }
 
 func TestIntegrationIsValidPathTrue(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.IsValidPath(path)
-	assert.NoError(t, result.Err)
-	assert.True(t, result.Value)
+	valid, err := client.IsValidPath(context.Background(), path)
+	assert.NoError(t, err)
+	assert.True(t, valid)
 }
 
 func TestIntegrationQueryAllValidPaths(t *testing.T) {
 	client := connectOrSkip(t)
 
-	result := <-client.QueryAllValidPaths()
-	assert.NoError(t, result.Err)
-	assert.True(t, len(result.Value) > 0)
-	t.Logf("Store has %d valid paths", len(result.Value))
+	paths, err := client.QueryAllValidPaths(context.Background())
+	assert.NoError(t, err)
+	assert.True(t, len(paths) > 0)
+	t.Logf("Store has %d valid paths", len(paths))
 }
 
 func TestIntegrationQueryValidPaths(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.QueryValidPaths([]string{path}, false)
-	assert.NoError(t, result.Err)
-	assert.Contains(t, result.Value, path)
+	valid, err := client.QueryValidPaths(context.Background(), []string{path}, false)
+	assert.NoError(t, err)
+	assert.Contains(t, valid, path)
 }
 
 func TestIntegrationQueryValidPathsSubset(t *testing.T) {
@@ -114,10 +115,10 @@ func TestIntegrationQueryValidPathsSubset(t *testing.T) {
 	path := anyValidPath(t, client)
 
 	bogus := "/nix/store/00000000000000000000000000000000-nonexistent"
-	result := <-client.QueryValidPaths([]string{path, bogus}, false)
-	assert.NoError(t, result.Err)
-	assert.Contains(t, result.Value, path)
-	assert.NotContains(t, result.Value, bogus)
+	valid, err := client.QueryValidPaths(context.Background(), []string{path, bogus}, false)
+	assert.NoError(t, err)
+	assert.Contains(t, valid, path)
+	assert.NotContains(t, valid, bogus)
 }
 
 // --- Path Info ---
@@ -126,11 +127,10 @@ func TestIntegrationQueryPathInfo(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.QueryPathInfo(path)
-	assert.NoError(t, result.Err)
-	require.NotNil(t, result.Value)
+	info, err := client.QueryPathInfo(context.Background(), path)
+	assert.NoError(t, err)
+	require.NotNil(t, info)
 
-	info := result.Value
 	assert.Equal(t, path, info.StorePath)
 	assert.NotEmpty(t, info.NarHash)
 	assert.True(t, info.NarSize > 0)
@@ -147,32 +147,32 @@ func TestIntegrationQueryPathInfo(t *testing.T) {
 func TestIntegrationQueryPathInfoNotFound(t *testing.T) {
 	client := connectOrSkip(t)
 
-	result := <-client.QueryPathInfo("/nix/store/00000000000000000000000000000000-nonexistent")
-	assert.NoError(t, result.Err)
-	assert.Nil(t, result.Value)
+	info, err := client.QueryPathInfo(context.Background(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	assert.NoError(t, err)
+	assert.Nil(t, info)
 }
 
 func TestIntegrationQueryPathFromHashPart(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	// Extract hash part: /nix/store/<hash>-<name> → <hash>
+	// Extract hash part: /nix/store/<hash>-<name> -> <hash>
 	hashPart := strings.TrimPrefix(path, "/nix/store/")
 	if idx := strings.Index(hashPart, "-"); idx > 0 {
 		hashPart = hashPart[:idx]
 	}
 
-	result := <-client.QueryPathFromHashPart(hashPart)
-	assert.NoError(t, result.Err)
-	assert.Equal(t, path, result.Value)
+	result, err := client.QueryPathFromHashPart(context.Background(), hashPart)
+	assert.NoError(t, err)
+	assert.Equal(t, path, result)
 }
 
 func TestIntegrationQueryPathFromHashPartNotFound(t *testing.T) {
 	client := connectOrSkip(t)
 
-	result := <-client.QueryPathFromHashPart("00000000000000000000000000000000")
-	assert.NoError(t, result.Err)
-	assert.Empty(t, result.Value)
+	result, err := client.QueryPathFromHashPart(context.Background(), "00000000000000000000000000000000")
+	assert.NoError(t, err)
+	assert.Empty(t, result)
 }
 
 // --- References & Derivers ---
@@ -181,19 +181,19 @@ func TestIntegrationQueryReferrers(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.QueryReferrers(path)
-	assert.NoError(t, result.Err)
+	referrers, err := client.QueryReferrers(context.Background(), path)
+	assert.NoError(t, err)
 	// Every path has at least itself or some referrers; we just check no error.
-	t.Logf("Path %s has %d referrers", path, len(result.Value))
+	t.Logf("Path %s has %d referrers", path, len(referrers))
 }
 
 func TestIntegrationQueryValidDerivers(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.QueryValidDerivers(path)
-	assert.NoError(t, result.Err)
-	t.Logf("Path %s has %d valid derivers", path, len(result.Value))
+	derivers, err := client.QueryValidDerivers(context.Background(), path)
+	assert.NoError(t, err)
+	t.Logf("Path %s has %d valid derivers", path, len(derivers))
 }
 
 // --- Substitutable & Missing ---
@@ -202,29 +202,29 @@ func TestIntegrationQuerySubstitutablePaths(t *testing.T) {
 	client := connectOrSkip(t)
 
 	// Query with a bogus path — should return empty (no substituters for it).
-	result := <-client.QuerySubstitutablePaths([]string{
+	substitutable, err := client.QuerySubstitutablePaths(context.Background(), []string{
 		"/nix/store/00000000000000000000000000000000-nonexistent",
 	})
-	assert.NoError(t, result.Err)
-	assert.Empty(t, result.Value)
+	assert.NoError(t, err)
+	assert.Empty(t, substitutable)
 }
 
 func TestIntegrationQueryMissing(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.QueryMissing([]string{path})
-	assert.NoError(t, result.Err)
-	require.NotNil(t, result.Value)
+	missing, err := client.QueryMissing(context.Background(), []string{path})
+	assert.NoError(t, err)
+	require.NotNil(t, missing)
 	// A valid path should not appear in WillBuild or Unknown.
-	assert.NotContains(t, result.Value.WillBuild, path)
-	assert.NotContains(t, result.Value.Unknown, path)
+	assert.NotContains(t, missing.WillBuild, path)
+	assert.NotContains(t, missing.Unknown, path)
 	t.Logf("QueryMissing: willBuild=%d willSubstitute=%d unknown=%d downloadSize=%d narSize=%d",
-		len(result.Value.WillBuild),
-		len(result.Value.WillSubstitute),
-		len(result.Value.Unknown),
-		result.Value.DownloadSize,
-		result.Value.NarSize,
+		len(missing.WillBuild),
+		len(missing.WillSubstitute),
+		len(missing.Unknown),
+		missing.DownloadSize,
+		missing.NarSize,
 	)
 }
 
@@ -235,27 +235,27 @@ func TestIntegrationQueryDerivationOutputMap(t *testing.T) {
 	path := anyValidPath(t, client)
 
 	// Find a path that has a deriver so we can query its output map.
-	infoResult := <-client.QueryPathInfo(path)
-	require.NoError(t, infoResult.Err)
-	require.NotNil(t, infoResult.Value)
+	info, err := client.QueryPathInfo(context.Background(), path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
 
-	if infoResult.Value.Deriver == "" {
+	if info.Deriver == "" {
 		t.Skip("first valid path has no deriver, skipping output map test")
 	}
 
 	// Check that the deriver is actually valid before querying.
-	validResult := <-client.IsValidPath(infoResult.Value.Deriver)
-	require.NoError(t, validResult.Err)
+	valid, err := client.IsValidPath(context.Background(), info.Deriver)
+	require.NoError(t, err)
 
-	if !validResult.Value {
+	if !valid {
 		t.Skip("deriver path is not valid in store, skipping output map test")
 	}
 
-	result := <-client.QueryDerivationOutputMap(infoResult.Value.Deriver)
-	assert.NoError(t, result.Err)
-	assert.True(t, len(result.Value) > 0, "deriver should have at least one output")
+	outputs, err := client.QueryDerivationOutputMap(context.Background(), info.Deriver)
+	assert.NoError(t, err)
+	assert.True(t, len(outputs) > 0, "deriver should have at least one output")
 
-	for name, outPath := range result.Value {
+	for name, outPath := range outputs {
 		t.Logf("  output %q -> %s", name, outPath)
 	}
 }
@@ -267,18 +267,18 @@ func TestIntegrationNarFromPath(t *testing.T) {
 	path := anyValidPath(t, client)
 
 	// Get expected NAR size.
-	infoResult := <-client.QueryPathInfo(path)
-	require.NoError(t, infoResult.Err)
-	require.NotNil(t, infoResult.Value)
+	info, err := client.QueryPathInfo(context.Background(), path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
 
-	narResult := <-client.NarFromPath(path)
-	assert.NoError(t, narResult.Err)
-	require.NotNil(t, narResult.Value)
+	rc, err := client.NarFromPath(context.Background(), path)
+	assert.NoError(t, err)
+	require.NotNil(t, rc)
 
 	// Read all NAR data.
-	data, err := io.ReadAll(narResult.Value)
+	data, err := io.ReadAll(rc)
 	assert.NoError(t, err)
-	assert.NoError(t, narResult.Value.Close())
+	assert.NoError(t, rc.Close())
 
 	// NAR data should start with the NAR magic header.
 	assert.True(t, len(data) > 0, "NAR data should not be empty")
@@ -286,7 +286,7 @@ func TestIntegrationNarFromPath(t *testing.T) {
 		"NAR data should start with nix-archive-1 magic")
 
 	// NAR size should match what PathInfo reported.
-	assert.Equal(t, infoResult.Value.NarSize, uint64(len(data)),
+	assert.Equal(t, info.NarSize, uint64(len(data)),
 		"NAR size should match PathInfo.NarSize")
 
 	t.Logf("NAR from %s: %d bytes", path, len(data))
@@ -297,18 +297,18 @@ func TestIntegrationNarFromPath(t *testing.T) {
 func TestIntegrationFindRoots(t *testing.T) {
 	client := connectOrSkip(t)
 
-	result := <-client.FindRoots()
-	assert.NoError(t, result.Err)
-	assert.True(t, len(result.Value) > 0, "should have at least one GC root")
-	t.Logf("Found %d GC roots", len(result.Value))
+	roots, err := client.FindRoots(context.Background())
+	assert.NoError(t, err)
+	assert.True(t, len(roots) > 0, "should have at least one GC root")
+	t.Logf("Found %d GC roots", len(roots))
 }
 
 func TestIntegrationAddTempRoot(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.AddTempRoot(path)
-	assert.NoError(t, result.Err)
+	err := client.AddTempRoot(context.Background(), path)
+	assert.NoError(t, err)
 }
 
 // --- Verify & Optimise ---
@@ -321,9 +321,9 @@ func TestIntegrationVerifyStore(t *testing.T) {
 	client := connectOrSkip(t)
 
 	// checkContents=false, repair=false — just a quick metadata check.
-	result := <-client.VerifyStore(false, false)
-	assert.NoError(t, result.Err)
-	t.Logf("VerifyStore found errors: %v", result.Value)
+	errorsFound, err := client.VerifyStore(context.Background(), false, false)
+	assert.NoError(t, err)
+	t.Logf("VerifyStore found errors: %v", errorsFound)
 }
 
 // --- Build Operations ---
@@ -333,18 +333,18 @@ func TestIntegrationBuildPaths(t *testing.T) {
 	path := anyValidPath(t, client)
 
 	// Building an already-valid path should succeed immediately.
-	result := <-client.BuildPaths([]string{path}, daemon.BuildModeNormal)
-	assert.NoError(t, result.Err)
+	err := client.BuildPaths(context.Background(), []string{path}, daemon.BuildModeNormal)
+	assert.NoError(t, err)
 }
 
 func TestIntegrationBuildPathsWithResults(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.BuildPathsWithResults([]string{path}, daemon.BuildModeNormal)
-	assert.NoError(t, result.Err)
+	results, err := client.BuildPathsWithResults(context.Background(), []string{path}, daemon.BuildModeNormal)
+	assert.NoError(t, err)
 
-	for i, br := range result.Value {
+	for i, br := range results {
 		t.Logf("BuildResult[%d]: status=%s timesBuilt=%d", i, br.Status, br.TimesBuilt)
 	}
 }
@@ -353,8 +353,8 @@ func TestIntegrationEnsurePath(t *testing.T) {
 	client := connectOrSkip(t)
 	path := anyValidPath(t, client)
 
-	result := <-client.EnsurePath(path)
-	assert.NoError(t, result.Err)
+	err := client.EnsurePath(context.Background(), path)
+	assert.NoError(t, err)
 }
 
 // --- Sequential Operations ---
@@ -362,46 +362,38 @@ func TestIntegrationEnsurePath(t *testing.T) {
 
 func TestIntegrationSequentialOperations(t *testing.T) {
 	client := connectOrSkip(t)
+	ctx := context.Background()
 
 	// Operation 1: QueryAllValidPaths
-	allResult := <-client.QueryAllValidPaths()
-	require.NoError(t, allResult.Err)
-	require.True(t, len(allResult.Value) > 0)
-	path := allResult.Value[0]
+	allPaths, err := client.QueryAllValidPaths(ctx)
+	require.NoError(t, err)
+	require.True(t, len(allPaths) > 0)
+	path := allPaths[0]
 
 	// Operation 2: IsValidPath
-	validResult := <-client.IsValidPath(path)
-	require.NoError(t, validResult.Err)
-	assert.True(t, validResult.Value)
+	valid, err := client.IsValidPath(ctx, path)
+	require.NoError(t, err)
+	assert.True(t, valid)
 
 	// Operation 3: QueryPathInfo
-	infoResult := <-client.QueryPathInfo(path)
-	require.NoError(t, infoResult.Err)
-	require.NotNil(t, infoResult.Value)
+	info, err := client.QueryPathInfo(ctx, path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
 
 	// Operation 4: NarFromPath + read + close
-	narResult := <-client.NarFromPath(path)
-	require.NoError(t, narResult.Err)
-	_, err := io.ReadAll(narResult.Value)
+	rc, err := client.NarFromPath(ctx, path)
 	require.NoError(t, err)
-	require.NoError(t, narResult.Value.Close())
+	_, err = io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
 
 	// Operation 5: QueryMissing (after releasing the NAR reader)
-	missingResult := <-client.QueryMissing([]string{path})
-	require.NoError(t, missingResult.Err)
+	_, err = client.QueryMissing(ctx, []string{path})
+	require.NoError(t, err)
 
 	// Operation 6: FindRoots
-	rootsResult := <-client.FindRoots()
-	require.NoError(t, rootsResult.Err)
+	_, err = client.FindRoots(ctx)
+	require.NoError(t, err)
 
 	t.Logf("6 sequential operations completed successfully on the same connection")
-}
-
-// min returns the smaller of a or b.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-
-	return b
 }
