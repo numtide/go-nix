@@ -1108,6 +1108,21 @@ func (c *Client) SetOptions(settings *ClientSettings) <-chan Result[struct{}] {
 // operation. Each item consists of a PathInfo and a NAR data reader. If repair
 // is true, existing paths are repaired. If dontCheckSigs is true, signature
 // verification is skipped.
+//
+// Wire format:
+//
+//	[OpAddMultipleToStore]  ← raw connection
+//	[repair (bool)]         ← raw connection
+//	[dontCheckSigs (bool)]  ← raw connection
+//	[flush]
+//	[SINGLE FramedWriter wrapping ALL of the following:]
+//	  [count (uint64)]
+//	  For each item:
+//	    [WritePathInfo]
+//	    [NAR data via io.Copy]
+//	[FramedWriter.Close()]  ← zero-length terminator
+//	[flush]
+//	[ProcessStderr]
 func (c *Client) AddMultipleToStore(items []AddToStoreItem, repair bool, dontCheckSigs bool) <-chan Result[struct{}] {
 	ch := make(chan Result[struct{}], 1)
 
@@ -1122,7 +1137,7 @@ func (c *Client) AddMultipleToStore(items []AddToStoreItem, repair bool, dontChe
 			return
 		}
 
-		// Write repair flag.
+		// Write repair and dontCheckSigs flags (outside framed stream).
 		if err := wire.WriteBool(c.w, repair); err != nil {
 			c.mu.Unlock()
 			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write repair", Err: err}}
@@ -1130,7 +1145,6 @@ func (c *Client) AddMultipleToStore(items []AddToStoreItem, repair bool, dontChe
 			return
 		}
 
-		// Write dontCheckSigs flag.
 		if err := wire.WriteBool(c.w, dontCheckSigs); err != nil {
 			c.mu.Unlock()
 			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write dontCheckSigs", Err: err}}
@@ -1138,44 +1152,54 @@ func (c *Client) AddMultipleToStore(items []AddToStoreItem, repair bool, dontChe
 			return
 		}
 
-		// Write item count.
-		if err := wire.WriteUint64(c.w, uint64(len(items))); err != nil {
+		// Flush before entering framed mode.
+		if err := c.w.Flush(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore flush", Err: err}}
+
+			return
+		}
+
+		// Create a single FramedWriter that wraps all item data.
+		fw := NewFramedWriter(c.w)
+
+		// Write count inside the framed stream.
+		if err := wire.WriteUint64(fw, uint64(len(items))); err != nil {
 			c.mu.Unlock()
 			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write count", Err: err}}
 
 			return
 		}
 
-		// Write each item: PathInfo + framed NAR data.
+		// Write each item: PathInfo + NAR data, all inside the framed stream.
 		for i := 0; i < len(items); i++ {
-			if err := WritePathInfo(c.w, &items[i].Info); err != nil {
+			if err := WritePathInfo(fw, &items[i].Info); err != nil {
 				c.mu.Unlock()
 				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore write path info", Err: err}}
 
 				return
 			}
 
-			fw := NewFramedWriter(c.w)
-
 			if _, err := io.Copy(fw, items[i].Source); err != nil {
 				c.mu.Unlock()
-				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore stream data", Err: err}}
-
-				return
-			}
-
-			if err := fw.Close(); err != nil {
-				c.mu.Unlock()
-				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore close framed writer", Err: err}}
+				ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore stream NAR", Err: err}}
 
 				return
 			}
 		}
 
-		// Flush the buffered writer after all items.
+		// Close the framed writer (sends zero-length terminator).
+		if err := fw.Close(); err != nil {
+			c.mu.Unlock()
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore close framed writer", Err: err}}
+
+			return
+		}
+
+		// Flush after framed data.
 		if err := c.w.Flush(); err != nil {
 			c.mu.Unlock()
-			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore flush", Err: err}}
+			ch <- Result[struct{}]{Err: &ProtocolError{Op: "AddMultipleToStore flush after stream", Err: err}}
 
 			return
 		}
