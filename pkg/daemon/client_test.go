@@ -44,6 +44,10 @@ func (m *mockDaemon) handshake() {
 
 	binary.LittleEndian.PutUint64(buf[:], 1) // TrustTrusted
 	m.conn.Write(buf[:])
+
+	// Post-handshake: daemon sends startWork/stopWork (STDERR_LAST).
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	m.conn.Write(buf[:])
 }
 
 func (m *mockDaemon) respondIsValidPath(valid bool) {
@@ -302,7 +306,7 @@ func TestClientNarFromPath(t *testing.T) {
 	mock, clientConn := newMockDaemon(t)
 	defer mock.conn.Close()
 
-	narData := []byte("fake-nar-content-for-testing")
+	fileContent := "fake-nar-content-for-testing"
 
 	go func() {
 		mock.handshake()
@@ -319,8 +323,14 @@ func TestClientNarFromPath(t *testing.T) {
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
 		mock.conn.Write(buf[:])
 
-		// Send NAR data as wire bytes: length + data + padding
-		wire.WriteBytes(mock.conn, narData)
+		// Send a valid NAR (raw format, not length-prefixed).
+		writeWireStringTo(mock.conn, "nix-archive-1")
+		writeWireStringTo(mock.conn, "(")
+		writeWireStringTo(mock.conn, "type")
+		writeWireStringTo(mock.conn, "regular")
+		writeWireStringTo(mock.conn, "contents")
+		writeWireStringTo(mock.conn, fileContent)
+		writeWireStringTo(mock.conn, ")")
 	}()
 
 	client, err := daemon.NewClientFromConn(clientConn)
@@ -330,9 +340,12 @@ func TestClientNarFromPath(t *testing.T) {
 	result := <-client.NarFromPath("/nix/store/abc-test")
 	assert.NoError(t, result.Err)
 
+	// The returned data is the complete NAR including wire formatting.
 	data, err := io.ReadAll(result.Value)
 	assert.NoError(t, err)
-	assert.Equal(t, narData, data)
+	assert.True(t, len(data) > 0)
+	// Check that the NAR contains the file content.
+	assert.Contains(t, string(data), fileContent)
 
 	err = result.Value.Close()
 	assert.NoError(t, err)

@@ -91,6 +91,13 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 		return nil, &ProtocolError{Op: "handshake read trust level", Err: err}
 	}
 
+	// 10. Consume the daemon's post-handshake startWork/stopWork cycle.
+	// The daemon sends STDERR_LAST after the handshake to flush any pending
+	// startup messages.
+	if err := ProcessStderr(r, nil); err != nil {
+		return nil, &ProtocolError{Op: "handshake process startup stderr", Err: err}
+	}
+
 	return &HandshakeInfo{
 		Version:          negotiated,
 		DaemonNixVersion: daemonVersion,
