@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"net"
 	"sync"
@@ -446,9 +447,9 @@ func (c *Client) QueryMissing(paths []string) <-chan Result[*MissingInfo] {
 	return ch
 }
 
-// NarFromPath streams the NAR serialisation of the given store path.
-// The returned io.ReadCloser holds the connection lock; the caller MUST close
-// it when done to allow further operations on the client.
+// NarFromPath returns the NAR serialisation of the given store path.
+// The complete NAR is buffered in memory before returning. The returned
+// io.ReadCloser does not hold the connection lock.
 func (c *Client) NarFromPath(path string) <-chan Result[io.ReadCloser] {
 	ch := make(chan Result[io.ReadCloser], 1)
 
@@ -487,18 +488,20 @@ func (c *Client) NarFromPath(path string) <-chan Result[io.ReadCloser] {
 			return
 		}
 
-		// Read the NAR data as a bytes field. ReadBytes returns a limited
-		// reader over the wire content; wrapping it in mutexReadCloser
-		// ensures the mutex is released when the caller closes the reader.
-		_, rc, err := wire.ReadBytes(c.r)
-		if err != nil {
+		// The daemon sends raw NAR data (self-delimiting format). Use
+		// copyNAR to read exactly one complete NAR into a buffer.
+		var buf bytes.Buffer
+
+		if err := copyNAR(&buf, c.r); err != nil {
 			c.mu.Unlock()
-			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath read response", Err: err}}
+			ch <- Result[io.ReadCloser]{Err: &ProtocolError{Op: "NarFromPath read NAR", Err: err}}
 
 			return
 		}
 
-		ch <- Result[io.ReadCloser]{Value: &mutexReadCloser{ReadCloser: rc, mu: &c.mu}}
+		c.mu.Unlock()
+
+		ch <- Result[io.ReadCloser]{Value: io.NopCloser(bytes.NewReader(buf.Bytes()))}
 	}()
 
 	return ch
