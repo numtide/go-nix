@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"io"
 	"sort"
 
@@ -27,6 +28,19 @@ func ReadStrings(r io.Reader, maxBytes uint64) ([]string, error) {
 	count, err := wire.ReadUint64(r)
 	if err != nil {
 		return nil, &ProtocolError{Op: "read string list count", Err: err}
+	}
+
+	// Guard against unreasonable allocation from a malicious or corrupted peer.
+	maxCount := uint64(MaxListEntries)
+	if maxBytes/8 < maxCount {
+		maxCount = maxBytes / 8
+	}
+
+	if count > maxCount {
+		return nil, &ProtocolError{
+			Op:  "read string list count",
+			Err: fmt.Errorf("string list count %d exceeds limit %d", count, maxCount),
+		}
 	}
 
 	ss := make([]string, count)
@@ -74,6 +88,19 @@ func ReadStringMap(r io.Reader, maxBytes uint64) (map[string]string, error) {
 	count, err := wire.ReadUint64(r)
 	if err != nil {
 		return nil, &ProtocolError{Op: "read string map count", Err: err}
+	}
+
+	// Guard against unreasonable allocation from a malicious or corrupted peer.
+	maxCount := uint64(MaxMapEntries)
+	if maxBytes/8 < maxCount {
+		maxCount = maxBytes / 8
+	}
+
+	if count > maxCount {
+		return nil, &ProtocolError{
+			Op:  "read string map count",
+			Err: fmt.Errorf("string map count %d exceeds limit %d", count, maxCount),
+		}
 	}
 
 	m := make(map[string]string, count)
