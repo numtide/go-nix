@@ -27,6 +27,15 @@ func TestWriteReadStringsEmpty(t *testing.T) {
 	assert.Empty(t, result)
 }
 
+func TestReadStringsTooLarge(t *testing.T) {
+	var buf bytes.Buffer
+	err := wire.WriteUint64(&buf, daemon.MaxListEntries+1)
+	assert.NoError(t, err)
+
+	_, err = daemon.ReadStrings(&buf, daemon.MaxStringSize)
+	assert.Error(t, err)
+}
+
 func TestWriteReadStringMap(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -36,6 +45,15 @@ func TestWriteReadStringMap(t *testing.T) {
 	result, err := daemon.ReadStringMap(&buf, daemon.MaxStringSize)
 	assert.NoError(t, err)
 	assert.Equal(t, m, result)
+}
+
+func TestReadStringMapTooLarge(t *testing.T) {
+	var buf bytes.Buffer
+	err := wire.WriteUint64(&buf, daemon.MaxMapEntries+1)
+	assert.NoError(t, err)
+
+	_, err = daemon.ReadStringMap(&buf, daemon.MaxStringSize)
+	assert.Error(t, err)
 }
 
 func TestReadPathInfo(t *testing.T) {
@@ -263,6 +281,8 @@ func TestReadBuildResult(t *testing.T) {
 	writeTestUint64(&buf, 0)               // isNonDeterministic = false
 	writeTestUint64(&buf, 1700000000)      // startTime
 	writeTestUint64(&buf, 1700000060)      // stopTime
+	writeTestUint64(&buf, 0)               // cpuUser: None
+	writeTestUint64(&buf, 0)               // cpuSystem: None
 	writeTestUint64(&buf, 1)               // builtOutputs count
 	writeTestString(&buf, "out")           // output name
 	writeTestString(&buf, `{"id":"test"}`) // realisation JSON
@@ -288,6 +308,8 @@ func TestReadBuildResultNoOutputs(t *testing.T) {
 	writeTestUint64(&buf, 0)              // isNonDeterministic = false
 	writeTestUint64(&buf, 1700000000)     // startTime
 	writeTestUint64(&buf, 1700000010)     // stopTime
+	writeTestUint64(&buf, 0)              // cpuUser: None
+	writeTestUint64(&buf, 0)              // cpuSystem: None
 	writeTestUint64(&buf, 0)              // builtOutputs count
 
 	result, err := daemon.ReadBuildResult(&buf)
@@ -295,4 +317,57 @@ func TestReadBuildResultNoOutputs(t *testing.T) {
 	assert.Equal(t, daemon.BuildStatusPermanentFailure, result.Status)
 	assert.Equal(t, "build failed", result.ErrorMsg)
 	assert.Empty(t, result.BuiltOutputs)
+}
+
+func TestReadBuildResultWithCPUTimes(t *testing.T) {
+	var buf bytes.Buffer
+
+	writeTestUint64(&buf, 0)               // status = Built
+	writeTestString(&buf, "")              // errorMsg
+	writeTestUint64(&buf, 1)               // timesBuilt
+	writeTestUint64(&buf, 0)               // isNonDeterministic = false
+	writeTestUint64(&buf, 1700000000)      // startTime
+	writeTestUint64(&buf, 1700000060)      // stopTime
+	// cpuUser: optional<microseconds> = Some(500000)
+	writeTestUint64(&buf, 1)               // tag: present
+	writeTestUint64(&buf, 500000)          // value: 500000 microseconds
+	// cpuSystem: optional<microseconds> = None
+	writeTestUint64(&buf, 0)               // tag: absent
+	writeTestUint64(&buf, 0)               // builtOutputs count
+
+	result, err := daemon.ReadBuildResult(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
+	assert.Equal(t, uint64(1), result.TimesBuilt)
+	assert.Equal(t, uint64(1700000000), result.StartTime)
+	assert.Equal(t, uint64(1700000060), result.StopTime)
+	assert.Empty(t, result.BuiltOutputs)
+	assert.Equal(t, 0, buf.Len())
+}
+
+func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
+	var buf bytes.Buffer
+
+	writeTestUint64(&buf, 0)               // status = Built
+	writeTestString(&buf, "")              // errorMsg
+	writeTestUint64(&buf, 2)               // timesBuilt
+	writeTestUint64(&buf, 0)               // isNonDeterministic = false
+	writeTestUint64(&buf, 1700000000)      // startTime
+	writeTestUint64(&buf, 1700000060)      // stopTime
+	// cpuUser: optional<microseconds> = Some(1000000)
+	writeTestUint64(&buf, 1)               // tag: present
+	writeTestUint64(&buf, 1000000)         // value
+	// cpuSystem: optional<microseconds> = Some(250000)
+	writeTestUint64(&buf, 1)               // tag: present
+	writeTestUint64(&buf, 250000)          // value
+	writeTestUint64(&buf, 1)               // builtOutputs count
+	writeTestString(&buf, "out")           // output name
+	writeTestString(&buf, `{"id":"test"}`) // realisation JSON
+
+	result, err := daemon.ReadBuildResult(&buf)
+	assert.NoError(t, err)
+	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
+	assert.Equal(t, uint64(2), result.TimesBuilt)
+	assert.Len(t, result.BuiltOutputs, 1)
+	assert.Equal(t, 0, buf.Len())
 }

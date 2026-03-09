@@ -274,6 +274,25 @@ func WriteBasicDerivation(w io.Writer, drv *BasicDerivation) error {
 	return WriteStringMap(w, drv.Env)
 }
 
+// readOptionalMicroseconds reads an optional<microseconds> from the wire.
+// Wire format: tag(uint64: 0=none, 1=some) [+ value(uint64) if tag=1].
+// The value is consumed but not returned since we don't currently expose
+// CPU times in BuildResult.
+func readOptionalMicroseconds(r io.Reader) error {
+	tag, err := wire.ReadUint64(r)
+	if err != nil {
+		return err
+	}
+
+	if tag == 1 {
+		if _, err := wire.ReadUint64(r); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ReadBuildResult reads a BuildResult from the wire.
 func ReadBuildResult(r io.Reader) (*BuildResult, error) {
 	status, err := wire.ReadUint64(r)
@@ -304,6 +323,15 @@ func ReadBuildResult(r io.Reader) (*BuildResult, error) {
 	stopTime, err := wire.ReadUint64(r)
 	if err != nil {
 		return nil, &ProtocolError{Op: "read build result stopTime", Err: err}
+	}
+
+	// Protocol >= 1.37: cpuUser and cpuSystem as optional<microseconds>.
+	if err := readOptionalMicroseconds(r); err != nil {
+		return nil, &ProtocolError{Op: "read build result cpuUser", Err: err}
+	}
+
+	if err := readOptionalMicroseconds(r); err != nil {
+		return nil, &ProtocolError{Op: "read build result cpuSystem", Err: err}
 	}
 
 	nrOutputs, err := wire.ReadUint64(r)
