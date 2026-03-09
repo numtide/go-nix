@@ -147,6 +147,15 @@ func (c *Client) checkCtx(ctx context.Context) error {
 	return nil
 }
 
+// requireVersion returns an UnsupportedOperationError if the negotiated
+// protocol version is below minVersion for the given operation.
+func (c *Client) requireVersion(op Operation, minVersion uint64) error {
+	if c.info.Version < minVersion {
+		return &UnsupportedOperationError{Op: op, MinVersion: minVersion, CurrentVersion: c.info.Version}
+	}
+	return nil
+}
+
 // release deregisters a context cancellation callback and resets the
 // connection deadline. Used on error paths in Do/DoStreaming.
 func (c *Client) release(cancel func() bool) {

@@ -1,6 +1,50 @@
 package daemon
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+var (
+	// ErrClosed is returned when an operation is attempted on a closed client/response.
+	ErrClosed = errors.New("daemon client is closed")
+
+	// ErrNilContext is returned when a nil context is provided.
+	ErrNilContext = errors.New("nil context")
+
+	// ErrNilOptions is returned when required options are nil.
+	ErrNilOptions = errors.New("nil options")
+
+	// ErrNilDerivation is returned when a nil derivation is provided.
+	ErrNilDerivation = errors.New("nil derivation")
+
+	// ErrNilPathInfo is returned when a nil PathInfo is provided.
+	ErrNilPathInfo = errors.New("nil path info")
+
+	// ErrNilReader is returned when a required reader is nil.
+	ErrNilReader = errors.New("nil reader")
+
+	// ErrNilConn is returned when a nil connection is provided.
+	ErrNilConn = errors.New("nil connection")
+
+	// ErrUnsupportedOperation is returned when an operation is not supported by the negotiated protocol version.
+	ErrUnsupportedOperation = errors.New("unsupported operation for negotiated protocol version")
+)
+
+// UnsupportedOperationError provides detail about which operation failed and why.
+type UnsupportedOperationError struct {
+	Op             Operation
+	MinVersion     uint64
+	CurrentVersion uint64
+}
+
+func (e *UnsupportedOperationError) Error() string {
+	return fmt.Sprintf("%s requires protocol >= %d.%d, but negotiated %d.%d",
+		e.Op, e.MinVersion>>8, e.MinVersion&0xff,
+		e.CurrentVersion>>8, e.CurrentVersion&0xff)
+}
+
+func (e *UnsupportedOperationError) Unwrap() error { return ErrUnsupportedOperation }
 
 // Error is returned when the Nix daemon reports an error.
 type Error struct {
