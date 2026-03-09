@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nix-community/go-nix/pkg/nar"
@@ -23,7 +24,11 @@ type Client struct {
 	w    *bufio.Writer // bufio.NewWriter(conn)
 	info *HandshakeInfo
 	logs chan LogMessage
+	logSink LogSink
 	mu   sync.Mutex // serializes operations
+
+	closed    atomic.Bool
+	closeOnce sync.Once
 }
 
 // ConnectOption configures the client.
@@ -34,6 +39,23 @@ type ConnectOption func(*Client)
 func WithLogChannel(ch chan LogMessage) ConnectOption {
 	return func(c *Client) {
 		c.logs = ch
+		c.logSink = NewLogChannelSink(ch, nil)
+	}
+}
+
+// WithLogChannelWithDropCounter sets the channel for log messages and
+// increments dropped on each log message dropped due to a full channel.
+func WithLogChannelWithDropCounter(ch chan LogMessage, dropped *atomic.Uint64) ConnectOption {
+	return func(c *Client) {
+		c.logs = ch
+		c.logSink = NewLogChannelSink(ch, dropped)
+	}
+}
+
+// WithLogSink sets a custom sink for log messages.
+func WithLogSink(sink LogSink) ConnectOption {
+	return func(c *Client) {
+		c.logSink = sink
 	}
 }
 
@@ -57,12 +79,27 @@ func Connect(socketPath string, opts ...ConnectOption) (*Client, error) {
 // NewClientFromConn creates a client from an existing net.Conn (useful for
 // testing with net.Pipe).
 func NewClientFromConn(conn net.Conn, opts ...ConnectOption) (*Client, error) {
+	if conn == nil {
+		return nil, ErrNilConn
+	}
+
 	return newClient(conn, opts...)
 }
 
 // Close closes the connection to the daemon.
 func (c *Client) Close() error {
-	return c.conn.Close()
+	if c.closed.Load() {
+		return nil
+	}
+
+	var err error
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		c.conn.SetDeadline(time.Now()) //nolint:errcheck // unblock any in-flight I/O
+		err = c.conn.Close()
+	})
+
+	return err
 }
 
 // Logs returns a read-only channel of log messages from the daemon. Returns
@@ -79,13 +116,34 @@ func (c *Client) Info() *HandshakeInfo {
 // lockForCtx acquires the mutex and registers a context cancellation callback
 // that sets a deadline on the connection to break blocked I/O. Returns a
 // cancel function that must be called to deregister the callback and reset the
-// deadline. On error paths the caller should call release() then c.mu.Unlock().
-func (c *Client) lockForCtx(ctx context.Context) func() bool {
+// deadline. If the client is closed, returns ErrClosed without locking.
+func (c *Client) lockForCtx(ctx context.Context) (func() bool, error) {
 	c.mu.Lock()
+
+	if c.closed.Load() {
+		c.mu.Unlock()
+		return nil, ErrClosed
+	}
 
 	return context.AfterFunc(ctx, func() {
 		c.conn.SetDeadline(time.Now()) //nolint:errcheck // break blocked I/O
-	})
+	}), nil
+}
+
+func (c *Client) checkCtx(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if c.closed.Load() {
+		return ErrClosed
+	}
+
+	return nil
 }
 
 // release deregisters a context cancellation callback and resets the
@@ -103,11 +161,14 @@ func (c *Client) release(cancel func() bool) {
 func (c *Client) Do(
 	ctx context.Context, op Operation, req io.Reader,
 ) (*OpResponse, error) {
-	if err := ctx.Err(); err != nil {
+	if err := c.checkCtx(ctx); err != nil {
 		return nil, err
 	}
 
-	cancel := c.lockForCtx(ctx)
+	cancel, err := c.lockForCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := wire.WriteUint64(c.w, uint64(op)); err != nil {
 		c.release(cancel)
@@ -129,7 +190,7 @@ func (c *Client) Do(
 		return nil, &ProtocolError{Op: op.String() + " flush", Err: err}
 	}
 
-	if err := ProcessStderr(c.r, c.logs); err != nil {
+	if err := ProcessStderrWithSink(c.r, c.logSink); err != nil {
 		c.release(cancel)
 
 		return nil, err
@@ -150,11 +211,14 @@ func (c *Client) Do(
 func (c *Client) DoStreaming(
 	ctx context.Context, op Operation,
 ) (*OpWriter, error) {
-	if err := ctx.Err(); err != nil {
+	if err := c.checkCtx(ctx); err != nil {
 		return nil, err
 	}
 
-	cancel := c.lockForCtx(ctx)
+	cancel, err := c.lockForCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := wire.WriteUint64(c.w, uint64(op)); err != nil {
 		c.release(cancel)
@@ -167,7 +231,7 @@ func (c *Client) DoStreaming(
 		r:      c.r,
 		conn:   c.conn,
 		mu:     &c.mu,
-		logs:   c.logs,
+		logSink: c.logSink,
 		op:     op,
 		cancel: cancel,
 	}, nil
@@ -181,7 +245,7 @@ func (c *Client) DoStreaming(
 //  2. Write operation code (uint64)
 //  3. Call writeReq(c.w) if non-nil
 //  4. Flush the buffered writer
-//  5. Call ProcessStderr to drain log messages until LogLast
+//  5. Call ProcessStderrWithSink to drain log messages until LogLast
 //  6. Call readResp(c.r) if non-nil
 //  7. Unlock mutex
 //  8. Return any error
@@ -191,11 +255,14 @@ func (c *Client) doOp(
 	writeReq func(w io.Writer) error,
 	readResp func(r io.Reader) error,
 ) error {
-	if err := ctx.Err(); err != nil {
+	if err := c.checkCtx(ctx); err != nil {
 		return err
 	}
 
-	cancel := c.lockForCtx(ctx)
+	cancel, err := c.lockForCtx(ctx)
+	if err != nil {
+		return err
+	}
 	defer c.release(cancel)
 
 	// Write operation code.
@@ -216,7 +283,7 @@ func (c *Client) doOp(
 	}
 
 	// Drain stderr log messages until LogLast.
-	if err := ProcessStderr(c.r, c.logs); err != nil {
+	if err := ProcessStderrWithSink(c.r, c.logSink); err != nil {
 		return err
 	}
 
@@ -499,11 +566,14 @@ func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo
 func (c *Client) NarFromPath(
 	ctx context.Context, path string,
 ) (io.ReadCloser, error) {
-	if err := ctx.Err(); err != nil {
+	if err := c.checkCtx(ctx); err != nil {
 		return nil, err
 	}
 
-	cancel := c.lockForCtx(ctx)
+	cancel, err := c.lockForCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Write operation code.
 	if err := wire.WriteUint64(c.w, uint64(OpNarFromPath)); err != nil {
@@ -527,7 +597,7 @@ func (c *Client) NarFromPath(
 	}
 
 	// Drain stderr log messages until LogLast.
-	if err := ProcessStderr(c.r, c.logs); err != nil {
+	if err := ProcessStderrWithSink(c.r, c.logSink); err != nil {
 		c.release(cancel)
 
 		return nil, err
@@ -661,6 +731,10 @@ func (c *Client) EnsurePath(ctx context.Context, path string) error {
 func (c *Client) BuildDerivation(
 	ctx context.Context, drvPath string, drv *BasicDerivation, mode BuildMode,
 ) (*BuildResult, error) {
+	if drv == nil {
+		return nil, ErrNilDerivation
+	}
+
 	var result *BuildResult
 
 	err := c.doOp(ctx, OpBuildDerivation,
@@ -722,7 +796,10 @@ func (c *Client) AddTempRoot(ctx context.Context, path string) error {
 		func(w io.Writer) error {
 			return wire.WriteString(w, path)
 		},
-		nil,
+		func(r io.Reader) error {
+			_, err := wire.ReadUint64(r)
+			return err
+		},
 	)
 }
 
@@ -733,7 +810,10 @@ func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
 		func(w io.Writer) error {
 			return wire.WriteString(w, path)
 		},
-		nil,
+		func(r io.Reader) error {
+			_, err := wire.ReadUint64(r)
+			return err
+		},
 	)
 }
 
@@ -775,7 +855,10 @@ func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) 
 
 			return WriteStrings(w, sigs)
 		},
-		nil,
+		func(r io.Reader) error {
+			_, err := wire.ReadUint64(r)
+			return err
+		},
 	)
 }
 
@@ -797,6 +880,13 @@ func (c *Client) RegisterDrvOutput(ctx context.Context, realisation string) erro
 func (c *Client) AddToStoreNar(
 	ctx context.Context, info *PathInfo, source io.Reader, repair, dontCheckSigs bool,
 ) error {
+	if info == nil {
+		return ErrNilPathInfo
+	}
+	if source == nil {
+		return ErrNilReader
+	}
+
 	ow, err := c.DoStreaming(ctx, OpAddToStoreNar)
 	if err != nil {
 		return err
@@ -854,6 +944,10 @@ func (c *Client) AddToStoreNar(
 // AddBuildLog uploads a build log for the given derivation path. The log
 // data is streamed from the provided reader.
 func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader) error {
+	if log == nil {
+		return ErrNilReader
+	}
+
 	ow, err := c.DoStreaming(ctx, OpAddBuildLog)
 	if err != nil {
 		return err
@@ -891,8 +985,11 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 	if err != nil {
 		return err
 	}
+	defer resp.Close()
 
-	return resp.Close()
+	// Daemon responds with uint64(1) to acknowledge.
+	_, err = wire.ReadUint64(resp)
+	return err
 }
 
 // FindRoots returns the set of GC roots known to the daemon. The map keys
@@ -919,6 +1016,10 @@ func (c *Client) FindRoots(ctx context.Context) (map[string]string, error) {
 
 // CollectGarbage performs a garbage collection operation on the store.
 func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCResult, error) {
+	if options == nil {
+		return nil, ErrNilOptions
+	}
+
 	var result GCResult
 
 	err := c.doOp(ctx, OpCollectGarbage,
@@ -976,7 +1077,12 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 // OptimiseStore asks the daemon to optimise the Nix store by hard-linking
 // identical files.
 func (c *Client) OptimiseStore(ctx context.Context) error {
-	return c.doOp(ctx, OpOptimiseStore, nil, nil)
+	return c.doOp(ctx, OpOptimiseStore, nil,
+		func(r io.Reader) error {
+			_, err := wire.ReadUint64(r)
+			return err
+		},
+	)
 }
 
 // VerifyStore checks the consistency of the Nix store. If checkContents is
@@ -1041,6 +1147,12 @@ func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error
 func (c *Client) AddMultipleToStore(
 	ctx context.Context, items []AddToStoreItem, repair, dontCheckSigs bool,
 ) error {
+	for i := 0; i < len(items); i++ {
+		if items[i].Source == nil {
+			return ErrNilReader
+		}
+	}
+
 	ow, err := c.DoStreaming(ctx, OpAddMultipleToStore)
 	if err != nil {
 		return err

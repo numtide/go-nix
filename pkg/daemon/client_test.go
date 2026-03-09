@@ -106,6 +106,90 @@ func TestClientConnect(t *testing.T) {
 	assert.Equal(t, "nix (Nix) 2.24.0", client.Info().DaemonNixVersion)
 }
 
+func TestNewClientFromConnNil(t *testing.T) {
+	_, err := daemon.NewClientFromConn(nil)
+	assert.ErrorIs(t, err, daemon.ErrNilConn)
+}
+
+func TestClientNilContext(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	var ctx context.Context
+	_, err = client.IsValidPath(ctx, "/nix/store/abc-test")
+	assert.ErrorIs(t, err, daemon.ErrNilContext)
+}
+
+func TestClientClosed(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+
+	assert.NoError(t, client.Close())
+
+	_, err = client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	assert.ErrorIs(t, err, daemon.ErrClosed)
+}
+
+func TestClientCloseIdempotent(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+
+	assert.NoError(t, client.Close())
+	assert.NoError(t, client.Close())
+}
+
+func TestCollectGarbageNilOptions(t *testing.T) {
+	client := &daemon.Client{}
+	_, err := client.CollectGarbage(context.Background(), nil)
+	assert.ErrorIs(t, err, daemon.ErrNilOptions)
+}
+
+func TestAddToStoreNarNilArgs(t *testing.T) {
+	client := &daemon.Client{}
+
+	err := client.AddToStoreNar(context.Background(), nil, nil, false, false)
+	assert.ErrorIs(t, err, daemon.ErrNilPathInfo)
+
+	err = client.AddToStoreNar(context.Background(), &daemon.PathInfo{}, nil, false, false)
+	assert.ErrorIs(t, err, daemon.ErrNilReader)
+}
+
+func TestAddBuildLogNilReader(t *testing.T) {
+	client := &daemon.Client{}
+
+	err := client.AddBuildLog(context.Background(), "/nix/store/abc.drv", nil)
+	assert.ErrorIs(t, err, daemon.ErrNilReader)
+}
+
+func TestBuildDerivationNil(t *testing.T) {
+	client := &daemon.Client{}
+
+	_, err := client.BuildDerivation(context.Background(), "/nix/store/abc.drv", nil, daemon.BuildModeNormal)
+	assert.ErrorIs(t, err, daemon.ErrNilDerivation)
+}
+
 func TestClientIsValidPath(t *testing.T) {
 	mock, clientConn := newMockDaemon(t)
 	defer mock.conn.Close()
@@ -466,6 +550,10 @@ func TestClientBuildPathsWithResults(t *testing.T) {
 		_, _ = mock.conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 1700000060) // stopTime
 		_, _ = mock.conn.Write(buf[:])
+		binary.LittleEndian.PutUint64(buf[:], 0) // cpuUser: None
+		_, _ = mock.conn.Write(buf[:])
+		binary.LittleEndian.PutUint64(buf[:], 0) // cpuSystem: None
+		_, _ = mock.conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 0) // builtOutputs count
 		_, _ = mock.conn.Write(buf[:])
 	}()
@@ -507,6 +595,10 @@ func TestClientAddTempRoot(t *testing.T) {
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
 		_, _ = mock.conn.Write(buf[:])
+
+		// uint64(1) acknowledgment
+		binary.LittleEndian.PutUint64(buf[:], 1)
+		_, _ = mock.conn.Write(buf[:])
 	}()
 
 	client, err := daemon.NewClientFromConn(clientConn)
@@ -534,6 +626,10 @@ func TestClientAddIndirectRoot(t *testing.T) {
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		_, _ = mock.conn.Write(buf[:])
+
+		// uint64(1) acknowledgment
+		binary.LittleEndian.PutUint64(buf[:], 1)
 		_, _ = mock.conn.Write(buf[:])
 	}()
 
@@ -603,6 +699,10 @@ func TestClientAddSignatures(t *testing.T) {
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		_, _ = mock.conn.Write(buf[:])
+
+		// uint64(1) acknowledgment
+		binary.LittleEndian.PutUint64(buf[:], 1)
 		_, _ = mock.conn.Write(buf[:])
 	}()
 
@@ -684,29 +784,11 @@ func TestClientAddToStoreNar(t *testing.T) {
 		_, _ = io.ReadFull(mock.conn, buf[:]) // repair
 		_, _ = io.ReadFull(mock.conn, buf[:]) // dontCheckSigs
 
-		// Read framed NAR data
-		var received bytes.Buffer
-
-		for {
-			_, _ = io.ReadFull(mock.conn, buf[:])
-			frameLen := binary.LittleEndian.Uint64(buf[:])
-
-			if frameLen == 0 {
-				break
-			}
-
-			data := make([]byte, frameLen)
-			_, _ = io.ReadFull(mock.conn, data)
-			_, _ = received.Write(data)
-
-			// Skip padding
-			pad := (8 - (frameLen % 8)) % 8
-			if pad > 0 {
-				_, _ = io.ReadFull(mock.conn, make([]byte, pad))
-			}
-		}
-
-		assert.Equal(t, narData, received.Bytes())
+		// Read framed NAR data (no padding in framed protocol)
+		fr := daemon.NewFramedReader(mock.conn)
+		received, err := io.ReadAll(fr)
+		assert.NoError(t, err)
+		assert.Equal(t, narData, received)
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
@@ -834,6 +916,11 @@ func TestClientBuildDerivation(t *testing.T) {
 		binary.LittleEndian.PutUint64(buf[:], 200) // stopTime
 		_, _ = mock.conn.Write(buf[:])
 
+		binary.LittleEndian.PutUint64(buf[:], 0) // cpuUser: None
+		_, _ = mock.conn.Write(buf[:])
+		binary.LittleEndian.PutUint64(buf[:], 0) // cpuSystem: None
+		_, _ = mock.conn.Write(buf[:])
+
 		binary.LittleEndian.PutUint64(buf[:], 0) // builtOutputs count
 		_, _ = mock.conn.Write(buf[:])
 	}()
@@ -867,32 +954,18 @@ func TestClientAddBuildLog(t *testing.T) {
 
 		_, _ = wire.ReadString(mock.conn, 64*1024) // drvPath
 
-		// Read framed log data
-		var received bytes.Buffer
-
-		for {
-			_, _ = io.ReadFull(mock.conn, buf[:])
-			frameLen := binary.LittleEndian.Uint64(buf[:])
-
-			if frameLen == 0 {
-				break
-			}
-
-			data := make([]byte, frameLen)
-			_, _ = io.ReadFull(mock.conn, data)
-			_, _ = received.Write(data)
-
-			// Skip padding
-			pad := (8 - (frameLen % 8)) % 8
-			if pad > 0 {
-				_, _ = io.ReadFull(mock.conn, make([]byte, pad))
-			}
-		}
-
-		assert.Equal(t, logContent, received.String())
+		// Read framed log data (no padding in framed protocol)
+		fr := daemon.NewFramedReader(mock.conn)
+		received, err := io.ReadAll(fr)
+		assert.NoError(t, err)
+		assert.Equal(t, logContent, string(received))
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		_, _ = mock.conn.Write(buf[:])
+
+		// uint64(1) acknowledgment
+		binary.LittleEndian.PutUint64(buf[:], 1)
 		_, _ = mock.conn.Write(buf[:])
 	}()
 
