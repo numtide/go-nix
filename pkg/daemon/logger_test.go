@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"bytes"
 	"encoding/binary"
+	"sync/atomic"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
@@ -83,7 +84,7 @@ func TestProcessStderrStartStopActivity(t *testing.T) {
 	writeTestUint64(&buf, uint64(daemon.LogStartActivity))
 	writeTestUint64(&buf, 42)  // id
 	writeTestUint64(&buf, 3)   // level (Info)
-	writeTestUint64(&buf, 105) // type (ActBuilds)
+	writeTestUint64(&buf, 104) // type (ActBuilds)
 	writeTestString(&buf, "building foo")
 	writeTestUint64(&buf, 0) // nrFields
 	writeTestUint64(&buf, 0) // parent
@@ -203,13 +204,30 @@ func TestProcessStderrErrorWithTraces(t *testing.T) {
 	assert.Equal(t, "in file default.nix", de.Traces[1].Message)
 }
 
+func TestProcessStderrErrorTooManyTraces(t *testing.T) {
+	var buf bytes.Buffer
+
+	writeTestUint64(&buf, uint64(daemon.LogError))
+	writeTestString(&buf, "Error")         // type
+	writeTestUint64(&buf, 0)               // level
+	writeTestString(&buf, "EvalError")     // name
+	writeTestString(&buf, "bad news")      // message
+	writeTestUint64(&buf, 0)               // havePos
+	writeTestUint64(&buf, daemon.MaxLogTraces+1) // nrTraces
+
+	logs := make(chan daemon.LogMessage, 1)
+	err := daemon.ProcessStderr(&buf, logs)
+
+	assert.Error(t, err)
+}
+
 func TestProcessStderrActivityWithFields(t *testing.T) {
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogStartActivity))
 	writeTestUint64(&buf, 99)  // id
 	writeTestUint64(&buf, 3)   // level (Info)
-	writeTestUint64(&buf, 102) // type (ActFileTransfer)
+	writeTestUint64(&buf, 101) // type (ActFileTransfer)
 	writeTestString(&buf, "downloading file")
 	writeTestUint64(&buf, 2) // nrFields
 	// field 1: string
@@ -236,4 +254,33 @@ func TestProcessStderrActivityWithFields(t *testing.T) {
 	assert.Equal(t, "https://example.com/file.tar.gz", msg.Activity.Fields[0].String)
 	assert.True(t, msg.Activity.Fields[1].IsInt)
 	assert.Equal(t, uint64(1048576), msg.Activity.Fields[1].Int)
+}
+
+func TestProcessStderrActivityTooManyFields(t *testing.T) {
+	var buf bytes.Buffer
+
+	writeTestUint64(&buf, uint64(daemon.LogStartActivity))
+	writeTestUint64(&buf, 99)  // id
+	writeTestUint64(&buf, 3)   // level (Info)
+	writeTestUint64(&buf, 101) // type (ActFileTransfer)
+	writeTestString(&buf, "downloading file")
+	writeTestUint64(&buf, daemon.MaxLogFields+1) // nrFields
+
+	logs := make(chan daemon.LogMessage, 1)
+	err := daemon.ProcessStderr(&buf, logs)
+
+	assert.Error(t, err)
+}
+
+func TestLogChannelSinkDropCounter(t *testing.T) {
+	ch := make(chan daemon.LogMessage, 1)
+	var dropped atomic.Uint64
+
+	sink := daemon.NewLogChannelSink(ch, &dropped)
+
+	sink.Send(daemon.LogMessage{Type: daemon.LogNext, Text: "first"})
+	sink.Send(daemon.LogMessage{Type: daemon.LogNext, Text: "second"})
+
+	assert.Equal(t, uint64(1), dropped.Load())
+	assert.Len(t, ch, 1)
 }

@@ -952,7 +952,8 @@ func TestClientAddBuildLog(t *testing.T) {
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddBuildLog), op)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // drvPath
+		drvPath, _ := wire.ReadString(mock.conn, 64*1024) // drvPath (BaseStorePath)
+		assert.Equal(t, "abc-test.drv", drvPath)
 
 		// Read framed log data (no padding in framed protocol)
 		fr := daemon.NewFramedReader(mock.conn)

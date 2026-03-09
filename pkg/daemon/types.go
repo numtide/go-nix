@@ -5,6 +5,9 @@ import (
 	"io"
 )
 
+// DefaultStoreDir is the default Nix store directory prefix.
+const DefaultStoreDir = "/nix/store/"
+
 // Protocol handshake constants.
 const (
 	// ClientMagic is the magic number sent by the client to initiate the handshake.
@@ -13,8 +16,11 @@ const (
 	// ServerMagic is the magic number the server responds with during the handshake.
 	ServerMagic uint64 = 0x6478696f // "dxio" in ASCII
 
-	// ProtocolVersion is the protocol version we support (1.37).
+	// ProtocolVersion is the maximum protocol version we support (1.37).
 	ProtocolVersion uint64 = 0x0125
+
+	// MinProtocolVersion is the minimum protocol version we support (1.0).
+	MinProtocolVersion uint64 = 0x0100
 )
 
 // Operation represents a daemon worker operation code.
@@ -124,19 +130,20 @@ const (
 type ActivityType uint64
 
 const (
-	ActUnknown       ActivityType = 100
-	ActCopyPath      ActivityType = 101
-	ActFileTransfer  ActivityType = 102
-	ActRealise       ActivityType = 103
-	ActCopyPaths     ActivityType = 104
-	ActBuilds        ActivityType = 105
-	ActBuild         ActivityType = 106
-	ActOptimiseStore ActivityType = 107
-	ActVerifyPaths   ActivityType = 108
-	ActSubstitute    ActivityType = 109
-	ActQueryPathInfo ActivityType = 110
-	ActPostBuildHook ActivityType = 111
-	ActBuildWaiting  ActivityType = 112
+	ActUnknown       ActivityType = 0
+	ActCopyPath      ActivityType = 100
+	ActFileTransfer  ActivityType = 101
+	ActRealise       ActivityType = 102
+	ActCopyPaths     ActivityType = 103
+	ActBuilds        ActivityType = 104
+	ActBuild         ActivityType = 105
+	ActOptimiseStore ActivityType = 106
+	ActVerifyPaths   ActivityType = 107
+	ActSubstitute    ActivityType = 108
+	ActQueryPathInfo ActivityType = 109
+	ActPostBuildHook ActivityType = 110
+	ActBuildWaiting  ActivityType = 111
+	ActFetchTree     ActivityType = 112
 )
 
 // ResultType represents the type of a result in log messages.

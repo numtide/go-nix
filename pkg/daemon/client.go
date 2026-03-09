@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -953,8 +954,9 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 		return err
 	}
 
-	// Write derivation path.
-	if err := wire.WriteString(ow, drvPath); err != nil {
+	// Write derivation path as BaseStorePath (basename without /nix/store/ prefix).
+	basePath := strings.TrimPrefix(drvPath, DefaultStoreDir)
+	if err := wire.WriteString(ow, basePath); err != nil {
 		ow.Abort()
 
 		return &ProtocolError{Op: "AddBuildLog write drvPath", Err: err}

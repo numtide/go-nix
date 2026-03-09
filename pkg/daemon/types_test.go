@@ -101,19 +101,20 @@ func TestLogMessageTypes(t *testing.T) {
 }
 
 func TestActivityTypes(t *testing.T) {
-	assert.Equal(t, daemon.ActivityType(100), daemon.ActUnknown)
-	assert.Equal(t, daemon.ActivityType(101), daemon.ActCopyPath)
-	assert.Equal(t, daemon.ActivityType(102), daemon.ActFileTransfer)
-	assert.Equal(t, daemon.ActivityType(103), daemon.ActRealise)
-	assert.Equal(t, daemon.ActivityType(104), daemon.ActCopyPaths)
-	assert.Equal(t, daemon.ActivityType(105), daemon.ActBuilds)
-	assert.Equal(t, daemon.ActivityType(106), daemon.ActBuild)
-	assert.Equal(t, daemon.ActivityType(107), daemon.ActOptimiseStore)
-	assert.Equal(t, daemon.ActivityType(108), daemon.ActVerifyPaths)
-	assert.Equal(t, daemon.ActivityType(109), daemon.ActSubstitute)
-	assert.Equal(t, daemon.ActivityType(110), daemon.ActQueryPathInfo)
-	assert.Equal(t, daemon.ActivityType(111), daemon.ActPostBuildHook)
-	assert.Equal(t, daemon.ActivityType(112), daemon.ActBuildWaiting)
+	assert.Equal(t, daemon.ActivityType(0), daemon.ActUnknown)
+	assert.Equal(t, daemon.ActivityType(100), daemon.ActCopyPath)
+	assert.Equal(t, daemon.ActivityType(101), daemon.ActFileTransfer)
+	assert.Equal(t, daemon.ActivityType(102), daemon.ActRealise)
+	assert.Equal(t, daemon.ActivityType(103), daemon.ActCopyPaths)
+	assert.Equal(t, daemon.ActivityType(104), daemon.ActBuilds)
+	assert.Equal(t, daemon.ActivityType(105), daemon.ActBuild)
+	assert.Equal(t, daemon.ActivityType(106), daemon.ActOptimiseStore)
+	assert.Equal(t, daemon.ActivityType(107), daemon.ActVerifyPaths)
+	assert.Equal(t, daemon.ActivityType(108), daemon.ActSubstitute)
+	assert.Equal(t, daemon.ActivityType(109), daemon.ActQueryPathInfo)
+	assert.Equal(t, daemon.ActivityType(110), daemon.ActPostBuildHook)
+	assert.Equal(t, daemon.ActivityType(111), daemon.ActBuildWaiting)
+	assert.Equal(t, daemon.ActivityType(112), daemon.ActFetchTree)
 }
 
 func TestResultTypes(t *testing.T) {
