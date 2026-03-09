@@ -19,8 +19,29 @@ const (
 	// ProtocolVersion is the maximum protocol version we support (1.37).
 	ProtocolVersion uint64 = 0x0125
 
-	// MinProtocolVersion is the minimum protocol version we support (1.0).
-	MinProtocolVersion uint64 = 0x0100
+	// MinProtocolVersion is the minimum protocol version we support (1.21).
+	MinProtocolVersion uint64 = 0x0115
+)
+
+// ProtoVersion constructs a protocol version uint64 from major and minor parts.
+func ProtoVersion(major, minor uint64) uint64 {
+	return (major << 8) | minor
+}
+
+const (
+	ProtoVersionOverrides               = 0x010c // 1.12: overrides in SetOptions
+	ProtoVersionPathInfoMeta            = 0x0110 // 1.16: ultimate/sigs/ca in PathInfo
+	ProtoVersionSubstituteOk            = 0x011b // 1.27: substituteOk in QueryValidPaths
+	ProtoVersionRegisterDrvOutput       = 0x011b // 1.27: RegisterDrvOutput, QueryRealisation
+	ProtoVersionBuiltOutputs            = 0x011c // 1.28: builtOutputs in BuildResult
+	ProtoVersionBuildTimes              = 0x011d // 1.29: timesBuilt etc. in BuildResult
+	ProtoVersionAddPermRoot             = 0x011d // 1.29: AddPermRoot op
+	ProtoVersionQueryDerivationOutputMap = 0x011e // 1.30: QueryDerivationOutputMap op
+	ProtoVersionQueryMissing            = 0x011e // 1.30: QueryMissing op
+	ProtoVersionRealisationJSON         = 0x011f // 1.31: JSON realisations
+	ProtoVersionAddMultipleToStore      = 0x0120 // 1.32: AddMultipleToStore, AddBuildLog
+	ProtoVersionBuildPathsWithResults   = 0x0122 // 1.34: BuildPathsWithResults op
+	ProtoVersionCPUTimes                = 0x0125 // 1.37: cpuUser/cpuSystem in BuildResult
 )
 
 // Operation represents a daemon worker operation code.
