@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"sort"
@@ -1878,11 +1879,11 @@ func TestClientQueryMissing(t *testing.T) {
 	defer mock.conn.Close()
 
 	expected := &daemon.MissingInfo{
-		WillBuild:    []string{"/nix/store/aaa-needs-build.drv"},
+		WillBuild:      []string{"/nix/store/aaa-needs-build.drv"},
 		WillSubstitute: []string{"/nix/store/bbb-from-cache"},
-		Unknown:      []string{"/nix/store/ccc-unknown"},
-		DownloadSize: 1048576,
-		NarSize:      2097152,
+		Unknown:        []string{"/nix/store/ccc-unknown"},
+		DownloadSize:   1048576,
+		NarSize:        2097152,
 	}
 
 	go func() {
@@ -2016,4 +2017,188 @@ func TestClientQueryRealisation(t *testing.T) {
 	result, err := client.QueryRealisation(context.Background(), "sha256:abc!out")
 	assert.NoError(t, err)
 	assert.Equal(t, realisations, result)
+}
+
+// ---------- Daemon error response helpers and tests ----------
+
+// respondWithError reads an op code and drains the request data using the
+// provided drain function, then sends a LogError response with the given
+// daemon.Error fields.
+func (m *mockDaemon) respondWithError(expectedOp daemon.Operation, drain func(), de *daemon.Error) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(expectedOp), op)
+
+	if drain != nil {
+		drain()
+	}
+
+	// Send LogError instead of LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogError))
+	_, _ = m.conn.Write(buf[:])
+
+	// Error payload: Type, Level, Name, Message, HavePos, NrTraces, traces...
+	writeWireStringTo(m.conn, de.Type)
+
+	binary.LittleEndian.PutUint64(buf[:], de.Level)
+	_, _ = m.conn.Write(buf[:])
+
+	writeWireStringTo(m.conn, de.Name)
+	writeWireStringTo(m.conn, de.Message)
+
+	binary.LittleEndian.PutUint64(buf[:], 0) // HavePos = 0
+	_, _ = m.conn.Write(buf[:])
+
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(de.Traces)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, tr := range de.Traces {
+		binary.LittleEndian.PutUint64(buf[:], tr.HavePos)
+		_, _ = m.conn.Write(buf[:])
+		writeWireStringTo(m.conn, tr.Message)
+	}
+}
+
+func TestClientIsValidPathDaemonError(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expectedErr := &daemon.Error{
+		Type:    "Error",
+		Level:   0,
+		Name:    "InvalidPath",
+		Message: "path '/nix/store/xxx-invalid' is not valid",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondWithError(daemon.OpIsValidPath, func() {
+			_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		}, expectedErr)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.IsValidPath(context.Background(), "/nix/store/xxx-invalid")
+	assert.Error(t, err)
+
+	var daemonErr *daemon.Error
+	assert.True(t, errors.As(err, &daemonErr))
+	assert.Equal(t, "Error", daemonErr.Type)
+	assert.Equal(t, "path '/nix/store/xxx-invalid' is not valid", daemonErr.Message)
+}
+
+func TestClientQueryPathInfoDaemonError(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expectedErr := &daemon.Error{
+		Type:    "Error",
+		Level:   0,
+		Name:    "InvalidPath",
+		Message: "path '/nix/store/yyy-broken' is corrupted",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondWithError(daemon.OpQueryPathInfo, func() {
+			_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		}, expectedErr)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.QueryPathInfo(context.Background(), "/nix/store/yyy-broken")
+	assert.Error(t, err)
+
+	var daemonErr *daemon.Error
+	assert.True(t, errors.As(err, &daemonErr))
+	assert.Equal(t, "Error", daemonErr.Type)
+	assert.Equal(t, "path '/nix/store/yyy-broken' is corrupted", daemonErr.Message)
+}
+
+func TestClientBuildPathsDaemonError(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expectedErr := &daemon.Error{
+		Type:    "Error",
+		Level:   0,
+		Name:    "BuildError",
+		Message: "build of '/nix/store/zzz-fail.drv' failed",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondWithError(daemon.OpBuildPaths, func() {
+			var buf [8]byte
+			// Read count + path strings
+			_, _ = io.ReadFull(mock.conn, buf[:]) // count
+			count := binary.LittleEndian.Uint64(buf[:])
+			for i := uint64(0); i < count; i++ {
+				_, _ = wire.ReadString(mock.conn, 64*1024)
+			}
+			// Read build mode
+			_, _ = io.ReadFull(mock.conn, buf[:])
+		}, expectedErr)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	err = client.BuildPaths(context.Background(), []string{"/nix/store/zzz-fail.drv"}, daemon.BuildModeNormal)
+	assert.Error(t, err)
+
+	var daemonErr *daemon.Error
+	assert.True(t, errors.As(err, &daemonErr))
+	assert.Equal(t, "Error", daemonErr.Type)
+	assert.Equal(t, "build of '/nix/store/zzz-fail.drv' failed", daemonErr.Message)
+}
+
+func TestClientDaemonErrorWithTraces(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expectedErr := &daemon.Error{
+		Type:    "Error",
+		Level:   0,
+		Name:    "EvalError",
+		Message: "evaluation failed",
+		Traces: []daemon.ErrorTrace{
+			{HavePos: 0, Message: "while evaluating the attribute 'buildInputs'"},
+			{HavePos: 0, Message: "while calling the 'derivationStrict' builtin"},
+		},
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondWithError(daemon.OpIsValidPath, func() {
+			_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		}, expectedErr)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	assert.Error(t, err)
+
+	var daemonErr *daemon.Error
+	assert.True(t, errors.As(err, &daemonErr))
+	assert.Equal(t, "Error", daemonErr.Type)
+	assert.Equal(t, "evaluation failed", daemonErr.Message)
+	assert.Equal(t, "EvalError", daemonErr.Name)
+	assert.Len(t, daemonErr.Traces, 2)
+	assert.Equal(t, "while evaluating the attribute 'buildInputs'", daemonErr.Traces[0].Message)
+	assert.Equal(t, "while calling the 'derivationStrict' builtin", daemonErr.Traces[1].Message)
+	assert.Equal(t, uint64(0), daemonErr.Traces[0].HavePos)
+	assert.Equal(t, uint64(0), daemonErr.Traces[1].HavePos)
 }
