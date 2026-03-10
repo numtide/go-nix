@@ -21,7 +21,7 @@ func TestWriteClientSettings(t *testing.T) {
 	var buf bytes.Buffer
 
 	settings := daemon.DefaultClientSettings()
-	err := daemon.WriteClientSettings(&buf, settings)
+	err := daemon.WriteClientSettings(&buf, settings, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 
 	// Verify wire format by reading fields back
@@ -98,7 +98,7 @@ func TestWriteClientSettingsWithOverrides(t *testing.T) {
 		"allowed-uris": "https://example.com",
 	}
 
-	err := daemon.WriteClientSettings(&buf, settings)
+	err := daemon.WriteClientSettings(&buf, settings, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 
 	r := &buf

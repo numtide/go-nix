@@ -208,3 +208,26 @@ func TestGCAction(t *testing.T) {
 	assert.Equal(t, daemon.GCAction(2), daemon.GCDeleteDead)
 	assert.Equal(t, daemon.GCAction(3), daemon.GCDeleteSpecific)
 }
+
+func TestMinProtocolVersion(t *testing.T) {
+	assert.Equal(t, uint64(0x0115), daemon.MinProtocolVersion)
+}
+
+func TestProtoVersion(t *testing.T) {
+	assert.Equal(t, uint64(0x0125), daemon.ProtoVersion(1, 37))
+	assert.Equal(t, uint64(0x010c), daemon.ProtoVersion(1, 12))
+	assert.Equal(t, uint64(0x0115), daemon.ProtoVersion(1, 21))
+}
+
+func TestProtoVersionConstants(t *testing.T) {
+	assert.Equal(t, uint64(0x010c), uint64(daemon.ProtoVersionOverrides))
+	assert.Equal(t, uint64(0x0110), uint64(daemon.ProtoVersionPathInfoMeta))
+	assert.Equal(t, uint64(0x011b), uint64(daemon.ProtoVersionSubstituteOk))
+	assert.Equal(t, uint64(0x011c), uint64(daemon.ProtoVersionBuiltOutputs))
+	assert.Equal(t, uint64(0x011d), uint64(daemon.ProtoVersionBuildTimes))
+	assert.Equal(t, uint64(0x011e), uint64(daemon.ProtoVersionQueryDerivationOutputMap))
+	assert.Equal(t, uint64(0x011f), uint64(daemon.ProtoVersionRealisationJSON))
+	assert.Equal(t, uint64(0x0120), uint64(daemon.ProtoVersionAddMultipleToStore))
+	assert.Equal(t, uint64(0x0122), uint64(daemon.ProtoVersionBuildPathsWithResults))
+	assert.Equal(t, uint64(0x0125), uint64(daemon.ProtoVersionCPUTimes))
+}

@@ -985,12 +985,12 @@ func (c *Client) AddToStoreNar(
 // AddBuildLog uploads a build log for the given derivation path. The log
 // data is streamed from the provided reader. Requires protocol >= 1.32.
 func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader) error {
-	if err := c.requireVersion(OpAddBuildLog, ProtoVersionAddMultipleToStore); err != nil {
-		return err
-	}
-
 	if log == nil {
 		return ErrNilReader
+	}
+
+	if err := c.requireVersion(OpAddBuildLog, ProtoVersionAddMultipleToStore); err != nil {
+		return err
 	}
 
 	ow, err := c.DoStreaming(ctx, OpAddBuildLog)

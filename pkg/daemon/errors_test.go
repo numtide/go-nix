@@ -21,3 +21,13 @@ func TestProtocolError(t *testing.T) {
 	assert.Equal(t, "protocol: handshake: unexpected EOF", e.Error())
 	assert.ErrorIs(t, e, inner)
 }
+
+func TestUnsupportedOperationError(t *testing.T) {
+	e := &daemon.UnsupportedOperationError{
+		Op:             daemon.OpBuildPathsWithResults,
+		MinVersion:     0x0122,
+		CurrentVersion: 0x011b,
+	}
+	assert.Equal(t, "BuildPathsWithResults requires protocol >= 1.34, but negotiated 1.27", e.Error())
+	assert.ErrorIs(t, e, daemon.ErrUnsupportedOperation)
+}

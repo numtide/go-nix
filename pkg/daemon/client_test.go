@@ -16,8 +16,9 @@ import (
 
 // mockDaemon handles the server side of the protocol for testing.
 type mockDaemon struct {
-	conn net.Conn
-	t    *testing.T
+	conn    net.Conn
+	t       *testing.T
+	version uint64 // 0 means use daemon.ProtocolVersion
 }
 
 func newMockDaemon(t *testing.T) (*mockDaemon, net.Conn) {
@@ -26,25 +27,58 @@ func newMockDaemon(t *testing.T) (*mockDaemon, net.Conn) {
 	return &mockDaemon{conn: server, t: t}, client
 }
 
+func newMockDaemonWithVersion(t *testing.T, version uint64) (*mockDaemon, net.Conn) {
+	server, client := net.Pipe()
+
+	return &mockDaemon{conn: server, t: t, version: version}, client
+}
+
 func (m *mockDaemon) handshake() {
+	const (
+		protoReserveSpace = 0x010b // 1.11
+		protoCPUAffinity  = 0x010e // 1.14
+		protoNixVersion   = 0x0121 // 1.33
+		protoTrust        = 0x0123 // 1.35
+	)
+
+	mockVersion := m.version
+	if mockVersion == 0 {
+		mockVersion = daemon.ProtocolVersion
+	}
+
 	var buf [8]byte
 
-	_, _ = io.ReadFull(m.conn, buf[:])
+	_, _ = io.ReadFull(m.conn, buf[:]) // read client magic
 
 	binary.LittleEndian.PutUint64(buf[:], daemon.ServerMagic)
 	_, _ = m.conn.Write(buf[:])
 
-	binary.LittleEndian.PutUint64(buf[:], daemon.ProtocolVersion)
+	binary.LittleEndian.PutUint64(buf[:], mockVersion)
 	_, _ = m.conn.Write(buf[:])
 
 	_, _ = io.ReadFull(m.conn, buf[:]) // negotiated version
-	_, _ = io.ReadFull(m.conn, buf[:]) // cpu affinity
-	_, _ = io.ReadFull(m.conn, buf[:]) // reserve space
+	negotiated := binary.LittleEndian.Uint64(buf[:])
 
-	writeWireStringTo(m.conn, "nix (Nix) 2.24.0")
+	// cpu affinity (>= 1.14)
+	if negotiated >= protoCPUAffinity {
+		_, _ = io.ReadFull(m.conn, buf[:])
+	}
 
-	binary.LittleEndian.PutUint64(buf[:], 1) // TrustTrusted
-	_, _ = m.conn.Write(buf[:])
+	// reserve space (>= 1.11)
+	if negotiated >= protoReserveSpace {
+		_, _ = io.ReadFull(m.conn, buf[:])
+	}
+
+	// nix version string (>= 1.33)
+	if negotiated >= protoNixVersion {
+		writeWireStringTo(m.conn, "nix (Nix) 2.24.0")
+	}
+
+	// trust level (>= 1.35)
+	if negotiated >= protoTrust {
+		binary.LittleEndian.PutUint64(buf[:], 1) // TrustTrusted
+		_, _ = m.conn.Write(buf[:])
+	}
 
 	// Post-handshake: daemon sends startWork/stopWork (STDERR_LAST).
 	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
@@ -1134,4 +1168,140 @@ func TestClientAddMultipleToStoreEmpty(t *testing.T) {
 
 	err = client.AddMultipleToStore(context.Background(), nil, false, false)
 	assert.NoError(t, err)
+}
+
+func TestBuildPathsWithResultsUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.BuildPathsWithResults(context.Background(), []string{"/nix/store/abc.drv!out"}, daemon.BuildModeNormal)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+func TestAddBuildLogUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	err = client.AddBuildLog(context.Background(), "/nix/store/abc-test.drv", strings.NewReader("log"))
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+func TestAddMultipleToStoreUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	err = client.AddMultipleToStore(context.Background(), nil, false, false)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+func TestAddPermRootUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.AddPermRoot(context.Background(), "/nix/store/abc-test", "/home/user/result")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+func TestQueryDerivationOutputMapUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.QueryDerivationOutputMap(context.Background(), "/nix/store/abc.drv")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+func TestQueryMissingUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.QueryMissing(context.Background(), []string{"/nix/store/abc.drv!out"})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+func TestRegisterDrvOutputUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	err = client.RegisterDrvOutput(context.Background(), "sha256:abc!out")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+func TestQueryRealisationUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.QueryRealisation(context.Background(), "sha256:abc!out")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
 }
