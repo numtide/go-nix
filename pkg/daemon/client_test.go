@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1304,4 +1305,715 @@ func TestQueryRealisationUnsupportedVersion(t *testing.T) {
 	_, err = client.QueryRealisation(context.Background(), "sha256:abc!out")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+// ---------- Mock responders for read-only operations ----------
+
+func (m *mockDaemon) respondSetOptions() {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpSetOptions), op)
+
+	// Read all ClientSettings fields from the wire:
+	_, _ = io.ReadFull(m.conn, buf[:]) // keepFailed (bool)
+	_, _ = io.ReadFull(m.conn, buf[:]) // keepGoing (bool)
+	_, _ = io.ReadFull(m.conn, buf[:]) // tryFallback (bool)
+	_, _ = io.ReadFull(m.conn, buf[:]) // verbosity (uint64)
+	_, _ = io.ReadFull(m.conn, buf[:]) // maxBuildJobs (uint64)
+	_, _ = io.ReadFull(m.conn, buf[:]) // maxSilentTime (uint64)
+	_, _ = io.ReadFull(m.conn, buf[:]) // useBuildHook (bool, deprecated)
+	_, _ = io.ReadFull(m.conn, buf[:]) // buildVerbosity (uint64)
+	_, _ = io.ReadFull(m.conn, buf[:]) // logType (uint64, deprecated)
+	_, _ = io.ReadFull(m.conn, buf[:]) // printBuildTrace (uint64, deprecated)
+	_, _ = io.ReadFull(m.conn, buf[:]) // buildCores (uint64)
+	_, _ = io.ReadFull(m.conn, buf[:]) // useSubstitutes (bool)
+
+	// Read overrides map (protocol >= 1.12): count + key/value pairs
+	_, _ = io.ReadFull(m.conn, buf[:]) // overrides count
+	count := binary.LittleEndian.Uint64(buf[:])
+
+	for i := uint64(0); i < count; i++ {
+		_, _ = wire.ReadString(m.conn, 64*1024) // key
+		_, _ = wire.ReadString(m.conn, 64*1024) // value
+	}
+
+	// Send LogLast (no response payload for SetOptions)
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+}
+
+func (m *mockDaemon) respondQueryAllValidPaths(paths []string) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQueryAllValidPaths), op)
+
+	// No request params
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: count + strings
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(paths)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, p := range paths {
+		writeWireStringTo(m.conn, p)
+	}
+}
+
+func (m *mockDaemon) respondQueryValidPaths(valid []string) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQueryValidPaths), op)
+
+	// Read request: paths (count + strings)
+	_, _ = io.ReadFull(m.conn, buf[:]) // count
+	count := binary.LittleEndian.Uint64(buf[:])
+
+	for i := uint64(0); i < count; i++ {
+		_, _ = wire.ReadString(m.conn, 64*1024)
+	}
+
+	// Read substituteOk (bool) — protocol >= 1.27
+	_, _ = io.ReadFull(m.conn, buf[:])
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: count + strings
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(valid)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, p := range valid {
+		writeWireStringTo(m.conn, p)
+	}
+}
+
+func (m *mockDaemon) respondQuerySubstitutablePaths(paths []string) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQuerySubstitutablePaths), op)
+
+	// Read request: paths (count + strings)
+	_, _ = io.ReadFull(m.conn, buf[:]) // count
+	count := binary.LittleEndian.Uint64(buf[:])
+
+	for i := uint64(0); i < count; i++ {
+		_, _ = wire.ReadString(m.conn, 64*1024)
+	}
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: count + strings
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(paths)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, p := range paths {
+		writeWireStringTo(m.conn, p)
+	}
+}
+
+func (m *mockDaemon) respondQueryReferrers(referrers []string) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQueryReferrers), op)
+
+	// Read request: path string
+	_, _ = wire.ReadString(m.conn, 64*1024)
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: count + strings
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(referrers)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, r := range referrers {
+		writeWireStringTo(m.conn, r)
+	}
+}
+
+func (m *mockDaemon) respondQueryValidDerivers(derivers []string) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQueryValidDerivers), op)
+
+	// Read request: path string
+	_, _ = wire.ReadString(m.conn, 64*1024)
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: count + strings
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(derivers)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, d := range derivers {
+		writeWireStringTo(m.conn, d)
+	}
+}
+
+func (m *mockDaemon) respondQueryDerivationOutputMap(outputs map[string]string) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQueryDerivationOutputMap), op)
+
+	// Read request: drvPath string
+	_, _ = wire.ReadString(m.conn, 64*1024)
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: count + sorted key/value pairs
+	keys := make([]string, 0, len(outputs))
+	for k := range outputs {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(keys)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, k := range keys {
+		writeWireStringTo(m.conn, k)
+		writeWireStringTo(m.conn, outputs[k])
+	}
+}
+
+func (m *mockDaemon) respondQueryMissing(info *daemon.MissingInfo) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQueryMissing), op)
+
+	// Read request: paths (count + strings)
+	_, _ = io.ReadFull(m.conn, buf[:]) // count
+	count := binary.LittleEndian.Uint64(buf[:])
+
+	for i := uint64(0); i < count; i++ {
+		_, _ = wire.ReadString(m.conn, 64*1024)
+	}
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: willBuild, willSubstitute, unknown, downloadSize, narSize
+	// willBuild
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(info.WillBuild)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, p := range info.WillBuild {
+		writeWireStringTo(m.conn, p)
+	}
+
+	// willSubstitute
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(info.WillSubstitute)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, p := range info.WillSubstitute {
+		writeWireStringTo(m.conn, p)
+	}
+
+	// unknown
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(info.Unknown)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, p := range info.Unknown {
+		writeWireStringTo(m.conn, p)
+	}
+
+	// downloadSize
+	binary.LittleEndian.PutUint64(buf[:], info.DownloadSize)
+	_, _ = m.conn.Write(buf[:])
+
+	// narSize
+	binary.LittleEndian.PutUint64(buf[:], info.NarSize)
+	_, _ = m.conn.Write(buf[:])
+}
+
+func (m *mockDaemon) respondQueryPathFromHashPart(path string) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQueryPathFromHashPart), op)
+
+	// Read request: hashPart string
+	_, _ = wire.ReadString(m.conn, 64*1024)
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: path string
+	writeWireStringTo(m.conn, path)
+}
+
+func (m *mockDaemon) respondCollectGarbage(result *daemon.GCResult) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpCollectGarbage), op)
+
+	// Read request: action (uint64)
+	_, _ = io.ReadFull(m.conn, buf[:])
+
+	// Read pathsToDelete (count + strings)
+	_, _ = io.ReadFull(m.conn, buf[:]) // count
+	count := binary.LittleEndian.Uint64(buf[:])
+
+	for i := uint64(0); i < count; i++ {
+		_, _ = wire.ReadString(m.conn, 64*1024)
+	}
+
+	// Read ignoreLiveness (bool)
+	_, _ = io.ReadFull(m.conn, buf[:])
+
+	// Read maxFreed (uint64)
+	_, _ = io.ReadFull(m.conn, buf[:])
+
+	// Read 3 deprecated fields
+	_, _ = io.ReadFull(m.conn, buf[:])
+	_, _ = io.ReadFull(m.conn, buf[:])
+	_, _ = io.ReadFull(m.conn, buf[:])
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: paths (count + strings)
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(result.Paths)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, p := range result.Paths {
+		writeWireStringTo(m.conn, p)
+	}
+
+	// bytesFreed
+	binary.LittleEndian.PutUint64(buf[:], result.BytesFreed)
+	_, _ = m.conn.Write(buf[:])
+
+	// deprecated field
+	binary.LittleEndian.PutUint64(buf[:], 0)
+	_, _ = m.conn.Write(buf[:])
+}
+
+func (m *mockDaemon) respondVerifyStore(errorsFound bool) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpVerifyStore), op)
+
+	// Read request: checkContents (bool) + repair (bool)
+	_, _ = io.ReadFull(m.conn, buf[:]) // checkContents
+	_, _ = io.ReadFull(m.conn, buf[:]) // repair
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: errorsFound (bool)
+	if errorsFound {
+		binary.LittleEndian.PutUint64(buf[:], 1)
+	} else {
+		binary.LittleEndian.PutUint64(buf[:], 0)
+	}
+
+	_, _ = m.conn.Write(buf[:])
+}
+
+func (m *mockDaemon) respondOptimiseStore() {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpOptimiseStore), op)
+
+	// No request params
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: uint64 acknowledgment
+	binary.LittleEndian.PutUint64(buf[:], 1)
+	_, _ = m.conn.Write(buf[:])
+}
+
+func (m *mockDaemon) respondQueryRealisation(realisations []string) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQueryRealisation), op)
+
+	// Read request: outputID string
+	_, _ = wire.ReadString(m.conn, 64*1024)
+
+	// Send LogLast
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: count + strings
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(realisations)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, r := range realisations {
+		writeWireStringTo(m.conn, r)
+	}
+}
+
+// ---------- Tests for read-only operations ----------
+
+func TestClientSetOptions(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+		mock.respondSetOptions()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	settings := &daemon.ClientSettings{
+		KeepFailed:     true,
+		KeepGoing:      false,
+		TryFallback:    true,
+		Verbosity:      daemon.VerbInfo,
+		MaxBuildJobs:   4,
+		MaxSilentTime:  300,
+		BuildVerbosity: daemon.VerbNotice,
+		BuildCores:     8,
+		UseSubstitutes: true,
+		Overrides: map[string]string{
+			"sandbox": "true",
+		},
+	}
+
+	err = client.SetOptions(context.Background(), settings)
+	assert.NoError(t, err)
+}
+
+func TestClientQueryAllValidPaths(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expected := []string{
+		"/nix/store/aaa-foo",
+		"/nix/store/bbb-bar",
+		"/nix/store/ccc-baz",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQueryAllValidPaths(expected)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	paths, err := client.QueryAllValidPaths(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, expected, paths)
+}
+
+func TestClientQueryValidPaths(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	queryPaths := []string{
+		"/nix/store/aaa-foo",
+		"/nix/store/bbb-bar",
+		"/nix/store/ccc-nonexistent",
+	}
+
+	validPaths := []string{
+		"/nix/store/aaa-foo",
+		"/nix/store/bbb-bar",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQueryValidPaths(validPaths)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QueryValidPaths(context.Background(), queryPaths, true)
+	assert.NoError(t, err)
+	assert.Equal(t, validPaths, result)
+}
+
+func TestClientQuerySubstitutablePaths(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	queryPaths := []string{
+		"/nix/store/aaa-foo",
+		"/nix/store/bbb-bar",
+	}
+
+	substitutable := []string{
+		"/nix/store/aaa-foo",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQuerySubstitutablePaths(substitutable)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QuerySubstitutablePaths(context.Background(), queryPaths)
+	assert.NoError(t, err)
+	assert.Equal(t, substitutable, result)
+}
+
+func TestClientQueryReferrers(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	referrers := []string{
+		"/nix/store/xxx-depends-on-abc",
+		"/nix/store/yyy-also-depends",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQueryReferrers(referrers)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QueryReferrers(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
+	assert.Equal(t, referrers, result)
+}
+
+func TestClientQueryValidDerivers(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	derivers := []string{
+		"/nix/store/abc-test.drv",
+		"/nix/store/def-test.drv",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQueryValidDerivers(derivers)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QueryValidDerivers(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
+	assert.Equal(t, derivers, result)
+}
+
+func TestClientQueryDerivationOutputMap(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	outputs := map[string]string{
+		"out": "/nix/store/abc-test",
+		"dev": "/nix/store/abc-test-dev",
+		"lib": "/nix/store/abc-test-lib",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQueryDerivationOutputMap(outputs)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QueryDerivationOutputMap(context.Background(), "/nix/store/abc-test.drv")
+	assert.NoError(t, err)
+	assert.Equal(t, outputs, result)
+}
+
+func TestClientQueryMissing(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expected := &daemon.MissingInfo{
+		WillBuild:    []string{"/nix/store/aaa-needs-build.drv"},
+		WillSubstitute: []string{"/nix/store/bbb-from-cache"},
+		Unknown:      []string{"/nix/store/ccc-unknown"},
+		DownloadSize: 1048576,
+		NarSize:      2097152,
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQueryMissing(expected)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QueryMissing(context.Background(), []string{
+		"/nix/store/aaa-needs-build.drv",
+		"/nix/store/bbb-from-cache",
+		"/nix/store/ccc-unknown",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, expected.WillBuild, result.WillBuild)
+	assert.Equal(t, expected.WillSubstitute, result.WillSubstitute)
+	assert.Equal(t, expected.Unknown, result.Unknown)
+	assert.Equal(t, expected.DownloadSize, result.DownloadSize)
+	assert.Equal(t, expected.NarSize, result.NarSize)
+}
+
+func TestClientQueryPathFromHashPart(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expectedPath := "/nix/store/abc123-test"
+
+	go func() {
+		mock.handshake()
+		mock.respondQueryPathFromHashPart(expectedPath)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QueryPathFromHashPart(context.Background(), "abc123")
+	assert.NoError(t, err)
+	assert.Equal(t, expectedPath, result)
+}
+
+func TestClientCollectGarbage(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expected := &daemon.GCResult{
+		Paths: []string{
+			"/nix/store/old-package-1",
+			"/nix/store/old-package-2",
+		},
+		BytesFreed: 5242880,
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondCollectGarbage(expected)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	options := &daemon.GCOptions{
+		Action:         daemon.GCDeleteDead,
+		PathsToDelete:  []string{},
+		IgnoreLiveness: false,
+		MaxFreed:       0,
+	}
+
+	result, err := client.CollectGarbage(context.Background(), options)
+	assert.NoError(t, err)
+	assert.Equal(t, expected.Paths, result.Paths)
+	assert.Equal(t, expected.BytesFreed, result.BytesFreed)
+}
+
+func TestClientVerifyStore(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+		mock.respondVerifyStore(true)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	errorsFound, err := client.VerifyStore(context.Background(), true, false)
+	assert.NoError(t, err)
+	assert.True(t, errorsFound)
+}
+
+func TestClientOptimiseStore(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+		mock.respondOptimiseStore()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	err = client.OptimiseStore(context.Background())
+	assert.NoError(t, err)
+}
+
+func TestClientQueryRealisation(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	realisations := []string{
+		`{"id":"sha256:abc!out","outPath":"/nix/store/abc-out"}`,
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQueryRealisation(realisations)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QueryRealisation(context.Background(), "sha256:abc!out")
+	assert.NoError(t, err)
+	assert.Equal(t, realisations, result)
 }
