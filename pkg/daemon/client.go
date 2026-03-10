@@ -350,7 +350,7 @@ func (c *Client) QueryPathInfo(ctx context.Context, path string) (*PathInfo, err
 				return nil
 			}
 
-			info, err = ReadPathInfo(r, path)
+			info, err = ReadPathInfo(r, path, c.info.Version)
 
 			return err
 		},
@@ -415,7 +415,14 @@ func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substitute
 				return err
 			}
 
-			return wire.WriteBool(w, substituteOk)
+			// Protocol >= 1.27: substituteOk flag.
+			if c.info.Version >= ProtoVersionSubstituteOk {
+				if err := wire.WriteBool(w, substituteOk); err != nil {
+					return err
+				}
+			}
+
+			return nil
 		},
 		func(r io.Reader) error {
 			ss, err := ReadStrings(r, MaxStringSize)
@@ -505,8 +512,12 @@ func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, err
 }
 
 // QueryDerivationOutputMap returns a map from output names to store paths
-// for the given derivation.
+// for the given derivation. Requires protocol >= 1.30.
 func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (map[string]string, error) {
+	if err := c.requireVersion(OpQueryDerivationOutputMap, ProtoVersionQueryDerivationOutputMap); err != nil {
+		return nil, err
+	}
+
 	var outputs map[string]string
 
 	err := c.doOp(ctx, OpQueryDerivationOutputMap,
@@ -530,8 +541,12 @@ func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (
 
 // QueryMissing determines which of the given paths need to be built,
 // substituted, or are unknown. It also reports the expected download and
-// unpacked NAR sizes.
+// unpacked NAR sizes. Requires protocol >= 1.30.
 func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo, error) {
+	if err := c.requireVersion(OpQueryMissing, ProtoVersionQueryMissing); err != nil {
+		return nil, err
+	}
+
 	var info MissingInfo
 
 	err := c.doOp(ctx, OpQueryMissing,
@@ -679,6 +694,10 @@ func (c *Client) BuildPaths(ctx context.Context, paths []string, mode BuildMode)
 // BuildPathsWithResults is like BuildPaths but returns a BuildResult for each
 // derived path. Requires protocol >= 1.34.
 func (c *Client) BuildPathsWithResults(ctx context.Context, paths []string, mode BuildMode) ([]BuildResult, error) {
+	if err := c.requireVersion(OpBuildPathsWithResults, ProtoVersionBuildPathsWithResults); err != nil {
+		return nil, err
+	}
+
 	var results []BuildResult
 
 	err := c.doOp(ctx, OpBuildPathsWithResults,
@@ -704,7 +723,7 @@ func (c *Client) BuildPathsWithResults(ctx context.Context, paths []string, mode
 					return err
 				}
 
-				br, err := ReadBuildResult(r)
+				br, err := ReadBuildResult(r, c.info.Version)
 				if err != nil {
 					return err
 				}
@@ -760,7 +779,7 @@ func (c *Client) BuildDerivation(
 			return wire.WriteUint64(w, uint64(mode))
 		},
 		func(r io.Reader) error {
-			br, err := ReadBuildResult(r)
+			br, err := ReadBuildResult(r, c.info.Version)
 			if err != nil {
 				return err
 			}
@@ -775,8 +794,12 @@ func (c *Client) BuildDerivation(
 }
 
 // QueryRealisation looks up content-addressed realisations for the given
-// output identifier.
+// output identifier. Requires protocol >= 1.31.
 func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]string, error) {
+	if err := c.requireVersion(OpQueryRealisation, ProtoVersionRealisationJSON); err != nil {
+		return nil, err
+	}
+
 	var realisations []string
 
 	err := c.doOp(ctx, OpQueryRealisation,
@@ -828,8 +851,12 @@ func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
 }
 
 // AddPermRoot adds a permanent GC root linking gcRoot to storePath. Returns
-// the resulting root path.
+// the resulting root path. Requires protocol >= 1.29.
 func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot string) (string, error) {
+	if err := c.requireVersion(OpAddPermRoot, ProtoVersionAddPermRoot); err != nil {
+		return "", err
+	}
+
 	var resultPath string
 
 	err := c.doOp(ctx, OpAddPermRoot,
@@ -873,8 +900,12 @@ func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) 
 }
 
 // RegisterDrvOutput registers a content-addressed realisation for a
-// derivation output.
+// derivation output. Requires protocol >= 1.31.
 func (c *Client) RegisterDrvOutput(ctx context.Context, realisation string) error {
+	if err := c.requireVersion(OpRegisterDrvOutput, ProtoVersionRealisationJSON); err != nil {
+		return err
+	}
+
 	return c.doOp(ctx, OpRegisterDrvOutput,
 		func(w io.Writer) error {
 			return wire.WriteString(w, realisation)
@@ -903,7 +934,7 @@ func (c *Client) AddToStoreNar(
 	}
 
 	// Write PathInfo.
-	if err := WritePathInfo(ow, info); err != nil {
+	if err := WritePathInfo(ow, info, c.info.Version); err != nil {
 		ow.Abort()
 
 		return &ProtocolError{Op: "AddToStoreNar write path info", Err: err}
@@ -952,8 +983,12 @@ func (c *Client) AddToStoreNar(
 }
 
 // AddBuildLog uploads a build log for the given derivation path. The log
-// data is streamed from the provided reader.
+// data is streamed from the provided reader. Requires protocol >= 1.32.
 func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader) error {
+	if err := c.requireVersion(OpAddBuildLog, ProtoVersionAddMultipleToStore); err != nil {
+		return err
+	}
+
 	if log == nil {
 		return ErrNilReader
 	}
@@ -1130,7 +1165,7 @@ func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair boo
 func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error {
 	return c.doOp(ctx, OpSetOptions,
 		func(w io.Writer) error {
-			return WriteClientSettings(w, settings)
+			return WriteClientSettings(w, settings, c.info.Version)
 		},
 		nil,
 	)
@@ -1139,7 +1174,7 @@ func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error
 // AddMultipleToStore imports multiple store paths into the store in a single
 // operation. Each item consists of a PathInfo and a NAR data reader. If repair
 // is true, existing paths are repaired. If dontCheckSigs is true, signature
-// verification is skipped.
+// verification is skipped. Requires protocol >= 1.32.
 //
 // Wire format:
 //
@@ -1158,6 +1193,10 @@ func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error
 func (c *Client) AddMultipleToStore(
 	ctx context.Context, items []AddToStoreItem, repair, dontCheckSigs bool,
 ) error {
+	if err := c.requireVersion(OpAddMultipleToStore, ProtoVersionAddMultipleToStore); err != nil {
+		return err
+	}
+
 	for i := 0; i < len(items); i++ {
 		if items[i].Source == nil {
 			return ErrNilReader
@@ -1201,7 +1240,7 @@ func (c *Client) AddMultipleToStore(
 
 	// Write each item: PathInfo + NAR data, all inside the framed stream.
 	for i := 0; i < len(items); i++ {
-		if err := WritePathInfo(fw, &items[i].Info); err != nil {
+		if err := WritePathInfo(fw, &items[i].Info, c.info.Version); err != nil {
 			ow.Abort()
 
 			return &ProtocolError{Op: "AddMultipleToStore write path info", Err: err}

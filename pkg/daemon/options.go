@@ -48,8 +48,13 @@ func DefaultClientSettings() *ClientSettings {
 }
 
 // WriteClientSettings serializes the SetOptions request fields to the writer
-// in the Nix daemon wire format.
-func WriteClientSettings(w io.Writer, s *ClientSettings) error {
+// in the Nix daemon wire format. The version parameter is the negotiated
+// protocol version.
+func WriteClientSettings(w io.Writer, s *ClientSettings, version uint64) error {
+	if s == nil {
+		s = DefaultClientSettings()
+	}
+
 	if err := wire.WriteBool(w, s.KeepFailed); err != nil {
 		return err
 	}
@@ -101,10 +106,17 @@ func WriteClientSettings(w io.Writer, s *ClientSettings) error {
 		return err
 	}
 
-	overrides := s.Overrides
-	if overrides == nil {
-		overrides = map[string]string{}
+	// Protocol >= 1.12: overrides map.
+	if version >= ProtoVersionOverrides {
+		overrides := s.Overrides
+		if overrides == nil {
+			overrides = map[string]string{}
+		}
+
+		if err := WriteStringMap(w, overrides); err != nil {
+			return err
+		}
 	}
 
-	return WriteStringMap(w, overrides)
+	return nil
 }

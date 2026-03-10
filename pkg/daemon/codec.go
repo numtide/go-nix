@@ -124,7 +124,8 @@ func ReadStringMap(r io.Reader, maxBytes uint64) (map[string]string, error) {
 
 // ReadPathInfo reads a full PathInfo from the wire (UnkeyedValidPathInfo format).
 // storePath is provided separately (already known by the caller).
-func ReadPathInfo(r io.Reader, storePath string) (*PathInfo, error) {
+// The version parameter is the negotiated protocol version.
+func ReadPathInfo(r io.Reader, storePath string, version uint64) (*PathInfo, error) {
 	deriver, err := wire.ReadString(r, MaxStringSize)
 	if err != nil {
 		return nil, &ProtocolError{Op: "read path info deriver", Err: err}
@@ -150,36 +151,39 @@ func ReadPathInfo(r io.Reader, storePath string) (*PathInfo, error) {
 		return nil, &ProtocolError{Op: "read path info narSize", Err: err}
 	}
 
-	ultimate, err := wire.ReadBool(r)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read path info ultimate", Err: err}
-	}
-
-	sigs, err := ReadStrings(r, MaxStringSize)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read path info sigs", Err: err}
-	}
-
-	ca, err := wire.ReadString(r, MaxStringSize)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read path info contentAddress", Err: err}
-	}
-
-	return &PathInfo{
+	info := &PathInfo{
 		StorePath:        storePath,
 		Deriver:          deriver,
 		NarHash:          narHash,
 		References:       references,
 		RegistrationTime: registrationTime,
 		NarSize:          narSize,
-		Ultimate:         ultimate,
-		Sigs:             sigs,
-		CA:               ca,
-	}, nil
+	}
+
+	// Protocol >= 1.16: ultimate, sigs, ca.
+	if version >= ProtoVersionPathInfoMeta {
+		info.Ultimate, err = wire.ReadBool(r)
+		if err != nil {
+			return nil, &ProtocolError{Op: "read path info ultimate", Err: err}
+		}
+
+		info.Sigs, err = ReadStrings(r, MaxStringSize)
+		if err != nil {
+			return nil, &ProtocolError{Op: "read path info sigs", Err: err}
+		}
+
+		info.CA, err = wire.ReadString(r, MaxStringSize)
+		if err != nil {
+			return nil, &ProtocolError{Op: "read path info contentAddress", Err: err}
+		}
+	}
+
+	return info, nil
 }
 
 // WritePathInfo writes a PathInfo in ValidPathInfo wire format.
-func WritePathInfo(w io.Writer, info *PathInfo) error {
+// The version parameter is the negotiated protocol version.
+func WritePathInfo(w io.Writer, info *PathInfo, version uint64) error {
 	if err := wire.WriteString(w, info.StorePath); err != nil {
 		return err
 	}
@@ -204,15 +208,22 @@ func WritePathInfo(w io.Writer, info *PathInfo) error {
 		return err
 	}
 
-	if err := wire.WriteBool(w, info.Ultimate); err != nil {
-		return err
+	// Protocol >= 1.16: ultimate, sigs, ca.
+	if version >= ProtoVersionPathInfoMeta {
+		if err := wire.WriteBool(w, info.Ultimate); err != nil {
+			return err
+		}
+
+		if err := WriteStrings(w, info.Sigs); err != nil {
+			return err
+		}
+
+		if err := wire.WriteString(w, info.CA); err != nil {
+			return err
+		}
 	}
 
-	if err := WriteStrings(w, info.Sigs); err != nil {
-		return err
-	}
-
-	return wire.WriteString(w, info.CA)
+	return nil
 }
 
 // WriteBasicDerivation writes a BasicDerivation to the wire. Outputs are
@@ -294,7 +305,8 @@ func readOptionalMicroseconds(r io.Reader) error {
 }
 
 // ReadBuildResult reads a BuildResult from the wire.
-func ReadBuildResult(r io.Reader) (*BuildResult, error) {
+// The version parameter is the negotiated protocol version.
+func ReadBuildResult(r io.Reader, version uint64) (*BuildResult, error) {
 	status, err := wire.ReadUint64(r)
 	if err != nil {
 		return nil, &ProtocolError{Op: "read build result status", Err: err}
@@ -305,63 +317,70 @@ func ReadBuildResult(r io.Reader) (*BuildResult, error) {
 		return nil, &ProtocolError{Op: "read build result errorMsg", Err: err}
 	}
 
-	timesBuilt, err := wire.ReadUint64(r)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read build result timesBuilt", Err: err}
+	result := &BuildResult{
+		Status:   BuildStatus(status),
+		ErrorMsg: errorMsg,
 	}
 
-	isNonDeterministic, err := wire.ReadBool(r)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read build result isNonDeterministic", Err: err}
-	}
+	// Protocol >= 1.29: timing fields.
+	if version >= ProtoVersionBuildTimes {
+		result.TimesBuilt, err = wire.ReadUint64(r)
+		if err != nil {
+			return nil, &ProtocolError{Op: "read build result timesBuilt", Err: err}
+		}
 
-	startTime, err := wire.ReadUint64(r)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read build result startTime", Err: err}
-	}
+		result.IsNonDeterministic, err = wire.ReadBool(r)
+		if err != nil {
+			return nil, &ProtocolError{Op: "read build result isNonDeterministic", Err: err}
+		}
 
-	stopTime, err := wire.ReadUint64(r)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read build result stopTime", Err: err}
+		result.StartTime, err = wire.ReadUint64(r)
+		if err != nil {
+			return nil, &ProtocolError{Op: "read build result startTime", Err: err}
+		}
+
+		result.StopTime, err = wire.ReadUint64(r)
+		if err != nil {
+			return nil, &ProtocolError{Op: "read build result stopTime", Err: err}
+		}
 	}
 
 	// Protocol >= 1.37: cpuUser and cpuSystem as optional<microseconds>.
-	if err := readOptionalMicroseconds(r); err != nil {
-		return nil, &ProtocolError{Op: "read build result cpuUser", Err: err}
-	}
-
-	if err := readOptionalMicroseconds(r); err != nil {
-		return nil, &ProtocolError{Op: "read build result cpuSystem", Err: err}
-	}
-
-	nrOutputs, err := wire.ReadUint64(r)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read build result builtOutputs count", Err: err}
-	}
-
-	builtOutputs := make(map[string]Realisation, nrOutputs)
-
-	for i := uint64(0); i < nrOutputs; i++ {
-		name, err := wire.ReadString(r, MaxStringSize)
-		if err != nil {
-			return nil, &ProtocolError{Op: "read build result output name", Err: err}
+	if version >= ProtoVersionCPUTimes {
+		if err := readOptionalMicroseconds(r); err != nil {
+			return nil, &ProtocolError{Op: "read build result cpuUser", Err: err}
 		}
 
-		realisationJSON, err := wire.ReadString(r, MaxStringSize)
-		if err != nil {
-			return nil, &ProtocolError{Op: "read build result realisation", Err: err}
+		if err := readOptionalMicroseconds(r); err != nil {
+			return nil, &ProtocolError{Op: "read build result cpuSystem", Err: err}
 		}
-
-		builtOutputs[name] = Realisation{ID: realisationJSON}
 	}
 
-	return &BuildResult{
-		Status:             BuildStatus(status),
-		ErrorMsg:           errorMsg,
-		TimesBuilt:         timesBuilt,
-		IsNonDeterministic: isNonDeterministic,
-		StartTime:          startTime,
-		StopTime:           stopTime,
-		BuiltOutputs:       builtOutputs,
-	}, nil
+	// Protocol >= 1.28: builtOutputs map.
+	if version >= ProtoVersionBuiltOutputs {
+		nrOutputs, err := wire.ReadUint64(r)
+		if err != nil {
+			return nil, &ProtocolError{Op: "read build result builtOutputs count", Err: err}
+		}
+
+		builtOutputs := make(map[string]Realisation, nrOutputs)
+
+		for i := uint64(0); i < nrOutputs; i++ {
+			name, err := wire.ReadString(r, MaxStringSize)
+			if err != nil {
+				return nil, &ProtocolError{Op: "read build result output name", Err: err}
+			}
+
+			realisationJSON, err := wire.ReadString(r, MaxStringSize)
+			if err != nil {
+				return nil, &ProtocolError{Op: "read build result realisation", Err: err}
+			}
+
+			builtOutputs[name] = Realisation{ID: realisationJSON}
+		}
+
+		result.BuiltOutputs = builtOutputs
+	}
+
+	return result, nil
 }
