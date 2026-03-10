@@ -2484,3 +2484,123 @@ func TestClientSetOptionsProto121(t *testing.T) {
 	err = client.SetOptions(context.Background(), settings)
 	assert.NoError(t, err)
 }
+
+// ---------- Sequential and connection-reuse mock tests ----------
+
+// TestClientSequentialOperations exercises multiple different operations on
+// the same mock connection to verify the client properly releases the mutex
+// and resets the connection state between operations.
+func TestClientSequentialOperations(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expectedInfo := &daemon.PathInfo{
+		StorePath:        "/nix/store/abc-test",
+		Deriver:          "/nix/store/xyz-test.drv",
+		NarHash:          "sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+		References:       []string{"/nix/store/abc-test", "/nix/store/def-dep"},
+		RegistrationTime: 1700000000,
+		NarSize:          123456,
+		Ultimate:         true,
+		Sigs: []string{
+			"cache.nixos.org-1:TsTTb3WGTZKphvYdBHXwo13XoOdFhL2sw/8d16Xzm5NeXp+SuJgMHV1+U+5JxVuf2HuLci2x3Sa+l3KhADoCDQ==",
+		},
+		CA: "",
+	}
+
+	expectedPaths := []string{
+		"/nix/store/aaa-first",
+		"/nix/store/bbb-second",
+		"/nix/store/ccc-third",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondIsValidPath(true)
+		mock.respondQueryPathInfo(expectedInfo)
+		mock.respondIsValidPath(false)
+		mock.respondQueryAllValidPaths(expectedPaths)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	// Op 1: IsValidPath -> true
+	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
+	assert.True(t, valid, "first IsValidPath should return true")
+
+	// Op 2: QueryPathInfo -> found with expected info
+	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err)
+	assert.NotNil(t, info)
+	assert.Equal(t, expectedInfo.StorePath, info.StorePath)
+	assert.Equal(t, expectedInfo.Deriver, info.Deriver)
+	assert.Equal(t, expectedInfo.NarHash, info.NarHash)
+	assert.Equal(t, expectedInfo.References, info.References)
+	assert.Equal(t, expectedInfo.RegistrationTime, info.RegistrationTime)
+	assert.Equal(t, expectedInfo.NarSize, info.NarSize)
+	assert.Equal(t, expectedInfo.Ultimate, info.Ultimate)
+	assert.Equal(t, expectedInfo.Sigs, info.Sigs)
+	assert.Equal(t, expectedInfo.CA, info.CA)
+
+	// Op 3: IsValidPath -> false
+	valid, err = client.IsValidPath(context.Background(), "/nix/store/nonexistent")
+	assert.NoError(t, err)
+	assert.False(t, valid, "second IsValidPath should return false")
+
+	// Op 4: QueryAllValidPaths -> list of paths
+	paths, err := client.QueryAllValidPaths(context.Background())
+	assert.NoError(t, err)
+	sort.Strings(paths)
+	sort.Strings(expectedPaths)
+	assert.Equal(t, expectedPaths, paths)
+}
+
+// TestClientOperationAfterError verifies that the connection remains usable
+// after the daemon returns an error for one operation. The client's doOp
+// calls ProcessStderrWithSink which returns the error on LogError, then
+// release(cancel) unlocks the mutex and resets the deadline. Since LogError
+// terminates the stderr loop (no trailing LogLast), the next operation
+// starts cleanly from the new op code.
+func TestClientOperationAfterError(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	daemonErr := &daemon.Error{
+		Type:    "Error",
+		Level:   0,
+		Name:    "InvalidPath",
+		Message: "path '/nix/store/bad-path' is not valid",
+	}
+
+	go func() {
+		mock.handshake()
+
+		// First operation: respond with error
+		mock.respondWithError(daemon.OpIsValidPath, func() {
+			_, _ = wire.ReadString(mock.conn, 64*1024) // drain path
+		}, daemonErr)
+
+		// Second operation: respond successfully
+		mock.respondIsValidPath(true)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	// First call: should fail with daemon error
+	_, err = client.IsValidPath(context.Background(), "/nix/store/bad-path")
+	assert.Error(t, err, "first IsValidPath should return an error")
+
+	var gotErr *daemon.Error
+	assert.True(t, errors.As(err, &gotErr), "error should be a *daemon.Error")
+	assert.Equal(t, "path '/nix/store/bad-path' is not valid", gotErr.Message)
+
+	// Second call: should succeed, proving the connection is not corrupted
+	valid, err := client.IsValidPath(context.Background(), "/nix/store/good-path")
+	assert.NoError(t, err, "second IsValidPath should succeed after prior error")
+	assert.True(t, valid, "second IsValidPath should return true")
+}
