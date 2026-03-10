@@ -430,6 +430,47 @@ func TestReadBuildResultProto129(t *testing.T) {
 	assert.Equal(t, 0, buf.Len())
 }
 
+func TestWriteReadPathInfoRoundTripPreMeta(t *testing.T) {
+	info := &daemon.PathInfo{
+		StorePath:        "/nix/store/xyz-test",
+		Deriver:          "/nix/store/abc-foo.drv",
+		NarHash:          "sha256:abcdef",
+		References:       []string{"/nix/store/def-bar"},
+		RegistrationTime: 1700000000,
+		NarSize:          54321,
+		Ultimate:         true,                   // Set, but should NOT be written at proto 1.15
+		Sigs:             []string{"sig1"},        // Should NOT be written
+		CA:               "fixed:sha256:abc",      // Should NOT be written
+	}
+
+	var buf bytes.Buffer
+	err := daemon.WritePathInfo(&buf, info, daemon.ProtoVersion(1, 15))
+	assert.NoError(t, err)
+
+	// Read back storePath (WritePathInfo writes it as first field)
+	storePath, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	assert.NoError(t, err)
+	assert.Equal(t, "/nix/store/xyz-test", storePath)
+
+	// Read PathInfo at proto 1.15
+	got, err := daemon.ReadPathInfo(&buf, storePath, daemon.ProtoVersion(1, 15))
+	assert.NoError(t, err)
+
+	// At proto 1.15: ultimate/sigs/ca are NOT written or read
+	assert.Equal(t, info.StorePath, got.StorePath)
+	assert.Equal(t, info.Deriver, got.Deriver)
+	assert.Equal(t, info.NarHash, got.NarHash)
+	assert.Equal(t, info.References, got.References)
+	assert.Equal(t, info.RegistrationTime, got.RegistrationTime)
+	assert.Equal(t, info.NarSize, got.NarSize)
+	assert.False(t, got.Ultimate) // Zero value — not written
+	assert.Nil(t, got.Sigs)      // Zero value — not written
+	assert.Equal(t, "", got.CA)   // Zero value — not written
+
+	// Buffer should be fully consumed
+	assert.Equal(t, 0, buf.Len())
+}
+
 func TestReadPathInfoPreMeta(t *testing.T) {
 	// Proto 1.15 (0x010f): no ultimate/sigs/ca fields
 	var buf bytes.Buffer

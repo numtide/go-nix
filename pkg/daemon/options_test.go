@@ -84,6 +84,9 @@ func TestWriteClientSettings(t *testing.T) {
 	assert.Equal(t, 0, r.Len())
 }
 
+// TestWriteClientSettingsWithOverrides tests at the current protocol version
+// (daemon.ProtocolVersion), confirming that overrides ARE written when the
+// version is >= ProtoVersionOverrides (1.12).
 func TestWriteClientSettingsWithOverrides(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -173,5 +176,32 @@ func TestWriteClientSettingsWithOverrides(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "true", val2)
 
+	assert.Equal(t, 0, r.Len())
+}
+
+func TestWriteClientSettingsPreOverrides(t *testing.T) {
+	var buf bytes.Buffer
+	settings := daemon.DefaultClientSettings()
+	settings.Overrides = map[string]string{"sandbox": "true"} // Set, but should NOT be written
+
+	err := daemon.WriteClientSettings(&buf, settings, daemon.ProtoVersion(1, 11))
+	assert.NoError(t, err)
+
+	r := &buf
+	// Read all standard fields (same as TestWriteClientSettings)
+	_, _ = wire.ReadBool(r)   // keepFailed
+	_, _ = wire.ReadBool(r)   // keepGoing
+	_, _ = wire.ReadBool(r)   // tryFallback
+	_, _ = wire.ReadUint64(r) // verbosity
+	_, _ = wire.ReadUint64(r) // maxBuildJobs
+	_, _ = wire.ReadUint64(r) // maxSilentTime
+	_, _ = wire.ReadBool(r)   // useBuildHook (deprecated)
+	_, _ = wire.ReadUint64(r) // buildVerbosity
+	_, _ = wire.ReadUint64(r) // logType (deprecated)
+	_, _ = wire.ReadUint64(r) // printBuildTrace (deprecated)
+	_, _ = wire.ReadUint64(r) // buildCores
+	_, _ = wire.ReadBool(r)   // useSubstitutes
+
+	// NO overrides map at proto < 1.12
 	assert.Equal(t, 0, r.Len())
 }
