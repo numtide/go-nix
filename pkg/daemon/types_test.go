@@ -17,10 +17,10 @@ func TestProtocolConstants(t *testing.T) {
 	})
 
 	t.Run("ProtocolVersion", func(t *testing.T) {
-		assert.Equal(t, uint64(0x0125), daemon.ProtocolVersion)
-		// Version 1.37 => major=1, minor=37
+		assert.Equal(t, uint64(0x0126), daemon.ProtocolVersion)
+		// Version 1.38 => major=1, minor=38
 		assert.Equal(t, uint64(1), daemon.ProtocolVersion>>8)
-		assert.Equal(t, uint64(37), daemon.ProtocolVersion&0xff)
+		assert.Equal(t, uint64(38), daemon.ProtocolVersion&0xff)
 	})
 }
 
@@ -210,7 +210,7 @@ func TestGCAction(t *testing.T) {
 }
 
 func TestMinProtocolVersion(t *testing.T) {
-	assert.Equal(t, uint64(0x0115), daemon.MinProtocolVersion)
+	assert.Equal(t, uint64(0x0117), daemon.MinProtocolVersion)
 }
 
 func TestProtoVersion(t *testing.T) {

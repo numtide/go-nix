@@ -16,11 +16,15 @@ const (
 	// ServerMagic is the magic number the server responds with during the handshake.
 	ServerMagic uint64 = 0x6478696f // "dxio" in ASCII
 
-	// ProtocolVersion is the maximum protocol version we support (1.37).
-	ProtocolVersion uint64 = 0x0125
+	// ProtocolVersion is the maximum protocol version we support (1.38).
+	ProtocolVersion uint64 = 0x0126
 
-	// MinProtocolVersion is the minimum protocol version we support (1.21).
-	MinProtocolVersion uint64 = 0x0115
+	// MinProtocolVersion is the minimum protocol version we support (1.23).
+	// We require 1.23+ because the framed streaming protocol (used by
+	// AddToStoreNar, AddBuildLog, etc.) was introduced in 1.23. Versions
+	// 1.21–1.22 use a different bidirectional STDERR_READ mechanism that
+	// this client does not implement.
+	MinProtocolVersion uint64 = 0x0117
 )
 
 // ProtoVersion constructs a protocol version uint64 from major and minor parts.
@@ -29,7 +33,9 @@ func ProtoVersion(major, minor uint64) uint64 {
 }
 
 const (
+	ProtoVersionReserveSpace            = 0x010b // 1.11: reserve-space flag in handshake
 	ProtoVersionOverrides               = 0x010c // 1.12: overrides in SetOptions
+	ProtoVersionCPUAffinity             = 0x010e // 1.14: cpu-affinity flag in handshake
 	ProtoVersionPathInfoMeta            = 0x0110 // 1.16: ultimate/sigs/ca in PathInfo
 	ProtoVersionSubstituteOk            = 0x011b // 1.27: substituteOk in QueryValidPaths
 	ProtoVersionRegisterDrvOutput       = 0x011b // 1.27: RegisterDrvOutput, QueryRealisation
@@ -40,8 +46,11 @@ const (
 	ProtoVersionQueryMissing            = 0x011e // 1.30: QueryMissing op
 	ProtoVersionRealisationJSON         = 0x011f // 1.31: JSON realisations
 	ProtoVersionAddMultipleToStore      = 0x0120 // 1.32: AddMultipleToStore, AddBuildLog
+	ProtoVersionNixVersion              = 0x0121 // 1.33: daemon Nix version string in handshake
 	ProtoVersionBuildPathsWithResults   = 0x0122 // 1.34: BuildPathsWithResults op
+	ProtoVersionTrust                   = 0x0123 // 1.35: trust level in handshake
 	ProtoVersionCPUTimes                = 0x0125 // 1.37: cpuUser/cpuSystem in BuildResult
+	ProtoVersionFeatureExchange         = 0x0126 // 1.38: feature set exchange in handshake
 )
 
 // Operation represents a daemon worker operation code.
