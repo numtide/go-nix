@@ -136,3 +136,72 @@ func TestIntegrationConnect(t *testing.T) {
 	assert.NotEmpty(t, info.DaemonNixVersion)
 	t.Logf("Nix version: %s, trust: %d", info.DaemonNixVersion, info.Trust)
 }
+
+func TestIntegrationSetOptions(t *testing.T) {
+	client := startTestDaemon(t)
+
+	settings := daemon.DefaultClientSettings()
+	err := client.SetOptions(context.Background(), settings)
+	assert.NoError(t, err)
+}
+
+func TestIntegrationLogChannel(t *testing.T) {
+	logs := make(chan daemon.LogMessage, 100)
+	client := startTestDaemon(t, daemon.WithLogChannel(logs))
+
+	assert.NotNil(t, client.Logs())
+
+	// Run an operation that may produce log messages.
+	_, err := client.QueryAllValidPaths(context.Background())
+	assert.NoError(t, err)
+}
+
+// --- Validity & Path Queries ---
+
+func TestIntegrationIsValidPath(t *testing.T) {
+	client := startTestDaemon(t)
+
+	// A path that definitely doesn't exist.
+	valid, err := client.IsValidPath(context.Background(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	assert.NoError(t, err)
+	assert.False(t, valid)
+}
+
+func TestIntegrationIsValidPathTrue(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	valid, err := client.IsValidPath(context.Background(), path)
+	assert.NoError(t, err)
+	assert.True(t, valid)
+}
+
+func TestIntegrationQueryAllValidPaths(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	paths, err := client.QueryAllValidPaths(context.Background())
+	assert.NoError(t, err)
+	assert.Contains(t, paths, path)
+	t.Logf("Store has %d valid paths", len(paths))
+}
+
+func TestIntegrationQueryValidPaths(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	valid, err := client.QueryValidPaths(context.Background(), []string{path}, false)
+	assert.NoError(t, err)
+	assert.Contains(t, valid, path)
+}
+
+func TestIntegrationQueryValidPathsSubset(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	bogus := "/nix/store/00000000000000000000000000000000-nonexistent"
+	valid, err := client.QueryValidPaths(context.Background(), []string{path, bogus}, false)
+	assert.NoError(t, err)
+	assert.Contains(t, valid, path)
+	assert.NotContains(t, valid, bogus)
+}
