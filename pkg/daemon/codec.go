@@ -8,6 +8,23 @@ import (
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
+// readAck reads the daemon's acknowledgment uint64 and verifies it equals 1.
+func readAck(r io.Reader) error {
+	v, err := wire.ReadUint64(r)
+	if err != nil {
+		return err
+	}
+
+	if v != 1 {
+		return &ProtocolError{
+			Op:  "read ack",
+			Err: fmt.Errorf("expected ack value 1, got %d", v),
+		}
+	}
+
+	return nil
+}
+
 // WriteStrings writes a list of strings as count + entries.
 func WriteStrings(w io.Writer, ss []string) error {
 	if err := wire.WriteUint64(w, uint64(len(ss))); err != nil {
@@ -295,7 +312,7 @@ func readOptionalMicroseconds(r io.Reader) error {
 		return err
 	}
 
-	if tag == 1 {
+	if tag == optionalSome {
 		if _, err := wire.ReadUint64(r); err != nil {
 			return err
 		}
