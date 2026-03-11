@@ -3,13 +3,10 @@ package daemon
 import (
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/nix-community/go-nix/pkg/wire"
 )
-
-// MaxStringSize is the maximum size in bytes for strings read from the daemon
-// protocol. This guards against malformed or malicious payloads.
-const MaxStringSize = 64 * 1024 * 1024 // 64 MiB
 
 // ProcessStderr reads and dispatches log/activity messages from the daemon's
 // stderr channel. The daemon interleaves these messages before the actual
@@ -18,8 +15,56 @@ const MaxStringSize = 64 * 1024 * 1024 // 64 MiB
 //
 // Log messages (other than errors) are sent to the provided channel. If a
 // LogError message is received, the parsed Error is returned. If the
-// channel is nil, non-error messages are silently discarded.
+// channel is nil, non-error messages are silently discarded. If the channel
+// is full, messages are dropped to avoid blocking protocol progress.
 func ProcessStderr(r io.Reader, logs chan<- LogMessage) error {
+	return ProcessStderrWithSink(r, NewLogChannelSink(logs, nil))
+}
+
+// LogSink receives log messages from the daemon.
+type LogSink interface {
+	Send(LogMessage)
+}
+
+// LogChannelSink delivers log messages to a channel, dropping when full.
+// If Dropped is non-nil, it is incremented on each dropped message.
+type LogChannelSink struct {
+	Ch      chan<- LogMessage
+	Dropped *atomic.Uint64
+}
+
+// NewLogChannelSink wraps a channel with optional drop counter. If ch is nil,
+// the returned sink discards messages.
+func NewLogChannelSink(ch chan<- LogMessage, dropped *atomic.Uint64) LogSink {
+	return LogChannelSink{Ch: ch, Dropped: dropped}
+}
+
+// Send implements LogSink.
+func (s LogChannelSink) Send(msg LogMessage) {
+	if s.Ch == nil {
+		return
+	}
+
+	select {
+	case s.Ch <- msg:
+	default:
+		if s.Dropped != nil {
+			s.Dropped.Add(1)
+		}
+	}
+}
+
+// ProcessStderrWithSink is like ProcessStderr but sends log messages to the
+// provided sink.
+func ProcessStderrWithSink(r io.Reader, sink LogSink) error {
+	if sink == nil {
+		sink = NewLogChannelSink(nil, nil)
+	}
+
+	sendLog := func(msg LogMessage) {
+		sink.Send(msg)
+	}
+
 	for {
 		raw, err := wire.ReadUint64(r)
 		if err != nil {
@@ -41,9 +86,7 @@ func ProcessStderr(r io.Reader, logs chan<- LogMessage) error {
 				return &ProtocolError{Op: "read LogNext text", Err: err}
 			}
 
-			if logs != nil {
-				logs <- LogMessage{Type: LogNext, Text: text}
-			}
+			sendLog(LogMessage{Type: LogNext, Text: text})
 
 		case LogStartActivity:
 			act, err := readActivity(r)
@@ -51,9 +94,7 @@ func ProcessStderr(r io.Reader, logs chan<- LogMessage) error {
 				return err
 			}
 
-			if logs != nil {
-				logs <- LogMessage{Type: LogStartActivity, Activity: act}
-			}
+			sendLog(LogMessage{Type: LogStartActivity, Activity: act})
 
 		case LogStopActivity:
 			id, err := wire.ReadUint64(r)
@@ -61,9 +102,7 @@ func ProcessStderr(r io.Reader, logs chan<- LogMessage) error {
 				return &ProtocolError{Op: "read LogStopActivity id", Err: err}
 			}
 
-			if logs != nil {
-				logs <- LogMessage{Type: LogStopActivity, ActivityID: id}
-			}
+			sendLog(LogMessage{Type: LogStopActivity, ActivityID: id})
 
 		case LogResult:
 			result, err := readActivityResult(r)
@@ -71,9 +110,7 @@ func ProcessStderr(r io.Reader, logs chan<- LogMessage) error {
 				return err
 			}
 
-			if logs != nil {
-				logs <- LogMessage{Type: LogResult, Result: result}
-			}
+			sendLog(LogMessage{Type: LogResult, Result: result})
 
 		case LogRead, LogWrite:
 			// Data transfer notifications: read the count and discard.
@@ -120,6 +157,13 @@ func readError(r io.Reader) error {
 	nrTraces, err := wire.ReadUint64(r)
 	if err != nil {
 		return &ProtocolError{Op: "read error nrTraces", Err: err}
+	}
+
+	if nrTraces > MaxLogTraces {
+		return &ProtocolError{
+			Op:  "read error nrTraces",
+			Err: fmt.Errorf("trace count %d exceeds limit %d", nrTraces, MaxLogTraces),
+		}
 	}
 
 	traces := make([]ErrorTrace, nrTraces)
@@ -229,6 +273,13 @@ func readActivityResult(r io.Reader) (*ActivityResult, error) {
 // readFields parses a sequence of typed fields from the daemon's stderr
 // channel. Each field is preceded by a type tag: 0 for integer, 1 for string.
 func readFields(r io.Reader, count uint64) ([]LogField, error) {
+	if count > MaxLogFields {
+		return nil, &ProtocolError{
+			Op:  "read field count",
+			Err: fmt.Errorf("field count %d exceeds limit %d", count, MaxLogFields),
+		}
+	}
+
 	fields := make([]LogField, count)
 
 	for i := uint64(0); i < count; i++ {
@@ -238,7 +289,7 @@ func readFields(r io.Reader, count uint64) ([]LogField, error) {
 		}
 
 		switch fieldType {
-		case 0: // integer field
+		case fieldTypeInt:
 			v, err := wire.ReadUint64(r)
 			if err != nil {
 				return nil, &ProtocolError{Op: "read field int value", Err: err}
@@ -246,7 +297,7 @@ func readFields(r io.Reader, count uint64) ([]LogField, error) {
 
 			fields[i] = LogField{Int: v, IsInt: true}
 
-		case 1: // string field
+		case fieldTypeString:
 			s, err := wire.ReadString(r, MaxStringSize)
 			if err != nil {
 				return nil, &ProtocolError{Op: "read field string value", Err: err}

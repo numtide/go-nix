@@ -23,7 +23,7 @@ type OpResponse struct {
 // Returns io.ErrClosedPipe if the response has been closed.
 func (resp *OpResponse) Read(p []byte) (int, error) {
 	if resp.closed {
-		return 0, io.ErrClosedPipe
+		return 0, ErrClosed
 	}
 
 	return resp.r.Read(p)

@@ -17,7 +17,7 @@ type OpWriter struct {
 	r      io.Reader
 	conn   net.Conn
 	mu     *sync.Mutex
-	logs   chan<- LogMessage
+	logSink LogSink
 	op     Operation
 	done   bool
 	cancel func() bool // context.AfterFunc stop function
@@ -25,11 +25,19 @@ type OpWriter struct {
 
 // Write writes data directly to the connection's buffered writer.
 func (ow *OpWriter) Write(p []byte) (int, error) {
+	if ow.done {
+		return 0, ErrClosed
+	}
+
 	return ow.w.Write(p)
 }
 
 // Flush flushes the buffered writer to the underlying connection.
 func (ow *OpWriter) Flush() error {
+	if ow.done {
+		return ErrClosed
+	}
+
 	return ow.w.Flush()
 }
 
@@ -37,6 +45,10 @@ func (ow *OpWriter) Flush() error {
 // connection. The caller should write data to the FramedWriter and then
 // Close it before calling CloseRequest.
 func (ow *OpWriter) NewFramedWriter() *FramedWriter {
+	if ow.done {
+		return &FramedWriter{w: io.Discard, closed: true}
+	}
+
 	return NewFramedWriter(ow.w)
 }
 
@@ -45,7 +57,7 @@ func (ow *OpWriter) NewFramedWriter() *FramedWriter {
 // After calling CloseRequest, the OpWriter must not be used.
 func (ow *OpWriter) CloseRequest() (*OpResponse, error) {
 	if ow.done {
-		return nil, &ProtocolError{Op: ow.op.String() + " close request", Err: io.ErrClosedPipe}
+		return nil, &ProtocolError{Op: ow.op.String() + " close request", Err: ErrClosed}
 	}
 
 	ow.done = true
@@ -56,7 +68,7 @@ func (ow *OpWriter) CloseRequest() (*OpResponse, error) {
 		return nil, &ProtocolError{Op: ow.op.String() + " flush", Err: err}
 	}
 
-	if err := ProcessStderr(ow.r, ow.logs); err != nil {
+	if err := ProcessStderrWithSink(ow.r, ow.logSink); err != nil {
 		ow.release()
 
 		return nil, err
