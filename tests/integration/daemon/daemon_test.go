@@ -368,3 +368,90 @@ func TestIntegrationAddTempRoot(t *testing.T) {
 	err := client.AddTempRoot(context.Background(), path)
 	assert.NoError(t, err)
 }
+
+// --- Verify & Optimise ---
+
+func TestIntegrationVerifyStore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping store verification in short mode")
+	}
+
+	client := startTestDaemon(t)
+
+	// checkContents=false, repair=false -- just a quick metadata check.
+	errorsFound, err := client.VerifyStore(context.Background(), false, false)
+	assert.NoError(t, err)
+	t.Logf("VerifyStore found errors: %v", errorsFound)
+}
+
+// --- Build Operations ---
+
+func TestIntegrationBuildPaths(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Building an already-valid path should succeed immediately.
+	err := client.BuildPaths(context.Background(), []string{path}, daemon.BuildModeNormal)
+	assert.NoError(t, err)
+}
+
+func TestIntegrationBuildPathsWithResults(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	results, err := client.BuildPathsWithResults(context.Background(), []string{path}, daemon.BuildModeNormal)
+	assert.NoError(t, err)
+
+	for i, br := range results {
+		t.Logf("BuildResult[%d]: status=%s timesBuilt=%d", i, br.Status, br.TimesBuilt)
+	}
+}
+
+func TestIntegrationEnsurePath(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	err := client.EnsurePath(context.Background(), path)
+	assert.NoError(t, err)
+}
+
+// --- Sequential Operations ---
+// Verify that multiple operations work on the same connection sequentially.
+
+func TestIntegrationSequentialOperations(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+	ctx := context.Background()
+
+	// Operation 1: QueryAllValidPaths
+	allPaths, err := client.QueryAllValidPaths(ctx)
+	require.NoError(t, err)
+	require.Contains(t, allPaths, path)
+
+	// Operation 2: IsValidPath
+	valid, err := client.IsValidPath(ctx, path)
+	require.NoError(t, err)
+	assert.True(t, valid)
+
+	// Operation 3: QueryPathInfo
+	info, err := client.QueryPathInfo(ctx, path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+
+	// Operation 4: NarFromPath + read + close
+	rc, err := client.NarFromPath(ctx, path)
+	require.NoError(t, err)
+	_, err = io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+
+	// Operation 5: QueryMissing (after releasing the NAR reader)
+	_, err = client.QueryMissing(ctx, []string{path})
+	require.NoError(t, err)
+
+	// Operation 6: FindRoots
+	_, err = client.FindRoots(ctx)
+	require.NoError(t, err)
+
+	t.Logf("6 sequential operations completed successfully on the same connection")
+}
