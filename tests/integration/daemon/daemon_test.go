@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
@@ -204,4 +205,74 @@ func TestIntegrationQueryValidPathsSubset(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, valid, path)
 	assert.NotContains(t, valid, bogus)
+}
+
+// --- Path Info ---
+
+func TestIntegrationQueryPathInfo(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	info, err := client.QueryPathInfo(context.Background(), path)
+	assert.NoError(t, err)
+	require.NotNil(t, info)
+
+	assert.Equal(t, path, info.StorePath)
+	assert.NotEmpty(t, info.NarHash)
+	assert.True(t, info.NarSize > 0)
+
+	t.Logf("Path: %s", info.StorePath)
+	t.Logf("  NarHash: %s", info.NarHash)
+	t.Logf("  NarSize: %d", info.NarSize)
+}
+
+func TestIntegrationQueryPathInfoNotFound(t *testing.T) {
+	client := startTestDaemon(t)
+
+	info, err := client.QueryPathInfo(context.Background(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	assert.NoError(t, err)
+	assert.Nil(t, info)
+}
+
+func TestIntegrationQueryPathFromHashPart(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Extract hash part: /nix/store/<hash>-<name> -> <hash>
+	hashPart := strings.TrimPrefix(path, "/nix/store/")
+	if idx := strings.Index(hashPart, "-"); idx > 0 {
+		hashPart = hashPart[:idx]
+	}
+
+	result, err := client.QueryPathFromHashPart(context.Background(), hashPart)
+	assert.NoError(t, err)
+	assert.Equal(t, path, result)
+}
+
+func TestIntegrationQueryPathFromHashPartNotFound(t *testing.T) {
+	client := startTestDaemon(t)
+
+	result, err := client.QueryPathFromHashPart(context.Background(), "00000000000000000000000000000000")
+	assert.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+// --- References & Derivers ---
+
+func TestIntegrationQueryReferrers(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	referrers, err := client.QueryReferrers(context.Background(), path)
+	assert.NoError(t, err)
+	t.Logf("Path %s has %d referrers", path, len(referrers))
+}
+
+func TestIntegrationQueryValidDerivers(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	derivers, err := client.QueryValidDerivers(context.Background(), path)
+	assert.NoError(t, err)
+	t.Logf("Path %s has %d valid derivers", path, len(derivers))
 }
