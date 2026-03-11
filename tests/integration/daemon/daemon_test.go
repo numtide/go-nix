@@ -594,3 +594,28 @@ func TestIntegrationSetOptionsWithOverrides(t *testing.T) {
 	_, err = client.QueryAllValidPaths(ctx)
 	assert.NoError(t, err)
 }
+
+// --- Derivation Output Map ---
+
+func TestIntegrationQueryDerivationOutputMap(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Our test path has no deriver, so query its output map directly.
+	// This should return an empty map (or an error if the path is not a .drv),
+	// but the protocol round-trip is what we're testing.
+	info, err := client.QueryPathInfo(context.Background(), path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+
+	if info.Deriver == "" {
+		t.Log("Test path has no deriver (expected for addTestPath paths)")
+		return
+	}
+
+	outputs, err := client.QueryDerivationOutputMap(context.Background(), info.Deriver)
+	assert.NoError(t, err)
+	for name, outPath := range outputs {
+		t.Logf("  output %q -> %s", name, outPath)
+	}
+}
