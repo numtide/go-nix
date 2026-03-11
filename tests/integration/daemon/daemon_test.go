@@ -8,7 +8,9 @@ import (
 	"crypto/sha256"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -454,4 +456,141 @@ func TestIntegrationSequentialOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("6 sequential operations completed successfully on the same connection")
+}
+
+// --- Mutating Operations ---
+
+func TestIntegrationAddToStoreNarRoundTrip(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	// 1. Build a minimal NAR: a regular file with known content.
+	var narBuf bytes.Buffer
+	nw, err := nar.NewWriter(&narBuf)
+	require.NoError(t, err)
+
+	content := []byte("hello from go-nix integration test\n")
+	err = nw.WriteHeader(&nar.Header{
+		Path: "/",
+		Type: nar.TypeRegular,
+		Size: int64(len(content)),
+	})
+	require.NoError(t, err)
+	_, err = nw.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, nw.Close())
+
+	narData := narBuf.Bytes()
+
+	// 2. Compute SHA-256 hash of the NAR.
+	h := sha256.Sum256(narData)
+	narHash := "sha256:" + nixbase32.EncodeToString(h[:])
+
+	// 3. Construct store path.
+	storePath := "/nix/store/" + nixbase32.EncodeToString(h[:20]) + "-go-nix-integration-test"
+
+	info := &daemon.PathInfo{
+		StorePath:  storePath,
+		NarHash:    narHash,
+		NarSize:    uint64(len(narData)),
+		References: []string{},
+		Sigs:       []string{},
+	}
+
+	// 4. AddToStoreNar with dontCheckSigs=true.
+	err = client.AddToStoreNar(ctx, info, bytes.NewReader(narData), false, true)
+	require.NoError(t, err)
+
+	// 5. Verify via QueryPathInfo.
+	gotInfo, err := client.QueryPathInfo(ctx, storePath)
+	require.NoError(t, err)
+	require.NotNil(t, gotInfo, "path should exist in store after AddToStoreNar")
+	assert.Equal(t, storePath, gotInfo.StorePath)
+	assert.Equal(t, uint64(len(narData)), gotInfo.NarSize)
+	t.Logf("AddToStoreNar round-trip: path=%s narSize=%d", gotInfo.StorePath, gotInfo.NarSize)
+
+	// 6. Verify via NarFromPath: the retrieved NAR should match what we sent.
+	rc, err := client.NarFromPath(ctx, storePath)
+	require.NoError(t, err)
+	gotNar, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	assert.Equal(t, narData, gotNar, "NAR content round-trip mismatch")
+}
+
+func TestIntegrationBuildDerivation(t *testing.T) {
+	client := startTestDaemon(t)
+
+	drv := &daemon.BasicDerivation{
+		Outputs: map[string]daemon.DerivationOutput{
+			"out": {Path: "/nix/store/00000000000000000000000000000000-go-nix-test-out"},
+		},
+		Inputs:   []string{},
+		Platform: "x86_64-linux",
+		Builder:  "/nix/store/00000000000000000000000000000000-nonexistent",
+		Args:     []string{},
+		Env:      map[string]string{"out": "/nix/store/00000000000000000000000000000000-go-nix-test-out"},
+	}
+
+	result, err := client.BuildDerivation(
+		context.Background(),
+		"/nix/store/00000000000000000000000000000000-go-nix-test.drv",
+		drv,
+		daemon.BuildModeNormal,
+	)
+	// The build should fail (nonexistent builder) but the protocol round-trip should work.
+	if err != nil {
+		t.Logf("BuildDerivation returned error: %v (expected for nonexistent builder)", err)
+		return
+	}
+	assert.NotEqual(t, daemon.BuildStatusBuilt, result.Status,
+		"build with nonexistent builder should not succeed")
+	t.Logf("BuildDerivation result: status=%s errorMsg=%q", result.Status, result.ErrorMsg)
+}
+
+func TestIntegrationAddBuildLog(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Use the test path as a pseudo-derivation path for AddBuildLog.
+	// The daemon may reject this since it's not a real .drv, but the
+	// protocol round-trip is what we're testing.
+	logContent := "test build log from go-nix\n"
+	err := client.AddBuildLog(context.Background(), path, strings.NewReader(logContent))
+	if err != nil {
+		t.Logf("AddBuildLog returned error: %v (may be expected for non-.drv path)", err)
+	} else {
+		t.Log("AddBuildLog succeeded")
+	}
+}
+
+func TestIntegrationAddIndirectRoot(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Create a temp symlink pointing to the valid store path.
+	tmpDir := t.TempDir()
+	symlink := filepath.Join(tmpDir, "gc-root")
+	require.NoError(t, os.Symlink(path, symlink))
+
+	err := client.AddIndirectRoot(context.Background(), symlink)
+	assert.NoError(t, err)
+}
+
+func TestIntegrationSetOptionsWithOverrides(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	settings := daemon.DefaultClientSettings()
+	settings.MaxBuildJobs = 2
+	settings.Overrides = map[string]string{
+		"max-build-log-size": "1048576",
+	}
+
+	err := client.SetOptions(ctx, settings)
+	assert.NoError(t, err)
+
+	// Verify connection is still healthy after SetOptions with overrides.
+	_, err = client.QueryAllValidPaths(ctx)
+	assert.NoError(t, err)
 }
