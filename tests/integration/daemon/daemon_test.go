@@ -276,3 +276,95 @@ func TestIntegrationQueryValidDerivers(t *testing.T) {
 	assert.NoError(t, err)
 	t.Logf("Path %s has %d valid derivers", path, len(derivers))
 }
+
+// --- Substitutable & Missing ---
+
+func TestIntegrationQuerySubstitutablePaths(t *testing.T) {
+	client := startTestDaemon(t)
+
+	// Query with a bogus path -- should return empty (no substituters for it).
+	substitutable, err := client.QuerySubstitutablePaths(context.Background(), []string{
+		"/nix/store/00000000000000000000000000000000-nonexistent",
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, substitutable)
+}
+
+func TestIntegrationQueryMissing(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	missing, err := client.QueryMissing(context.Background(), []string{path})
+	assert.NoError(t, err)
+	require.NotNil(t, missing)
+	// A valid path should not appear in WillBuild or Unknown.
+	assert.NotContains(t, missing.WillBuild, path)
+	assert.NotContains(t, missing.Unknown, path)
+	t.Logf("QueryMissing: willBuild=%d willSubstitute=%d unknown=%d downloadSize=%d narSize=%d",
+		len(missing.WillBuild),
+		len(missing.WillSubstitute),
+		len(missing.Unknown),
+		missing.DownloadSize,
+		missing.NarSize,
+	)
+}
+
+// --- NAR Streaming ---
+
+func TestIntegrationNarFromPath(t *testing.T) {
+	client := startTestDaemon(t)
+	path, expectedNar := addTestPath(t, client)
+
+	// Get expected NAR size.
+	info, err := client.QueryPathInfo(context.Background(), path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+
+	rc, err := client.NarFromPath(context.Background(), path)
+	assert.NoError(t, err)
+	require.NotNil(t, rc)
+
+	// Read all NAR data.
+	data, err := io.ReadAll(rc)
+	assert.NoError(t, err)
+	assert.NoError(t, rc.Close())
+
+	// NAR data should start with the NAR magic header.
+	assert.True(t, len(data) > 0, "NAR data should not be empty")
+	assert.True(t, bytes.Contains(data[:min(len(data), 64)], []byte("nix-archive-1")),
+		"NAR data should start with nix-archive-1 magic")
+
+	// NAR size should match what PathInfo reported.
+	assert.Equal(t, info.NarSize, uint64(len(data)),
+		"NAR size should match PathInfo.NarSize")
+
+	// NAR content should match what we originally added.
+	assert.Equal(t, expectedNar, data, "NAR content round-trip mismatch")
+
+	t.Logf("NAR from %s: %d bytes", path, len(data))
+}
+
+// --- GC Roots ---
+
+func TestIntegrationFindRoots(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Add a temp root so FindRoots returns something.
+	err := client.AddTempRoot(context.Background(), path)
+	require.NoError(t, err)
+
+	roots, err := client.FindRoots(context.Background())
+	assert.NoError(t, err)
+	// Note: FindRoots may or may not include temp roots depending on daemon version.
+	// We just verify the protocol round-trip works.
+	t.Logf("Found %d GC roots", len(roots))
+}
+
+func TestIntegrationAddTempRoot(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	err := client.AddTempRoot(context.Background(), path)
+	assert.NoError(t, err)
+}
