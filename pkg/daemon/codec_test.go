@@ -322,18 +322,18 @@ func TestReadBuildResultNoOutputs(t *testing.T) {
 func TestReadBuildResultWithCPUTimes(t *testing.T) {
 	var buf bytes.Buffer
 
-	writeTestUint64(&buf, 0)               // status = Built
-	writeTestString(&buf, "")              // errorMsg
-	writeTestUint64(&buf, 1)               // timesBuilt
-	writeTestUint64(&buf, 0)               // isNonDeterministic = false
-	writeTestUint64(&buf, 1700000000)      // startTime
-	writeTestUint64(&buf, 1700000060)      // stopTime
+	writeTestUint64(&buf, 0)          // status = Built
+	writeTestString(&buf, "")         // errorMsg
+	writeTestUint64(&buf, 1)          // timesBuilt
+	writeTestUint64(&buf, 0)          // isNonDeterministic = false
+	writeTestUint64(&buf, 1700000000) // startTime
+	writeTestUint64(&buf, 1700000060) // stopTime
 	// cpuUser: optional<microseconds> = Some(500000)
-	writeTestUint64(&buf, 1)               // tag: present
-	writeTestUint64(&buf, 500000)          // value: 500000 microseconds
+	writeTestUint64(&buf, 1)      // tag: present
+	writeTestUint64(&buf, 500000) // value: 500000 microseconds
 	// cpuSystem: optional<microseconds> = None
-	writeTestUint64(&buf, 0)               // tag: absent
-	writeTestUint64(&buf, 0)               // builtOutputs count
+	writeTestUint64(&buf, 0) // tag: absent
+	writeTestUint64(&buf, 0) // builtOutputs count
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
 	assert.NoError(t, err)
@@ -348,15 +348,15 @@ func TestReadBuildResultWithCPUTimes(t *testing.T) {
 func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 	var buf bytes.Buffer
 
-	writeTestUint64(&buf, 0)               // status = Built
-	writeTestString(&buf, "")              // errorMsg
-	writeTestUint64(&buf, 2)               // timesBuilt
-	writeTestUint64(&buf, 0)               // isNonDeterministic = false
-	writeTestUint64(&buf, 1700000000)      // startTime
-	writeTestUint64(&buf, 1700000060)      // stopTime
+	writeTestUint64(&buf, 0)          // status = Built
+	writeTestString(&buf, "")         // errorMsg
+	writeTestUint64(&buf, 2)          // timesBuilt
+	writeTestUint64(&buf, 0)          // isNonDeterministic = false
+	writeTestUint64(&buf, 1700000000) // startTime
+	writeTestUint64(&buf, 1700000060) // stopTime
 	// cpuUser: optional<microseconds> = Some(1000000)
-	writeTestUint64(&buf, 1)               // tag: present
-	writeTestUint64(&buf, 1000000)         // value
+	writeTestUint64(&buf, 1)       // tag: present
+	writeTestUint64(&buf, 1000000) // value
 	// cpuSystem: optional<microseconds> = Some(250000)
 	writeTestUint64(&buf, 1)               // tag: present
 	writeTestUint64(&buf, 250000)          // value
@@ -438,9 +438,9 @@ func TestWriteReadPathInfoRoundTripPreMeta(t *testing.T) {
 		References:       []string{"/nix/store/def-bar"},
 		RegistrationTime: 1700000000,
 		NarSize:          54321,
-		Ultimate:         true,                   // Set, but should NOT be written at proto 1.15
-		Sigs:             []string{"sig1"},        // Should NOT be written
-		CA:               "fixed:sha256:abc",      // Should NOT be written
+		Ultimate:         true,               // Set, but should NOT be written at proto 1.15
+		Sigs:             []string{"sig1"},   // Should NOT be written
+		CA:               "fixed:sha256:abc", // Should NOT be written
 	}
 
 	var buf bytes.Buffer
@@ -464,7 +464,7 @@ func TestWriteReadPathInfoRoundTripPreMeta(t *testing.T) {
 	assert.Equal(t, info.RegistrationTime, got.RegistrationTime)
 	assert.Equal(t, info.NarSize, got.NarSize)
 	assert.False(t, got.Ultimate) // Zero value — not written
-	assert.Nil(t, got.Sigs)      // Zero value — not written
+	assert.Nil(t, got.Sigs)       // Zero value — not written
 	assert.Equal(t, "", got.CA)   // Zero value — not written
 
 	// Buffer should be fully consumed

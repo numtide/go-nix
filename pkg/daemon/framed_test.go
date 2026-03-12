@@ -13,9 +13,9 @@ func TestFramedReaderSingleFrame(t *testing.T) {
 	// Frame: length=5, data="hello" (NO padding), then terminator frame (length=0)
 	var buf bytes.Buffer
 
-	buf.Write([]byte{5, 0, 0, 0, 0, 0, 0, 0})       // frame length
-	buf.Write([]byte{'h', 'e', 'l', 'l', 'o'})       // data (no padding)
-	buf.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0})        // terminator
+	buf.Write([]byte{5, 0, 0, 0, 0, 0, 0, 0})  // frame length
+	buf.Write([]byte{'h', 'e', 'l', 'l', 'o'}) // data (no padding)
+	buf.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0})  // terminator
 
 	fr := daemon.NewFramedReader(&buf)
 	data, err := io.ReadAll(fr)
@@ -26,11 +26,11 @@ func TestFramedReaderSingleFrame(t *testing.T) {
 func TestFramedReaderMultipleFrames(t *testing.T) {
 	var buf bytes.Buffer
 
-	buf.Write([]byte{3, 0, 0, 0, 0, 0, 0, 0})   // frame 1: length 3
-	buf.Write([]byte{'a', 'b', 'c'})              // "abc" (no padding)
-	buf.Write([]byte{2, 0, 0, 0, 0, 0, 0, 0})   // frame 2: length 2
-	buf.Write([]byte{'d', 'e'})                    // "de" (no padding)
-	buf.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0})   // terminator
+	buf.Write([]byte{3, 0, 0, 0, 0, 0, 0, 0}) // frame 1: length 3
+	buf.Write([]byte{'a', 'b', 'c'})          // "abc" (no padding)
+	buf.Write([]byte{2, 0, 0, 0, 0, 0, 0, 0}) // frame 2: length 2
+	buf.Write([]byte{'d', 'e'})               // "de" (no padding)
+	buf.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0}) // terminator
 
 	fr := daemon.NewFramedReader(&buf)
 	data, err := io.ReadAll(fr)

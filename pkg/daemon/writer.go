@@ -13,14 +13,14 @@ import (
 // phase. If an error occurs before CloseRequest, call Abort to release
 // the connection mutex.
 type OpWriter struct {
-	w      *bufio.Writer
-	r      io.Reader
-	conn   net.Conn
-	mu     *sync.Mutex
+	w       *bufio.Writer
+	r       io.Reader
+	conn    net.Conn
+	mu      *sync.Mutex
 	logSink LogSink
-	op     Operation
-	done   bool
-	cancel func() bool // context.AfterFunc stop function
+	op      Operation
+	done    bool
+	cancel  func() bool // context.AfterFunc stop function
 }
 
 // Write writes data directly to the connection's buffered writer.

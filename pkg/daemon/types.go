@@ -33,25 +33,25 @@ func ProtoVersion(major, minor uint64) uint64 {
 }
 
 const (
-	ProtoVersionReserveSpace            = 0x010b // 1.11: reserve-space flag in handshake
-	ProtoVersionOverrides               = 0x010c // 1.12: overrides in SetOptions
-	ProtoVersionCPUAffinity             = 0x010e // 1.14: cpu-affinity flag in handshake
-	ProtoVersionPathInfoMeta            = 0x0110 // 1.16: ultimate/sigs/ca in PathInfo
-	ProtoVersionAddToStore              = 0x0119 // 1.25: modern AddToStore format (framed)
-	ProtoVersionSubstituteOk            = 0x011b // 1.27: substituteOk in QueryValidPaths
-	ProtoVersionRegisterDrvOutput       = 0x011b // 1.27: RegisterDrvOutput, QueryRealisation
-	ProtoVersionBuiltOutputs            = 0x011c // 1.28: builtOutputs in BuildResult
-	ProtoVersionBuildTimes              = 0x011d // 1.29: timesBuilt etc. in BuildResult
-	ProtoVersionAddPermRoot             = 0x011d // 1.29: AddPermRoot op
+	ProtoVersionReserveSpace             = 0x010b // 1.11: reserve-space flag in handshake
+	ProtoVersionOverrides                = 0x010c // 1.12: overrides in SetOptions
+	ProtoVersionCPUAffinity              = 0x010e // 1.14: cpu-affinity flag in handshake
+	ProtoVersionPathInfoMeta             = 0x0110 // 1.16: ultimate/sigs/ca in PathInfo
+	ProtoVersionAddToStore               = 0x0119 // 1.25: modern AddToStore format (framed)
+	ProtoVersionSubstituteOk             = 0x011b // 1.27: substituteOk in QueryValidPaths
+	ProtoVersionRegisterDrvOutput        = 0x011b // 1.27: RegisterDrvOutput, QueryRealisation
+	ProtoVersionBuiltOutputs             = 0x011c // 1.28: builtOutputs in BuildResult
+	ProtoVersionBuildTimes               = 0x011d // 1.29: timesBuilt etc. in BuildResult
+	ProtoVersionAddPermRoot              = 0x011d // 1.29: AddPermRoot op
 	ProtoVersionQueryDerivationOutputMap = 0x011e // 1.30: QueryDerivationOutputMap op
-	ProtoVersionQueryMissing            = 0x011e // 1.30: QueryMissing op
-	ProtoVersionRealisationJSON         = 0x011f // 1.31: JSON realisations
-	ProtoVersionAddMultipleToStore      = 0x0120 // 1.32: AddMultipleToStore, AddBuildLog
-	ProtoVersionNixVersion              = 0x0121 // 1.33: daemon Nix version string in handshake
-	ProtoVersionBuildPathsWithResults   = 0x0122 // 1.34: BuildPathsWithResults op
-	ProtoVersionTrust                   = 0x0123 // 1.35: trust level in handshake
-	ProtoVersionCPUTimes                = 0x0125 // 1.37: cpuUser/cpuSystem in BuildResult
-	ProtoVersionFeatureExchange         = 0x0126 // 1.38: feature set exchange in handshake
+	ProtoVersionQueryMissing             = 0x011e // 1.30: QueryMissing op
+	ProtoVersionRealisationJSON          = 0x011f // 1.31: JSON realisations
+	ProtoVersionAddMultipleToStore       = 0x0120 // 1.32: AddMultipleToStore, AddBuildLog
+	ProtoVersionNixVersion               = 0x0121 // 1.33: daemon Nix version string in handshake
+	ProtoVersionBuildPathsWithResults    = 0x0122 // 1.34: BuildPathsWithResults op
+	ProtoVersionTrust                    = 0x0123 // 1.35: trust level in handshake
+	ProtoVersionCPUTimes                 = 0x0125 // 1.37: cpuUser/cpuSystem in BuildResult
+	ProtoVersionFeatureExchange          = 0x0126 // 1.38: feature set exchange in handshake
 )
 
 // Operation represents a daemon worker operation code.
@@ -59,72 +59,72 @@ type Operation uint64
 
 // Daemon operation codes.
 const (
-	OpIsValidPath              Operation = 1
-	OpQueryReferrers           Operation = 6
-	OpAddToStore               Operation = 7
-	OpBuildPaths               Operation = 9
-	OpEnsurePath               Operation = 10
-	OpAddTempRoot              Operation = 11
-	OpAddIndirectRoot          Operation = 12
-	OpFindRoots                Operation = 14
-	OpSetOptions               Operation = 19
-	OpCollectGarbage           Operation = 20
-	OpQueryAllValidPaths       Operation = 23
-	OpQueryPathInfo            Operation = 26
-	OpQueryPathFromHashPart         Operation = 29
-	OpQuerySubstitutablePathInfos  Operation = 30
-	OpQueryValidPaths              Operation = 31
-	OpQuerySubstitutablePaths  Operation = 32
-	OpQueryValidDerivers       Operation = 33
-	OpOptimiseStore            Operation = 34
-	OpVerifyStore              Operation = 35
-	OpBuildDerivation          Operation = 36
-	OpAddSignatures            Operation = 37
-	OpNarFromPath              Operation = 38
-	OpAddToStoreNar            Operation = 39
-	OpQueryMissing             Operation = 40
-	OpQueryDerivationOutputMap Operation = 41
-	OpRegisterDrvOutput        Operation = 42
-	OpQueryRealisation         Operation = 43
-	OpAddMultipleToStore       Operation = 44
-	OpAddBuildLog              Operation = 45
-	OpBuildPathsWithResults    Operation = 46
-	OpAddPermRoot              Operation = 47
+	OpIsValidPath                 Operation = 1
+	OpQueryReferrers              Operation = 6
+	OpAddToStore                  Operation = 7
+	OpBuildPaths                  Operation = 9
+	OpEnsurePath                  Operation = 10
+	OpAddTempRoot                 Operation = 11
+	OpAddIndirectRoot             Operation = 12
+	OpFindRoots                   Operation = 14
+	OpSetOptions                  Operation = 19
+	OpCollectGarbage              Operation = 20
+	OpQueryAllValidPaths          Operation = 23
+	OpQueryPathInfo               Operation = 26
+	OpQueryPathFromHashPart       Operation = 29
+	OpQuerySubstitutablePathInfos Operation = 30
+	OpQueryValidPaths             Operation = 31
+	OpQuerySubstitutablePaths     Operation = 32
+	OpQueryValidDerivers          Operation = 33
+	OpOptimiseStore               Operation = 34
+	OpVerifyStore                 Operation = 35
+	OpBuildDerivation             Operation = 36
+	OpAddSignatures               Operation = 37
+	OpNarFromPath                 Operation = 38
+	OpAddToStoreNar               Operation = 39
+	OpQueryMissing                Operation = 40
+	OpQueryDerivationOutputMap    Operation = 41
+	OpRegisterDrvOutput           Operation = 42
+	OpQueryRealisation            Operation = 43
+	OpAddMultipleToStore          Operation = 44
+	OpAddBuildLog                 Operation = 45
+	OpBuildPathsWithResults       Operation = 46
+	OpAddPermRoot                 Operation = 47
 )
 
 //nolint:gochecknoglobals
 var operationNames = map[Operation]string{
-	OpIsValidPath:              "IsValidPath",
-	OpQueryReferrers:           "QueryReferrers",
-	OpAddToStore:               "AddToStore",
-	OpBuildPaths:               "BuildPaths",
-	OpEnsurePath:               "EnsurePath",
-	OpAddTempRoot:              "AddTempRoot",
-	OpAddIndirectRoot:          "AddIndirectRoot",
-	OpFindRoots:                "FindRoots",
-	OpSetOptions:               "SetOptions",
-	OpCollectGarbage:           "CollectGarbage",
-	OpQueryAllValidPaths:       "QueryAllValidPaths",
-	OpQueryPathInfo:            "QueryPathInfo",
-	OpQueryPathFromHashPart:         "QueryPathFromHashPart",
-	OpQuerySubstitutablePathInfos:  "QuerySubstitutablePathInfos",
-	OpQueryValidPaths:              "QueryValidPaths",
-	OpQuerySubstitutablePaths:  "QuerySubstitutablePaths",
-	OpQueryValidDerivers:       "QueryValidDerivers",
-	OpOptimiseStore:            "OptimiseStore",
-	OpVerifyStore:              "VerifyStore",
-	OpBuildDerivation:          "BuildDerivation",
-	OpAddSignatures:            "AddSignatures",
-	OpNarFromPath:              "NarFromPath",
-	OpAddToStoreNar:            "AddToStoreNar",
-	OpQueryMissing:             "QueryMissing",
-	OpQueryDerivationOutputMap: "QueryDerivationOutputMap",
-	OpRegisterDrvOutput:        "RegisterDrvOutput",
-	OpQueryRealisation:         "QueryRealisation",
-	OpAddMultipleToStore:       "AddMultipleToStore",
-	OpAddBuildLog:              "AddBuildLog",
-	OpBuildPathsWithResults:    "BuildPathsWithResults",
-	OpAddPermRoot:              "AddPermRoot",
+	OpIsValidPath:                 "IsValidPath",
+	OpQueryReferrers:              "QueryReferrers",
+	OpAddToStore:                  "AddToStore",
+	OpBuildPaths:                  "BuildPaths",
+	OpEnsurePath:                  "EnsurePath",
+	OpAddTempRoot:                 "AddTempRoot",
+	OpAddIndirectRoot:             "AddIndirectRoot",
+	OpFindRoots:                   "FindRoots",
+	OpSetOptions:                  "SetOptions",
+	OpCollectGarbage:              "CollectGarbage",
+	OpQueryAllValidPaths:          "QueryAllValidPaths",
+	OpQueryPathInfo:               "QueryPathInfo",
+	OpQueryPathFromHashPart:       "QueryPathFromHashPart",
+	OpQuerySubstitutablePathInfos: "QuerySubstitutablePathInfos",
+	OpQueryValidPaths:             "QueryValidPaths",
+	OpQuerySubstitutablePaths:     "QuerySubstitutablePaths",
+	OpQueryValidDerivers:          "QueryValidDerivers",
+	OpOptimiseStore:               "OptimiseStore",
+	OpVerifyStore:                 "VerifyStore",
+	OpBuildDerivation:             "BuildDerivation",
+	OpAddSignatures:               "AddSignatures",
+	OpNarFromPath:                 "NarFromPath",
+	OpAddToStoreNar:               "AddToStoreNar",
+	OpQueryMissing:                "QueryMissing",
+	OpQueryDerivationOutputMap:    "QueryDerivationOutputMap",
+	OpRegisterDrvOutput:           "RegisterDrvOutput",
+	OpQueryRealisation:            "QueryRealisation",
+	OpAddMultipleToStore:          "AddMultipleToStore",
+	OpAddBuildLog:                 "AddBuildLog",
+	OpBuildPathsWithResults:       "BuildPathsWithResults",
+	OpAddPermRoot:                 "AddPermRoot",
 }
 
 // String returns the human-readable name of the operation.

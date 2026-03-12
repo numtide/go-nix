@@ -17,13 +17,13 @@ var noDeadline time.Time //nolint:gochecknoglobals
 
 // Client connects to a Nix daemon and provides methods to interact with it.
 type Client struct {
-	conn net.Conn
-	r    io.Reader     // bufio.NewReader(conn)
-	w    *bufio.Writer // bufio.NewWriter(conn)
-	info *HandshakeInfo
-	logs chan LogMessage
+	conn    net.Conn
+	r       io.Reader     // bufio.NewReader(conn)
+	w       *bufio.Writer // bufio.NewWriter(conn)
+	info    *HandshakeInfo
+	logs    chan LogMessage
 	logSink LogSink
-	mu   sync.Mutex // serializes operations
+	mu      sync.Mutex // serializes operations
 
 	closed    atomic.Bool
 	closeOnce sync.Once
@@ -234,13 +234,13 @@ func (c *Client) DoStreaming(
 	}
 
 	return &OpWriter{
-		w:      c.w,
-		r:      c.r,
-		conn:   c.conn,
-		mu:     &c.mu,
+		w:       c.w,
+		r:       c.r,
+		conn:    c.conn,
+		mu:      &c.mu,
 		logSink: c.logSink,
-		op:     op,
-		cancel: cancel,
+		op:      op,
+		cancel:  cancel,
 	}, nil
 }
 

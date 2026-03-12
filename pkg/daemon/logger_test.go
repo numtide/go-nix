@@ -208,11 +208,11 @@ func TestProcessStderrErrorTooManyTraces(t *testing.T) {
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogError))
-	writeTestString(&buf, "Error")         // type
-	writeTestUint64(&buf, 0)               // level
-	writeTestString(&buf, "EvalError")     // name
-	writeTestString(&buf, "bad news")      // message
-	writeTestUint64(&buf, 0)               // havePos
+	writeTestString(&buf, "Error")               // type
+	writeTestUint64(&buf, 0)                     // level
+	writeTestString(&buf, "EvalError")           // name
+	writeTestString(&buf, "bad news")            // message
+	writeTestUint64(&buf, 0)                     // havePos
 	writeTestUint64(&buf, daemon.MaxLogTraces+1) // nrTraces
 
 	logs := make(chan daemon.LogMessage, 1)
