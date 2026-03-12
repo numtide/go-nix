@@ -203,6 +203,10 @@ func ReadPathInfo(r io.Reader, storePath string, version uint64) (*PathInfo, err
 // WritePathInfo writes a PathInfo in ValidPathInfo wire format.
 // The version parameter is the negotiated protocol version.
 func WritePathInfo(w io.Writer, info *PathInfo, version uint64) error {
+	if info == nil {
+		return ErrNilPathInfo
+	}
+
 	if err := wire.WriteString(w, info.StorePath); err != nil {
 		return err
 	}
@@ -248,6 +252,10 @@ func WritePathInfo(w io.Writer, info *PathInfo, version uint64) error {
 // WriteBasicDerivation writes a BasicDerivation to the wire. Outputs are
 // written sorted by name; environment variables are written sorted by key.
 func WriteBasicDerivation(w io.Writer, drv *BasicDerivation) error {
+	if drv == nil {
+		return ErrNilDerivation
+	}
+
 	// Outputs: count + sorted entries.
 	outputNames := make([]string, 0, len(drv.Outputs))
 	for name := range drv.Outputs {
