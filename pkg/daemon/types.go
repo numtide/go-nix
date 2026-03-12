@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"io"
+	"time"
 )
 
 // DefaultStoreDir is the default Nix store directory prefix.
@@ -312,6 +313,10 @@ type BuildResult struct {
 	StartTime uint64
 	// StopTime is the Unix timestamp when the build finished.
 	StopTime uint64
+	// CpuUser is the user CPU time consumed by the build, if available (protocol >= 1.37).
+	CpuUser *time.Duration
+	// CpuSystem is the system CPU time consumed by the build, if available (protocol >= 1.37).
+	CpuSystem *time.Duration
 	// BuiltOutputs maps output names to their realisations.
 	BuiltOutputs map[string]Realisation
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
 	"github.com/nix-community/go-nix/pkg/wire"
 )
@@ -304,21 +305,25 @@ func WriteBasicDerivation(w io.Writer, drv *BasicDerivation) error {
 
 // readOptionalMicroseconds reads an optional<microseconds> from the wire.
 // Wire format: tag(uint64: 0=none, 1=some) [+ value(uint64) if tag=1].
-// The value is consumed but not returned since we don't currently expose
-// CPU times in BuildResult.
-func readOptionalMicroseconds(r io.Reader) error {
+// Returns nil if absent, or a pointer to the duration if present.
+func readOptionalMicroseconds(r io.Reader) (*time.Duration, error) {
 	tag, err := wire.ReadUint64(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if tag == optionalSome {
-		if _, err := wire.ReadUint64(r); err != nil {
-			return err
+		us, err := wire.ReadUint64(r)
+		if err != nil {
+			return nil, err
 		}
+
+		d := time.Duration(us) * time.Microsecond
+
+		return &d, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 // ReadBuildResult reads a BuildResult from the wire.
@@ -364,11 +369,13 @@ func ReadBuildResult(r io.Reader, version uint64) (*BuildResult, error) {
 
 	// Protocol >= 1.37: cpuUser and cpuSystem as optional<microseconds>.
 	if version >= ProtoVersionCPUTimes {
-		if err := readOptionalMicroseconds(r); err != nil {
+		result.CpuUser, err = readOptionalMicroseconds(r)
+		if err != nil {
 			return nil, &ProtocolError{Op: "read build result cpuUser", Err: err}
 		}
 
-		if err := readOptionalMicroseconds(r); err != nil {
+		result.CpuSystem, err = readOptionalMicroseconds(r)
+		if err != nil {
 			return nil, &ProtocolError{Op: "read build result cpuSystem", Err: err}
 		}
 	}

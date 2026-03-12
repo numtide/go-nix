@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
 	"github.com/nix-community/go-nix/pkg/wire"
@@ -295,6 +296,8 @@ func TestReadBuildResult(t *testing.T) {
 	assert.False(t, result.IsNonDeterministic)
 	assert.Equal(t, uint64(1700000000), result.StartTime)
 	assert.Equal(t, uint64(1700000060), result.StopTime)
+	assert.Nil(t, result.CpuUser)
+	assert.Nil(t, result.CpuSystem)
 	assert.Len(t, result.BuiltOutputs, 1)
 	assert.Equal(t, daemon.Realisation{ID: `{"id":"test"}`}, result.BuiltOutputs["out"])
 }
@@ -316,6 +319,8 @@ func TestReadBuildResultNoOutputs(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, daemon.BuildStatusPermanentFailure, result.Status)
 	assert.Equal(t, "build failed", result.ErrorMsg)
+	assert.Nil(t, result.CpuUser)
+	assert.Nil(t, result.CpuSystem)
 	assert.Empty(t, result.BuiltOutputs)
 }
 
@@ -341,6 +346,11 @@ func TestReadBuildResultWithCPUTimes(t *testing.T) {
 	assert.Equal(t, uint64(1), result.TimesBuilt)
 	assert.Equal(t, uint64(1700000000), result.StartTime)
 	assert.Equal(t, uint64(1700000060), result.StopTime)
+
+	expectedCpuUser := 500 * time.Millisecond
+	assert.Equal(t, &expectedCpuUser, result.CpuUser)
+	assert.Nil(t, result.CpuSystem)
+
 	assert.Empty(t, result.BuiltOutputs)
 	assert.Equal(t, 0, buf.Len())
 }
@@ -368,6 +378,12 @@ func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
 	assert.Equal(t, uint64(2), result.TimesBuilt)
+
+	expectedCpuUser := time.Second
+	expectedCpuSystem := 250 * time.Millisecond
+	assert.Equal(t, &expectedCpuUser, result.CpuUser)
+	assert.Equal(t, &expectedCpuSystem, result.CpuSystem)
+
 	assert.Len(t, result.BuiltOutputs, 1)
 	assert.Equal(t, 0, buf.Len())
 }
