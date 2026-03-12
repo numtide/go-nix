@@ -619,3 +619,143 @@ func TestIntegrationQueryDerivationOutputMap(t *testing.T) {
 		t.Logf("  output %q -> %s", name, outPath)
 	}
 }
+
+// --- AddToStore ---
+
+func TestIntegrationAddToStore(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	// Build a minimal NAR: a regular file with known content.
+	var narBuf bytes.Buffer
+	nw, err := nar.NewWriter(&narBuf)
+	require.NoError(t, err)
+
+	content := []byte("content-addressed import via AddToStore\n")
+	err = nw.WriteHeader(&nar.Header{
+		Path: "/",
+		Type: nar.TypeRegular,
+		Size: int64(len(content)),
+	})
+	require.NoError(t, err)
+	_, err = nw.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, nw.Close())
+
+	narData := narBuf.Bytes()
+
+	// Use AddToStore with fixed:r:sha256 (recursive NAR, SHA-256).
+	// The daemon computes the store path from the NAR content.
+	info, err := client.AddToStore(ctx,
+		"go-nix-addtostore-test",
+		"fixed:r:sha256",
+		[]string{},
+		false,
+		bytes.NewReader(narData),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+
+	assert.NotEmpty(t, info.StorePath)
+	assert.True(t, strings.HasPrefix(info.StorePath, "/nix/store/"))
+	assert.Contains(t, info.StorePath, "go-nix-addtostore-test")
+	assert.NotEmpty(t, info.NarHash)
+	assert.Equal(t, uint64(len(narData)), info.NarSize)
+	assert.NotEmpty(t, info.CA, "content-addressed path should have a CA field")
+	t.Logf("AddToStore: path=%s narSize=%d ca=%s", info.StorePath, info.NarSize, info.CA)
+
+	// Verify the path is now valid in the store.
+	valid, err := client.IsValidPath(ctx, info.StorePath)
+	assert.NoError(t, err)
+	assert.True(t, valid)
+
+	// Verify round-trip: retrieve the NAR and compare.
+	rc, err := client.NarFromPath(ctx, info.StorePath)
+	require.NoError(t, err)
+	gotNar, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	assert.Equal(t, narData, gotNar, "NAR content round-trip mismatch")
+}
+
+func TestIntegrationAddToStoreFlat(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	// For flat content addressing, the source is the raw file content (not NAR).
+	content := []byte("flat content-addressed file\n")
+
+	info, err := client.AddToStore(ctx,
+		"go-nix-flat-test",
+		"fixed:sha256",
+		[]string{},
+		false,
+		bytes.NewReader(content),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+
+	assert.NotEmpty(t, info.StorePath)
+	assert.Contains(t, info.StorePath, "go-nix-flat-test")
+	assert.NotEmpty(t, info.CA)
+	t.Logf("AddToStore flat: path=%s ca=%s", info.StorePath, info.CA)
+
+	// Verify the path exists.
+	valid, err := client.IsValidPath(ctx, info.StorePath)
+	assert.NoError(t, err)
+	assert.True(t, valid)
+}
+
+func TestIntegrationAddToStoreIdempotent(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	content := []byte("idempotent content\n")
+
+	// Add the same content twice — should return the same path both times.
+	info1, err := client.AddToStore(ctx, "go-nix-idempotent", "fixed:sha256", nil, false, bytes.NewReader(content))
+	require.NoError(t, err)
+
+	info2, err := client.AddToStore(ctx, "go-nix-idempotent", "fixed:sha256", nil, false, bytes.NewReader(content))
+	require.NoError(t, err)
+
+	assert.Equal(t, info1.StorePath, info2.StorePath, "same content should produce same store path")
+	assert.Equal(t, info1.NarHash, info2.NarHash)
+}
+
+// --- QuerySubstitutablePathInfos ---
+
+func TestIntegrationQuerySubstitutablePathInfos(t *testing.T) {
+	client := startTestDaemon(t)
+
+	// With a local-only store and no substituters configured, the result
+	// should be empty — but the protocol round-trip must succeed.
+	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
+		"/nix/store/00000000000000000000000000000000-nonexistent": "",
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+func TestIntegrationQuerySubstitutablePathInfosEmpty(t *testing.T) {
+	client := startTestDaemon(t)
+
+	// Empty input map should return empty result.
+	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{})
+	assert.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+func TestIntegrationQuerySubstitutablePathInfosMultiple(t *testing.T) {
+	client := startTestDaemon(t)
+
+	// Multiple paths, none substitutable in a local-only store.
+	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
+		"/nix/store/00000000000000000000000000000000-foo": "",
+		"/nix/store/11111111111111111111111111111111-bar": "",
+		"/nix/store/22222222222222222222222222222222-baz": "",
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, result)
+	t.Logf("QuerySubstitutablePathInfos: %d results for 3 queries", len(result))
+}
