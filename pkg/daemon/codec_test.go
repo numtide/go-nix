@@ -284,9 +284,9 @@ func TestReadBuildResult(t *testing.T) {
 	writeTestUint64(&buf, 1700000060)      // stopTime
 	writeTestUint64(&buf, 0)               // cpuUser: None
 	writeTestUint64(&buf, 0)               // cpuSystem: None
-	writeTestUint64(&buf, 1)               // builtOutputs count
-	writeTestString(&buf, "out")           // output name
-	writeTestString(&buf, `{"id":"test"}`) // realisation JSON
+	writeTestUint64(&buf, 1)     // builtOutputs count
+	writeTestString(&buf, "out") // output name
+	writeTestString(&buf, `{"id":"sha256:abc123!out","outPath":"/nix/store/zzz-hello","signatures":["mykey:c2ln"],"dependentRealisations":{}}`)
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
 	assert.NoError(t, err)
@@ -299,7 +299,12 @@ func TestReadBuildResult(t *testing.T) {
 	assert.Nil(t, result.CpuUser)
 	assert.Nil(t, result.CpuSystem)
 	assert.Len(t, result.BuiltOutputs, 1)
-	assert.Equal(t, daemon.Realisation{ID: `{"id":"test"}`}, result.BuiltOutputs["out"])
+
+	real := result.BuiltOutputs["out"]
+	assert.Equal(t, "sha256:abc123!out", real.ID)
+	assert.Equal(t, "/nix/store/zzz-hello", real.OutPath)
+	assert.Equal(t, []string{"mykey:c2ln"}, real.Signatures)
+	assert.Empty(t, real.DependentRealisations)
 }
 
 func TestReadBuildResultNoOutputs(t *testing.T) {
@@ -370,9 +375,9 @@ func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 	// cpuSystem: optional<microseconds> = Some(250000)
 	writeTestUint64(&buf, 1)               // tag: present
 	writeTestUint64(&buf, 250000)          // value
-	writeTestUint64(&buf, 1)               // builtOutputs count
-	writeTestString(&buf, "out")           // output name
-	writeTestString(&buf, `{"id":"test"}`) // realisation JSON
+	writeTestUint64(&buf, 1)     // builtOutputs count
+	writeTestString(&buf, "out") // output name
+	writeTestString(&buf, `{"id":"sha256:def456!out","outPath":"/nix/store/yyy-world","signatures":[],"dependentRealisations":{}}`)
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
 	assert.NoError(t, err)
@@ -385,6 +390,8 @@ func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 	assert.Equal(t, &expectedCpuSystem, result.CpuSystem)
 
 	assert.Len(t, result.BuiltOutputs, 1)
+	assert.Equal(t, "sha256:def456!out", result.BuiltOutputs["out"].ID)
+	assert.Equal(t, "/nix/store/yyy-world", result.BuiltOutputs["out"].OutPath)
 	assert.Equal(t, 0, buf.Len())
 }
 
@@ -411,16 +418,17 @@ func TestReadBuildResultProto128(t *testing.T) {
 	var buf bytes.Buffer
 	writeTestUint64(&buf, 1)               // status = Substituted
 	writeTestString(&buf, "")              // errorMsg
-	writeTestUint64(&buf, 1)               // builtOutputs count
-	writeTestString(&buf, "out")           // output name
-	writeTestString(&buf, `{"id":"test"}`) // realisation JSON
+	writeTestUint64(&buf, 1)     // builtOutputs count
+	writeTestString(&buf, "out") // output name
+	writeTestString(&buf, `{"id":"sha256:abc!out","outPath":"/nix/store/zzz-pkg","signatures":[],"dependentRealisations":{}}`)
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtoVersion(1, 28))
 	assert.NoError(t, err)
 	assert.Equal(t, daemon.BuildStatusSubstituted, result.Status)
 	assert.Equal(t, uint64(0), result.TimesBuilt) // no timing fields
 	assert.Len(t, result.BuiltOutputs, 1)
-	assert.Equal(t, daemon.Realisation{ID: `{"id":"test"}`}, result.BuiltOutputs["out"])
+	assert.Equal(t, "sha256:abc!out", result.BuiltOutputs["out"].ID)
+	assert.Equal(t, "/nix/store/zzz-pkg", result.BuiltOutputs["out"].OutPath)
 	assert.Equal(t, 0, buf.Len())
 }
 

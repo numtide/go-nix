@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -400,7 +401,12 @@ func ReadBuildResult(r io.Reader, version uint64) (*BuildResult, error) {
 				return nil, &ProtocolError{Op: "read build result realisation", Err: err}
 			}
 
-			builtOutputs[name] = Realisation{ID: realisationJSON}
+			var real Realisation
+			if err := json.Unmarshal([]byte(realisationJSON), &real); err != nil {
+				return nil, &ProtocolError{Op: "read build result realisation JSON", Err: err}
+			}
+
+			builtOutputs[name] = real
 		}
 
 		result.BuiltOutputs = builtOutputs

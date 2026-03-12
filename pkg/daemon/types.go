@@ -323,14 +323,14 @@ type BuildResult struct {
 
 // Realisation represents a content-addressed realisation of a derivation output.
 type Realisation struct {
-	// ID is the derivation-output identifier (e.g. "/nix/store/...-foo.drv!out").
-	ID string
+	// ID is the derivation-output identifier (e.g. "sha256:hash!out").
+	ID string `json:"id"`
 	// OutPath is the store path of the realised output.
-	OutPath string
+	OutPath string `json:"outPath"`
 	// Signatures contains the cryptographic signatures on this realisation.
-	Signatures []string
+	Signatures []string `json:"signatures"`
 	// DependentRealisations maps dependent derivation-output IDs to their output paths.
-	DependentRealisations map[string]string
+	DependentRealisations map[string]string `json:"dependentRealisations"`
 }
 
 // MissingInfo holds the result of a QueryMissing operation.
