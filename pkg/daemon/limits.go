@@ -1,23 +1,12 @@
 package daemon
 
-// Centralized protocol limits to avoid unbounded allocations from malformed
-// or malicious peers.
+// Protocol constants.
 const (
 	// MaxStringSize is the maximum size in bytes for strings read from the daemon
-	// protocol.
+	// protocol. Individual strings are capped to prevent unbounded allocation
+	// from a malformed or corrupted peer. List and map counts are not capped
+	// because large Nix stores can legitimately contain millions of paths.
 	MaxStringSize = 64 * 1024 * 1024 // 64 MiB
-
-	// MaxListEntries caps list counts read from the wire.
-	MaxListEntries = 1 << 20
-
-	// MaxMapEntries caps map entry counts read from the wire.
-	MaxMapEntries = 1 << 20
-
-	// MaxLogFields limits the number of structured fields.
-	MaxLogFields = 1 << 20
-
-	// MaxLogTraces limits the number of error traces.
-	MaxLogTraces = 1 << 20
 
 	// fieldTypeInt is the wire tag for an integer-typed log field.
 	fieldTypeInt = 0

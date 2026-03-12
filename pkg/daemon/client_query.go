@@ -200,13 +200,6 @@ func (c *Client) QuerySubstitutablePathInfos(
 				return err
 			}
 
-			if count > MaxListEntries {
-				return &ProtocolError{
-					Op:  "QuerySubstitutablePathInfos read count",
-					Err: fmt.Errorf("count %d exceeds maximum %d", count, MaxListEntries),
-				}
-			}
-
 			result = make(map[string]*SubstitutablePathInfo, count)
 
 			for i := uint64(0); i < count; i++ {

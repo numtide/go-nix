@@ -28,15 +28,6 @@ func TestWriteReadStringsEmpty(t *testing.T) {
 	assert.Empty(t, result)
 }
 
-func TestReadStringsTooLarge(t *testing.T) {
-	var buf bytes.Buffer
-	err := wire.WriteUint64(&buf, daemon.MaxListEntries+1)
-	assert.NoError(t, err)
-
-	_, err = daemon.ReadStrings(&buf, daemon.MaxStringSize)
-	assert.Error(t, err)
-}
-
 func TestWriteReadStringMap(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -46,15 +37,6 @@ func TestWriteReadStringMap(t *testing.T) {
 	result, err := daemon.ReadStringMap(&buf, daemon.MaxStringSize)
 	assert.NoError(t, err)
 	assert.Equal(t, m, result)
-}
-
-func TestReadStringMapTooLarge(t *testing.T) {
-	var buf bytes.Buffer
-	err := wire.WriteUint64(&buf, daemon.MaxMapEntries+1)
-	assert.NoError(t, err)
-
-	_, err = daemon.ReadStringMap(&buf, daemon.MaxStringSize)
-	assert.Error(t, err)
 }
 
 func TestReadPathInfo(t *testing.T) {

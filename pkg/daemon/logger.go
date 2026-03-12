@@ -159,13 +159,6 @@ func readError(r io.Reader) error {
 		return &ProtocolError{Op: "read error nrTraces", Err: err}
 	}
 
-	if nrTraces > MaxLogTraces {
-		return &ProtocolError{
-			Op:  "read error nrTraces",
-			Err: fmt.Errorf("trace count %d exceeds limit %d", nrTraces, MaxLogTraces),
-		}
-	}
-
 	traces := make([]ErrorTrace, nrTraces)
 
 	for i := uint64(0); i < nrTraces; i++ {
@@ -273,13 +266,6 @@ func readActivityResult(r io.Reader) (*ActivityResult, error) {
 // readFields parses a sequence of typed fields from the daemon's stderr
 // channel. Each field is preceded by a type tag: 0 for integer, 1 for string.
 func readFields(r io.Reader, count uint64) ([]LogField, error) {
-	if count > MaxLogFields {
-		return nil, &ProtocolError{
-			Op:  "read field count",
-			Err: fmt.Errorf("field count %d exceeds limit %d", count, MaxLogFields),
-		}
-	}
-
 	fields := make([]LogField, count)
 
 	for i := uint64(0); i < count; i++ {
