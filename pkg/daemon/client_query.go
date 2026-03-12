@@ -165,6 +165,90 @@ func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([
 	return substitutable, err
 }
 
+// QuerySubstitutablePathInfos returns substitution metadata (deriver,
+// references, download size, NAR size) for the given paths. The input is a
+// map from store paths to optional content addresses (empty string for no CA).
+// Paths not available from any substituter are omitted from the result.
+func (c *Client) QuerySubstitutablePathInfos(
+	ctx context.Context, paths map[string]string,
+) (map[string]*SubstitutablePathInfo, error) {
+	var result map[string]*SubstitutablePathInfo
+
+	err := c.doOp(ctx, OpQuerySubstitutablePathInfos,
+		func(w io.Writer) error {
+			// Protocol >= 1.22 (always true for us): send StorePathCAMap.
+			if err := wire.WriteUint64(w, uint64(len(paths))); err != nil {
+				return err
+			}
+
+			for storePath, ca := range paths {
+				if err := wire.WriteString(w, storePath); err != nil {
+					return err
+				}
+
+				if err := wire.WriteString(w, ca); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		func(r io.Reader) error {
+			count, err := wire.ReadUint64(r)
+			if err != nil {
+				return err
+			}
+
+			if count > MaxListEntries {
+				return &ProtocolError{
+					Op:  "QuerySubstitutablePathInfos read count",
+					Err: fmt.Errorf("count %d exceeds maximum %d", count, MaxListEntries),
+				}
+			}
+
+			result = make(map[string]*SubstitutablePathInfo, count)
+
+			for i := uint64(0); i < count; i++ {
+				storePath, err := wire.ReadString(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				deriver, err := wire.ReadString(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				references, err := ReadStrings(r, MaxStringSize)
+				if err != nil {
+					return err
+				}
+
+				downloadSize, err := wire.ReadUint64(r)
+				if err != nil {
+					return err
+				}
+
+				narSize, err := wire.ReadUint64(r)
+				if err != nil {
+					return err
+				}
+
+				result[storePath] = &SubstitutablePathInfo{
+					Deriver:      deriver,
+					References:   references,
+					DownloadSize: downloadSize,
+					NarSize:      narSize,
+				}
+			}
+
+			return nil
+		},
+	)
+
+	return result, err
+}
+
 // QueryValidDerivers returns the derivations known to have produced the given
 // store path.
 func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string, error) {

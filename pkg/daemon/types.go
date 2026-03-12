@@ -71,8 +71,9 @@ const (
 	OpCollectGarbage           Operation = 20
 	OpQueryAllValidPaths       Operation = 23
 	OpQueryPathInfo            Operation = 26
-	OpQueryPathFromHashPart    Operation = 29
-	OpQueryValidPaths          Operation = 31
+	OpQueryPathFromHashPart         Operation = 29
+	OpQuerySubstitutablePathInfos  Operation = 30
+	OpQueryValidPaths              Operation = 31
 	OpQuerySubstitutablePaths  Operation = 32
 	OpQueryValidDerivers       Operation = 33
 	OpOptimiseStore            Operation = 34
@@ -105,8 +106,9 @@ var operationNames = map[Operation]string{
 	OpCollectGarbage:           "CollectGarbage",
 	OpQueryAllValidPaths:       "QueryAllValidPaths",
 	OpQueryPathInfo:            "QueryPathInfo",
-	OpQueryPathFromHashPart:    "QueryPathFromHashPart",
-	OpQueryValidPaths:          "QueryValidPaths",
+	OpQueryPathFromHashPart:         "QueryPathFromHashPart",
+	OpQuerySubstitutablePathInfos:  "QuerySubstitutablePathInfos",
+	OpQueryValidPaths:              "QueryValidPaths",
 	OpQuerySubstitutablePaths:  "QuerySubstitutablePaths",
 	OpQueryValidDerivers:       "QueryValidDerivers",
 	OpOptimiseStore:            "OptimiseStore",
@@ -337,6 +339,20 @@ type MissingInfo struct {
 	// DownloadSize is the total size of files to download in bytes.
 	DownloadSize uint64
 	// NarSize is the total unpacked NAR size in bytes.
+	NarSize uint64
+}
+
+// SubstitutablePathInfo holds substitution metadata for a store path, as
+// returned by QuerySubstitutablePathInfos.
+type SubstitutablePathInfo struct {
+	// Deriver is the store path of the derivation that produced this path,
+	// or empty if unknown.
+	Deriver string
+	// References is the set of store paths this path depends on at runtime.
+	References []string
+	// DownloadSize is the size in bytes to download from a binary cache (0 if unknown).
+	DownloadSize uint64
+	// NarSize is the size of the NAR serialisation in bytes (0 if unknown).
 	NarSize uint64
 }
 

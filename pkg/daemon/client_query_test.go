@@ -267,6 +267,73 @@ func TestClientQuerySubstitutablePaths(t *testing.T) {
 	assert.Equal(t, substitutable, result)
 }
 
+func TestClientQuerySubstitutablePathInfos(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expected := map[string]*daemon.SubstitutablePathInfo{
+		"/nix/store/aaa-foo": {
+			Deriver:      "/nix/store/aaa-foo.drv",
+			References:   []string{"/nix/store/bbb-dep"},
+			DownloadSize: 1048576,
+			NarSize:      2097152,
+		},
+		"/nix/store/ccc-baz": {
+			Deriver:      "",
+			References:   []string{},
+			DownloadSize: 512000,
+			NarSize:      1024000,
+		},
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondQuerySubstitutablePathInfos(expected)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
+		"/nix/store/aaa-foo": "",
+		"/nix/store/bbb-bar": "",
+		"/nix/store/ccc-baz": "",
+	})
+	assert.NoError(t, err)
+	assert.Len(t, result, 2)
+
+	// The mock iterates over a Go map so order may vary; check by key.
+	for path, info := range expected {
+		got, ok := result[path]
+		assert.True(t, ok, "expected path %s in result", path)
+		assert.Equal(t, info.Deriver, got.Deriver)
+		assert.Equal(t, info.References, got.References)
+		assert.Equal(t, info.DownloadSize, got.DownloadSize)
+		assert.Equal(t, info.NarSize, got.NarSize)
+	}
+}
+
+func TestClientQuerySubstitutablePathInfosEmpty(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+		mock.respondQuerySubstitutablePathInfos(map[string]*daemon.SubstitutablePathInfo{})
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
+		"/nix/store/nonexistent": "",
+	})
+	assert.NoError(t, err)
+	assert.Len(t, result, 0)
+}
+
 func TestClientQueryReferrers(t *testing.T) {
 	mock, clientConn := newMockDaemon(t)
 	defer mock.conn.Close()

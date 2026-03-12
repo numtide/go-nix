@@ -561,6 +561,49 @@ func (m *mockDaemon) respondQueryRealisation(realisations []string) {
 	}
 }
 
+func (m *mockDaemon) respondQuerySubstitutablePathInfos(infos map[string]*daemon.SubstitutablePathInfo) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpQuerySubstitutablePathInfos), op)
+
+	// Read StorePathCAMap: count + (storePath + ca) pairs.
+	_, _ = io.ReadFull(m.conn, buf[:]) // count
+	count := binary.LittleEndian.Uint64(buf[:])
+
+	for i := uint64(0); i < count; i++ {
+		_, _ = wire.ReadString(m.conn, 64*1024) // storePath
+		_, _ = wire.ReadString(m.conn, 64*1024) // ca (optional, empty string for none)
+	}
+
+	// Send LogLast.
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: count + entries.
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(infos)))
+	_, _ = m.conn.Write(buf[:])
+
+	for path, info := range infos {
+		writeWireStringTo(m.conn, path)
+		writeWireStringTo(m.conn, info.Deriver)
+
+		// References.
+		binary.LittleEndian.PutUint64(buf[:], uint64(len(info.References)))
+		_, _ = m.conn.Write(buf[:])
+
+		for _, ref := range info.References {
+			writeWireStringTo(m.conn, ref)
+		}
+
+		binary.LittleEndian.PutUint64(buf[:], info.DownloadSize)
+		_, _ = m.conn.Write(buf[:])
+
+		binary.LittleEndian.PutUint64(buf[:], info.NarSize)
+		_, _ = m.conn.Write(buf[:])
+	}
+}
 
 func (m *mockDaemon) respondAddToStore(info *daemon.PathInfo) {
 	var buf [8]byte
