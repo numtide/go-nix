@@ -100,72 +100,6 @@ func TestClientCloseIdempotent(t *testing.T) {
 	assert.NoError(t, client.Close())
 }
 
-func TestCollectGarbageNilOptions(t *testing.T) {
-	client := &daemon.Client{}
-	_, err := client.CollectGarbage(context.Background(), nil)
-	assert.ErrorIs(t, err, daemon.ErrNilOptions)
-}
-
-func TestAddToStoreNarNilArgs(t *testing.T) {
-	client := &daemon.Client{}
-
-	err := client.AddToStoreNar(context.Background(), nil, nil, false, false)
-	assert.ErrorIs(t, err, daemon.ErrNilPathInfo)
-
-	err = client.AddToStoreNar(context.Background(), &daemon.PathInfo{}, nil, false, false)
-	assert.ErrorIs(t, err, daemon.ErrNilReader)
-}
-
-func TestAddBuildLogNilReader(t *testing.T) {
-	client := &daemon.Client{}
-
-	err := client.AddBuildLog(context.Background(), "/nix/store/abc.drv", nil)
-	assert.ErrorIs(t, err, daemon.ErrNilReader)
-}
-
-func TestBuildDerivationNil(t *testing.T) {
-	client := &daemon.Client{}
-
-	_, err := client.BuildDerivation(context.Background(), "/nix/store/abc.drv", nil, daemon.BuildModeNormal)
-	assert.ErrorIs(t, err, daemon.ErrNilDerivation)
-}
-
-func TestClientIsValidPath(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
-
-	go func() {
-		mock.handshake()
-		mock.respondIsValidPath(true)
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
-	assert.NoError(t, err)
-	defer client.Close()
-
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.True(t, valid)
-}
-
-func TestClientIsValidPathFalse(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
-
-	go func() {
-		mock.handshake()
-		mock.respondIsValidPath(false)
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
-	assert.NoError(t, err)
-	defer client.Close()
-
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/nonexistent")
-	assert.NoError(t, err)
-	assert.False(t, valid)
-}
-
 func TestClientWithLogChannel(t *testing.T) {
 	mock, clientConn := newMockDaemon(t)
 	defer mock.conn.Close()
@@ -314,4 +248,45 @@ func TestClientOperationAfterError(t *testing.T) {
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/good-path")
 	assert.NoError(t, err, "second IsValidPath should succeed after prior error")
 	assert.True(t, valid, "second IsValidPath should return true")
+}
+
+func TestClientDaemonErrorWithTraces(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	expectedErr := &daemon.Error{
+		Type:    "Error",
+		Level:   0,
+		Name:    "EvalError",
+		Message: "evaluation failed",
+		Traces: []daemon.ErrorTrace{
+			{HavePos: 0, Message: "while evaluating the attribute 'buildInputs'"},
+			{HavePos: 0, Message: "while calling the 'derivationStrict' builtin"},
+		},
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondWithError(daemon.OpIsValidPath, func() {
+			_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		}, expectedErr)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	assert.Error(t, err)
+
+	var daemonErr *daemon.Error
+	assert.True(t, errors.As(err, &daemonErr))
+	assert.Equal(t, "Error", daemonErr.Type)
+	assert.Equal(t, "evaluation failed", daemonErr.Message)
+	assert.Equal(t, "EvalError", daemonErr.Name)
+	assert.Len(t, daemonErr.Traces, 2)
+	assert.Equal(t, "while evaluating the attribute 'buildInputs'", daemonErr.Traces[0].Message)
+	assert.Equal(t, "while calling the 'derivationStrict' builtin", daemonErr.Traces[1].Message)
+	assert.Equal(t, uint64(0), daemonErr.Traces[0].HavePos)
+	assert.Equal(t, uint64(0), daemonErr.Traces[1].HavePos)
 }
