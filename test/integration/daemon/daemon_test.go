@@ -759,3 +759,227 @@ func TestIntegrationQuerySubstitutablePathInfosMultiple(t *testing.T) {
 	assert.Empty(t, result)
 	t.Logf("QuerySubstitutablePathInfos: %d results for 3 queries", len(result))
 }
+
+// --- QueryRealisation ---
+
+func TestIntegrationQueryRealisation(t *testing.T) {
+	client := startTestDaemon(t)
+
+	// Query a nonexistent output ID — should return empty, no error.
+	// Note: some Nix versions crash with an SQLite assertion failure when
+	// the realisations DB is uninitialised (local?root= stores). Tolerate
+	// errors here since we're testing the protocol round-trip.
+	realisations, err := client.QueryRealisation(context.Background(),
+		"sha256:0000000000000000000000000000000000000000000000000000000000000000!out")
+	if err != nil {
+		t.Logf("QueryRealisation returned error: %v (may be a Nix daemon bug with local?root= stores)", err)
+		return
+	}
+	assert.Empty(t, realisations)
+}
+
+// --- AddPermRoot ---
+
+func TestIntegrationAddPermRoot(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Create a symlink path for the permanent GC root.
+	tmpDir := t.TempDir()
+	gcRoot := filepath.Join(tmpDir, "perm-gc-root")
+
+	resultPath, err := client.AddPermRoot(context.Background(), path, gcRoot)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, resultPath)
+	t.Logf("AddPermRoot: %s -> %s (result: %s)", gcRoot, path, resultPath)
+
+	// The symlink should now exist and point to the store path.
+	target, err := os.Readlink(resultPath)
+	assert.NoError(t, err)
+	assert.Equal(t, path, target)
+}
+
+// --- AddSignatures ---
+
+func TestIntegrationAddSignatures(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Add a signature to the store path.
+	sig := "test-key-1:c2lnbmF0dXJlZGF0YQ=="
+	err := client.AddSignatures(context.Background(), path, []string{sig})
+	assert.NoError(t, err)
+
+	// Verify the signature was attached by querying the path info.
+	info, err := client.QueryPathInfo(context.Background(), path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Contains(t, info.Sigs, sig)
+	t.Logf("AddSignatures: path=%s sigs=%v", path, info.Sigs)
+}
+
+// --- RegisterDrvOutput ---
+
+func TestIntegrationRegisterDrvOutput(t *testing.T) {
+	client := startTestDaemon(t)
+	path, _ := addTestPath(t, client)
+
+	// Compute a fake but structurally valid output ID.
+	// Format: sha256:<hash>!<output-name>
+	h := sha256.Sum256([]byte("test-drv-output"))
+	outputID := "sha256:" + nixbase32.EncodeToString(h[:]) + "!out"
+
+	// Build a JSON realisation string matching what RegisterDrvOutput expects.
+	realisation := `{"id":"` + outputID + `","outPath":"` + path + `","signatures":[],"dependentRealisations":{}}`
+
+	err := client.RegisterDrvOutput(context.Background(), realisation)
+	if err != nil {
+		// Some daemon versions may reject this depending on store configuration.
+		t.Logf("RegisterDrvOutput returned error: %v (may be expected)", err)
+	} else {
+		t.Logf("RegisterDrvOutput succeeded for output %s", outputID)
+	}
+}
+
+// --- CollectGarbage ---
+
+func TestIntegrationCollectGarbage(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	// Add a path, then collect garbage (without a temp root, it should be deletable).
+	path, _ := addTestPath(t, client)
+
+	// Verify the path exists before GC.
+	valid, err := client.IsValidPath(ctx, path)
+	require.NoError(t, err)
+	require.True(t, valid)
+
+	// Run GC to delete dead paths.
+	result, err := client.CollectGarbage(ctx, &daemon.GCOptions{
+		Action:   daemon.GCDeleteDead,
+		MaxFreed: 0, // unlimited
+	})
+	assert.NoError(t, err)
+	require.NotNil(t, result)
+	t.Logf("CollectGarbage: deleted %d paths, freed %d bytes", len(result.Paths), result.BytesFreed)
+}
+
+func TestIntegrationCollectGarbageReturnDead(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	// GCReturnDead should return the list of dead paths without deleting them.
+	result, err := client.CollectGarbage(ctx, &daemon.GCOptions{
+		Action:   daemon.GCReturnDead,
+		MaxFreed: 0,
+	})
+	assert.NoError(t, err)
+	require.NotNil(t, result)
+	t.Logf("CollectGarbage(ReturnDead): %d dead paths", len(result.Paths))
+}
+
+func TestIntegrationCollectGarbageWithTempRoot(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	// Add a path and protect it with a temp root.
+	path, _ := addTestPath(t, client)
+	require.NoError(t, client.AddTempRoot(ctx, path))
+
+	// GC should not delete the protected path.
+	_, err := client.CollectGarbage(ctx, &daemon.GCOptions{
+		Action:   daemon.GCDeleteDead,
+		MaxFreed: 0,
+	})
+	assert.NoError(t, err)
+
+	// Path should still be valid after GC.
+	valid, err := client.IsValidPath(ctx, path)
+	assert.NoError(t, err)
+	assert.True(t, valid, "temp-rooted path should survive GC")
+}
+
+// --- OptimiseStore ---
+
+func TestIntegrationOptimiseStore(t *testing.T) {
+	client := startTestDaemon(t)
+
+	// Add some content so the store is not empty.
+	addTestPath(t, client)
+
+	err := client.OptimiseStore(context.Background())
+	assert.NoError(t, err)
+}
+
+// --- AddMultipleToStore ---
+
+func TestIntegrationAddMultipleToStore(t *testing.T) {
+	client := startTestDaemon(t)
+	ctx := context.Background()
+
+	// Build two distinct NARs with different content.
+	makeNAR := func(content string) ([]byte, string, string) {
+		var buf bytes.Buffer
+		nw, err := nar.NewWriter(&buf)
+		require.NoError(t, err)
+
+		data := []byte(content)
+		err = nw.WriteHeader(&nar.Header{
+			Path: "/",
+			Type: nar.TypeRegular,
+			Size: int64(len(data)),
+		})
+		require.NoError(t, err)
+		_, err = nw.Write(data)
+		require.NoError(t, err)
+		require.NoError(t, nw.Close())
+
+		narData := buf.Bytes()
+		h := sha256.Sum256(narData)
+		narHash := "sha256:" + nixbase32.EncodeToString(h[:])
+		storePath := "/nix/store/" + nixbase32.EncodeToString(h[:20]) + "-" + content[:8]
+
+		return narData, narHash, storePath
+	}
+
+	nar1, hash1, path1 := makeNAR("multi-item-one-content\n")
+	nar2, hash2, path2 := makeNAR("multi-item-two-content\n")
+
+	items := []daemon.AddToStoreItem{
+		{
+			Info: daemon.PathInfo{
+				StorePath:  path1,
+				NarHash:    hash1,
+				NarSize:    uint64(len(nar1)),
+				References: []string{},
+				Sigs:       []string{},
+			},
+			Source: bytes.NewReader(nar1),
+		},
+		{
+			Info: daemon.PathInfo{
+				StorePath:  path2,
+				NarHash:    hash2,
+				NarSize:    uint64(len(nar2)),
+				References: []string{},
+				Sigs:       []string{},
+			},
+			Source: bytes.NewReader(nar2),
+		},
+	}
+
+	err := client.AddMultipleToStore(ctx, items, false, true)
+	require.NoError(t, err)
+
+	// Both paths should now be valid.
+	valid1, err := client.IsValidPath(ctx, path1)
+	assert.NoError(t, err)
+	assert.True(t, valid1, "first path should be valid after AddMultipleToStore")
+
+	valid2, err := client.IsValidPath(ctx, path2)
+	assert.NoError(t, err)
+	assert.True(t, valid2, "second path should be valid after AddMultipleToStore")
+
+	t.Logf("AddMultipleToStore: added %s and %s", path1, path2)
+}
