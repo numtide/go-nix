@@ -10,35 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestWriteReadStrings(t *testing.T) {
-	var buf bytes.Buffer
-	err := daemon.WriteStrings(&buf, []string{"foo", "bar", "baz"})
-	assert.NoError(t, err)
-	result, err := daemon.ReadStrings(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, []string{"foo", "bar", "baz"}, result)
-}
-
-func TestWriteReadStringsEmpty(t *testing.T) {
-	var buf bytes.Buffer
-	err := daemon.WriteStrings(&buf, []string{})
-	assert.NoError(t, err)
-	result, err := daemon.ReadStrings(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Empty(t, result)
-}
-
-func TestWriteReadStringMap(t *testing.T) {
-	var buf bytes.Buffer
-
-	m := map[string]string{"a": "1", "b": "2"}
-	err := daemon.WriteStringMap(&buf, m)
-	assert.NoError(t, err)
-	result, err := daemon.ReadStringMap(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, m, result)
-}
-
 func TestReadPathInfo(t *testing.T) {
 	var buf bytes.Buffer
 

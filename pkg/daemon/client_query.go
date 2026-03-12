@@ -93,7 +93,7 @@ func (c *Client) QueryAllValidPaths(ctx context.Context) ([]string, error) {
 	err := c.doOp(ctx, OpQueryAllValidPaths,
 		nil,
 		func(r io.Reader) error {
-			ss, err := ReadStrings(r, MaxStringSize)
+			ss, err := wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
@@ -114,7 +114,7 @@ func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substitute
 
 	err := c.doOp(ctx, OpQueryValidPaths,
 		func(w io.Writer) error {
-			if err := WriteStrings(w, paths); err != nil {
+			if err := wire.WriteStrings(w, paths); err != nil {
 				return err
 			}
 
@@ -128,7 +128,7 @@ func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substitute
 			return nil
 		},
 		func(r io.Reader) error {
-			ss, err := ReadStrings(r, MaxStringSize)
+			ss, err := wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
@@ -149,10 +149,10 @@ func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([
 
 	err := c.doOp(ctx, OpQuerySubstitutablePaths,
 		func(w io.Writer) error {
-			return WriteStrings(w, paths)
+			return wire.WriteStrings(w, paths)
 		},
 		func(r io.Reader) error {
-			ss, err := ReadStrings(r, MaxStringSize)
+			ss, err := wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
@@ -213,7 +213,7 @@ func (c *Client) QuerySubstitutablePathInfos(
 					return err
 				}
 
-				references, err := ReadStrings(r, MaxStringSize)
+				references, err := wire.ReadStrings(r, MaxStringSize)
 				if err != nil {
 					return err
 				}
@@ -253,7 +253,7 @@ func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string,
 			return wire.WriteString(w, path)
 		},
 		func(r io.Reader) error {
-			ss, err := ReadStrings(r, MaxStringSize)
+			ss, err := wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
@@ -277,7 +277,7 @@ func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, err
 			return wire.WriteString(w, path)
 		},
 		func(r io.Reader) error {
-			ss, err := ReadStrings(r, MaxStringSize)
+			ss, err := wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
@@ -305,7 +305,7 @@ func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (
 			return wire.WriteString(w, drvPath)
 		},
 		func(r io.Reader) error {
-			m, err := ReadStringMap(r, MaxStringSize)
+			m, err := wire.ReadStringMap(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
@@ -331,22 +331,22 @@ func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo
 
 	err := c.doOp(ctx, OpQueryMissing,
 		func(w io.Writer) error {
-			return WriteStrings(w, paths)
+			return wire.WriteStrings(w, paths)
 		},
 		func(r io.Reader) error {
 			var err error
 
-			info.WillBuild, err = ReadStrings(r, MaxStringSize)
+			info.WillBuild, err = wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
 
-			info.WillSubstitute, err = ReadStrings(r, MaxStringSize)
+			info.WillSubstitute, err = wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
 
-			info.Unknown, err = ReadStrings(r, MaxStringSize)
+			info.Unknown, err = wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
@@ -379,7 +379,7 @@ func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]Reali
 			return wire.WriteString(w, outputID)
 		},
 		func(r io.Reader) error {
-			ss, err := ReadStrings(r, MaxStringSize)
+			ss, err := wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}
@@ -407,7 +407,7 @@ func (c *Client) FindRoots(ctx context.Context) (map[string]string, error) {
 	err := c.doOp(ctx, OpFindRoots,
 		nil,
 		func(r io.Reader) error {
-			m, err := ReadStringMap(r, MaxStringSize)
+			m, err := wire.ReadStringMap(r, MaxStringSize)
 			if err != nil {
 				return err
 			}

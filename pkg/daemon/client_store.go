@@ -60,7 +60,7 @@ func (c *Client) AddToStore(
 	}
 
 	// Write references.
-	if err := WriteStrings(ow, references); err != nil {
+	if err := wire.WriteStrings(ow, references); err != nil {
 		ow.Abort()
 
 		return nil, &ProtocolError{Op: "AddToStore write references", Err: err}
@@ -176,7 +176,7 @@ func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) 
 				return err
 			}
 
-			return WriteStrings(w, sigs)
+			return wire.WriteStrings(w, sigs)
 		},
 		func(r io.Reader) error {
 			return readAck(r)
@@ -344,7 +344,7 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 				return err
 			}
 
-			if err := WriteStrings(w, options.PathsToDelete); err != nil {
+			if err := wire.WriteStrings(w, options.PathsToDelete); err != nil {
 				return err
 			}
 
@@ -366,7 +366,7 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 			return nil
 		},
 		func(r io.Reader) error {
-			paths, err := ReadStrings(r, MaxStringSize)
+			paths, err := wire.ReadStrings(r, MaxStringSize)
 			if err != nil {
 				return err
 			}

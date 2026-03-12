@@ -12,7 +12,7 @@ import (
 func (c *Client) BuildPaths(ctx context.Context, paths []string, mode BuildMode) error {
 	return c.doOp(ctx, OpBuildPaths,
 		func(w io.Writer) error {
-			if err := WriteStrings(w, paths); err != nil {
+			if err := wire.WriteStrings(w, paths); err != nil {
 				return err
 			}
 
@@ -35,7 +35,7 @@ func (c *Client) BuildPathsWithResults(ctx context.Context, paths []string, mode
 
 	err := c.doOp(ctx, OpBuildPathsWithResults,
 		func(w io.Writer) error {
-			if err := WriteStrings(w, paths); err != nil {
+			if err := wire.WriteStrings(w, paths); err != nil {
 				return err
 			}
 

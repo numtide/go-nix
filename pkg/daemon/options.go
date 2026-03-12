@@ -113,7 +113,7 @@ func WriteClientSettings(w io.Writer, s *ClientSettings, version uint64) error {
 			overrides = map[string]string{}
 		}
 
-		if err := WriteStringMap(w, overrides); err != nil {
+		if err := wire.WriteStringMap(w, overrides); err != nil {
 			return err
 		}
 	}

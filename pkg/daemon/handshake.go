@@ -78,7 +78,7 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	var features []string
 	if negotiated >= ProtoVersionFeatureExchange {
 		// We currently support no protocol features; send empty list.
-		if err := WriteStrings(w, nil); err != nil {
+		if err := wire.WriteStrings(w, nil); err != nil {
 			return nil, &ProtocolError{Op: "handshake write features", Err: err}
 		}
 
@@ -86,7 +86,7 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 			return nil, &ProtocolError{Op: "handshake flush features", Err: err}
 		}
 
-		daemonFeatures, err := ReadStrings(r, MaxStringSize)
+		daemonFeatures, err := wire.ReadStrings(r, MaxStringSize)
 		if err != nil {
 			return nil, &ProtocolError{Op: "handshake read daemon features", Err: err}
 		}

@@ -27,94 +27,6 @@ func readAck(r io.Reader) error {
 	return nil
 }
 
-// WriteStrings writes a list of strings as count + entries.
-func WriteStrings(w io.Writer, ss []string) error {
-	if err := wire.WriteUint64(w, uint64(len(ss))); err != nil {
-		return err
-	}
-
-	for _, s := range ss {
-		if err := wire.WriteString(w, s); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// ReadStrings reads a list of strings.
-func ReadStrings(r io.Reader, maxBytes uint64) ([]string, error) {
-	count, err := wire.ReadUint64(r)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read string list count", Err: err}
-	}
-
-	ss := make([]string, count)
-
-	for i := uint64(0); i < count; i++ {
-		s, err := wire.ReadString(r, maxBytes)
-		if err != nil {
-			return nil, &ProtocolError{Op: "read string list entry", Err: err}
-		}
-
-		ss[i] = s
-	}
-
-	return ss, nil
-}
-
-// WriteStringMap writes a map as count + sorted key/value pairs.
-func WriteStringMap(w io.Writer, m map[string]string) error {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
-
-	if err := wire.WriteUint64(w, uint64(len(keys))); err != nil {
-		return err
-	}
-
-	for _, k := range keys {
-		if err := wire.WriteString(w, k); err != nil {
-			return err
-		}
-
-		if err := wire.WriteString(w, m[k]); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// ReadStringMap reads a map of string key/value pairs.
-func ReadStringMap(r io.Reader, maxBytes uint64) (map[string]string, error) {
-	count, err := wire.ReadUint64(r)
-	if err != nil {
-		return nil, &ProtocolError{Op: "read string map count", Err: err}
-	}
-
-	m := make(map[string]string, count)
-
-	for i := uint64(0); i < count; i++ {
-		key, err := wire.ReadString(r, maxBytes)
-		if err != nil {
-			return nil, &ProtocolError{Op: "read string map key", Err: err}
-		}
-
-		val, err := wire.ReadString(r, maxBytes)
-		if err != nil {
-			return nil, &ProtocolError{Op: "read string map value", Err: err}
-		}
-
-		m[key] = val
-	}
-
-	return m, nil
-}
-
 // ReadPathInfo reads a full PathInfo from the wire (UnkeyedValidPathInfo format).
 // storePath is provided separately (already known by the caller).
 // The version parameter is the negotiated protocol version.
@@ -129,7 +41,7 @@ func ReadPathInfo(r io.Reader, storePath string, version uint64) (*PathInfo, err
 		return nil, &ProtocolError{Op: "read path info narHash", Err: err}
 	}
 
-	references, err := ReadStrings(r, MaxStringSize)
+	references, err := wire.ReadStrings(r, MaxStringSize)
 	if err != nil {
 		return nil, &ProtocolError{Op: "read path info references", Err: err}
 	}
@@ -160,7 +72,7 @@ func ReadPathInfo(r io.Reader, storePath string, version uint64) (*PathInfo, err
 			return nil, &ProtocolError{Op: "read path info ultimate", Err: err}
 		}
 
-		info.Sigs, err = ReadStrings(r, MaxStringSize)
+		info.Sigs, err = wire.ReadStrings(r, MaxStringSize)
 		if err != nil {
 			return nil, &ProtocolError{Op: "read path info sigs", Err: err}
 		}
@@ -193,7 +105,7 @@ func WritePathInfo(w io.Writer, info *PathInfo, version uint64) error {
 		return err
 	}
 
-	if err := WriteStrings(w, info.References); err != nil {
+	if err := wire.WriteStrings(w, info.References); err != nil {
 		return err
 	}
 
@@ -211,7 +123,7 @@ func WritePathInfo(w io.Writer, info *PathInfo, version uint64) error {
 			return err
 		}
 
-		if err := WriteStrings(w, info.Sigs); err != nil {
+		if err := wire.WriteStrings(w, info.Sigs); err != nil {
 			return err
 		}
 
@@ -263,7 +175,7 @@ func WriteBasicDerivation(w io.Writer, drv *BasicDerivation) error {
 	}
 
 	// Inputs: count + strings.
-	if err := WriteStrings(w, drv.Inputs); err != nil {
+	if err := wire.WriteStrings(w, drv.Inputs); err != nil {
 		return err
 	}
 
@@ -278,12 +190,12 @@ func WriteBasicDerivation(w io.Writer, drv *BasicDerivation) error {
 	}
 
 	// Args: count + strings.
-	if err := WriteStrings(w, drv.Args); err != nil {
+	if err := wire.WriteStrings(w, drv.Args); err != nil {
 		return err
 	}
 
 	// Env: count + sorted key/value pairs.
-	return WriteStringMap(w, drv.Env)
+	return wire.WriteStringMap(w, drv.Env)
 }
 
 // readOptionalMicroseconds reads an optional<microseconds> from the wire.
