@@ -19,6 +19,7 @@ type OpWriter struct {
 	mu      *sync.Mutex
 	logSink LogSink
 	op      Operation
+	version uint64
 	done    bool
 	cancel  func() bool // context.AfterFunc stop function
 }
@@ -68,7 +69,7 @@ func (ow *OpWriter) CloseRequest() (*OpResponse, error) {
 		return nil, &ProtocolError{Op: ow.op.String() + " flush", Err: err}
 	}
 
-	if err := ProcessStderrWithSink(ow.r, ow.logSink); err != nil {
+	if err := ProcessStderrWithSink(ow.r, ow.logSink, ow.version); err != nil {
 		ow.release()
 
 		return nil, err

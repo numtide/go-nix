@@ -33,7 +33,7 @@ func TestProcessStderrLast(t *testing.T) {
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 	assert.Len(t, logs, 0)
 }
@@ -46,7 +46,7 @@ func TestProcessStderrNext(t *testing.T) {
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 	assert.Len(t, logs, 1)
 
@@ -67,7 +67,7 @@ func TestProcessStderrError(t *testing.T) {
 	writeTestUint64(&buf, 0)                // nrTraces
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 
 	assert.Error(t, err)
 
@@ -97,7 +97,7 @@ func TestProcessStderrStartStopActivity(t *testing.T) {
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 	assert.Len(t, logs, 2)
 
@@ -124,7 +124,7 @@ func TestProcessStderrResult(t *testing.T) {
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 	assert.Len(t, logs, 1)
 
@@ -151,7 +151,7 @@ func TestProcessStderrReadWrite(t *testing.T) {
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 	assert.Len(t, logs, 0) // Read/Write messages are silently consumed
 }
@@ -162,7 +162,7 @@ func TestProcessStderrUnknownType(t *testing.T) {
 	writeTestUint64(&buf, 0xDEADBEEF)
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 
 	assert.Error(t, err)
 
@@ -189,7 +189,7 @@ func TestProcessStderrErrorWithTraces(t *testing.T) {
 	writeTestString(&buf, "in file default.nix") // traceMsg
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 
 	assert.Error(t, err)
 
@@ -202,6 +202,27 @@ func TestProcessStderrErrorWithTraces(t *testing.T) {
 	assert.Equal(t, "while evaluating", de.Traces[0].Message)
 	assert.Equal(t, uint64(1), de.Traces[0].HavePos)
 	assert.Equal(t, "in file default.nix", de.Traces[1].Message)
+}
+
+func TestProcessStderrLegacyError(t *testing.T) {
+	var buf bytes.Buffer
+
+	writeTestUint64(&buf, uint64(daemon.LogError))
+	writeTestString(&buf, "path '/nix/store/abc' is not valid") // message
+	writeTestUint64(&buf, 1)                                    // exitStatus
+
+	logs := make(chan daemon.LogMessage, 10)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtoVersion(1, 25))
+
+	assert.Error(t, err)
+
+	var de *daemon.Error
+
+	assert.ErrorAs(t, err, &de)
+	assert.Equal(t, "path '/nix/store/abc' is not valid", de.Message)
+	assert.Equal(t, uint64(1), de.ExitStatus)
+	assert.Equal(t, "Error", de.Type)
+	assert.Empty(t, de.Traces)
 }
 
 func TestProcessStderrActivityWithFields(t *testing.T) {
@@ -224,7 +245,7 @@ func TestProcessStderrActivityWithFields(t *testing.T) {
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
 	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs)
+	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 	assert.Len(t, logs, 1)
 

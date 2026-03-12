@@ -39,6 +39,7 @@ const (
 	ProtoVersionCPUAffinity              = 0x010e // 1.14: cpu-affinity flag in handshake
 	ProtoVersionPathInfoMeta             = 0x0110 // 1.16: ultimate/sigs/ca in PathInfo
 	ProtoVersionAddToStore               = 0x0119 // 1.25: modern AddToStore format (framed)
+	ProtoVersionStructuredErrors         = 0x011a // 1.26: structured Error with type/level/traces
 	ProtoVersionSubstituteOk             = 0x011b // 1.27: substituteOk in QueryValidPaths
 	ProtoVersionRegisterDrvOutput        = 0x011b // 1.27: RegisterDrvOutput, QueryRealisation
 	ProtoVersionBuiltOutputs             = 0x011c // 1.28: builtOutputs in BuildResult

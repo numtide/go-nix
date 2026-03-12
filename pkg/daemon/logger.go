@@ -17,8 +17,11 @@ import (
 // LogError message is received, the parsed Error is returned. If the
 // channel is nil, non-error messages are silently discarded. If the channel
 // is full, messages are dropped to avoid blocking protocol progress.
-func ProcessStderr(r io.Reader, logs chan<- LogMessage) error {
-	return ProcessStderrWithSink(r, NewLogChannelSink(logs, nil))
+//
+// The version parameter is the negotiated protocol version, used to select
+// the correct error format (structured errors require >= 1.26).
+func ProcessStderr(r io.Reader, logs chan<- LogMessage, version uint64) error {
+	return ProcessStderrWithSink(r, NewLogChannelSink(logs, nil), version)
 }
 
 // LogSink receives log messages from the daemon.
@@ -56,7 +59,7 @@ func (s LogChannelSink) Send(msg LogMessage) {
 
 // ProcessStderrWithSink is like ProcessStderr but sends log messages to the
 // provided sink.
-func ProcessStderrWithSink(r io.Reader, sink LogSink) error {
+func ProcessStderrWithSink(r io.Reader, sink LogSink, version uint64) error {
 	if sink == nil {
 		sink = NewLogChannelSink(nil, nil)
 	}
@@ -78,7 +81,7 @@ func ProcessStderrWithSink(r io.Reader, sink LogSink) error {
 			return nil
 
 		case LogError:
-			return readError(r)
+			return readError(r, version)
 
 		case LogNext:
 			text, err := wire.ReadString(r, MaxStringSize)
@@ -127,8 +130,29 @@ func ProcessStderrWithSink(r io.Reader, sink LogSink) error {
 	}
 }
 
-// readError parses an Error from the daemon's stderr channel.
-func readError(r io.Reader) error {
+// readError parses an Error from the daemon's stderr channel. The format
+// depends on the negotiated protocol version: >= 1.26 uses structured errors
+// with type/level/name/traces; older versions send a plain message string
+// and an exit status.
+func readError(r io.Reader, version uint64) error {
+	if version < ProtoVersionStructuredErrors {
+		message, err := wire.ReadString(r, MaxStringSize)
+		if err != nil {
+			return &ProtocolError{Op: "read error message", Err: err}
+		}
+
+		exitStatus, err := wire.ReadUint64(r)
+		if err != nil {
+			return &ProtocolError{Op: "read error exitStatus", Err: err}
+		}
+
+		return &Error{
+			Type:       "Error",
+			Message:    message,
+			ExitStatus: exitStatus,
+		}
+	}
+
 	errType, err := wire.ReadString(r, MaxStringSize)
 	if err != nil {
 		return &ProtocolError{Op: "read error type", Err: err}

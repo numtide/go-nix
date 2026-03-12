@@ -197,7 +197,7 @@ func (c *Client) Do(
 		return nil, &ProtocolError{Op: op.String() + " flush", Err: err}
 	}
 
-	if err := ProcessStderrWithSink(c.r, c.logSink); err != nil {
+	if err := ProcessStderrWithSink(c.r, c.logSink, c.info.Version); err != nil {
 		c.release(cancel)
 
 		return nil, err
@@ -240,6 +240,7 @@ func (c *Client) DoStreaming(
 		mu:      &c.mu,
 		logSink: c.logSink,
 		op:      op,
+		version: c.info.Version,
 		cancel:  cancel,
 	}, nil
 }
@@ -290,7 +291,7 @@ func (c *Client) doOp(
 	}
 
 	// Drain stderr log messages until LogLast.
-	if err := ProcessStderrWithSink(c.r, c.logSink); err != nil {
+	if err := ProcessStderrWithSink(c.r, c.logSink, c.info.Version); err != nil {
 		return err
 	}
 

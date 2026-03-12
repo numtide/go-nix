@@ -51,11 +51,12 @@ func (e *UnsupportedOperationError) Unwrap() error { return ErrUnsupportedOperat
 
 // Error is returned when the Nix daemon reports an error.
 type Error struct {
-	Type    string
-	Level   uint64
-	Name    string
-	Message string
-	Traces  []ErrorTrace
+	Type       string
+	Level      uint64
+	Name       string
+	Message    string
+	Traces     []ErrorTrace
+	ExitStatus uint64 // pre-1.26 protocol only
 }
 
 // ErrorTrace represents a single trace entry in a daemon error.

@@ -458,7 +458,7 @@ func (c *Client) NarFromPath(
 	}
 
 	// Drain stderr log messages until LogLast.
-	if err := ProcessStderrWithSink(c.r, c.logSink); err != nil {
+	if err := ProcessStderrWithSink(c.r, c.logSink, c.info.Version); err != nil {
 		c.release(cancel)
 
 		return nil, err
