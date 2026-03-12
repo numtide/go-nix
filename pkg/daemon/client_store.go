@@ -137,7 +137,7 @@ func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
 }
 
 // AddPermRoot adds a permanent GC root linking gcRoot to storePath. Returns
-// the resulting root path. Requires protocol >= 1.29.
+// the resulting root path. Requires protocol >= 1.36.
 func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot string) (string, error) {
 	if err := c.requireVersion(OpAddPermRoot, ProtoVersionAddPermRoot); err != nil {
 		return "", err

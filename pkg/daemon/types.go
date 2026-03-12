@@ -43,7 +43,7 @@ const (
 	ProtoVersionRegisterDrvOutput        = 0x011b // 1.27: RegisterDrvOutput, QueryRealisation
 	ProtoVersionBuiltOutputs             = 0x011c // 1.28: builtOutputs in BuildResult
 	ProtoVersionBuildTimes               = 0x011d // 1.29: timesBuilt etc. in BuildResult
-	ProtoVersionAddPermRoot              = 0x011d // 1.29: AddPermRoot op
+	ProtoVersionAddPermRoot              = 0x0124 // 1.36: AddPermRoot op
 	ProtoVersionQueryDerivationOutputMap = 0x011e // 1.30: QueryDerivationOutputMap op
 	ProtoVersionQueryMissing             = 0x011e // 1.30: QueryMissing op
 	ProtoVersionRealisationJSON          = 0x011f // 1.31: JSON realisations
