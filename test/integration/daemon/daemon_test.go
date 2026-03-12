@@ -829,10 +829,10 @@ func TestIntegrationRegisterDrvOutput(t *testing.T) {
 	h := sha256.Sum256([]byte("test-drv-output"))
 	outputID := "sha256:" + nixbase32.EncodeToString(h[:]) + "!out"
 
-	// Build a JSON realisation string matching what RegisterDrvOutput expects.
-	realisation := `{"id":"` + outputID + `","outPath":"` + path + `","signatures":[],"dependentRealisations":{}}`
-
-	err := client.RegisterDrvOutput(context.Background(), realisation)
+	err := client.RegisterDrvOutput(context.Background(), &daemon.Realisation{
+		ID:      outputID,
+		OutPath: path,
+	})
 	if err != nil {
 		// Some daemon versions may reject this depending on store configuration.
 		t.Logf("RegisterDrvOutput returned error: %v (may be expected)", err)

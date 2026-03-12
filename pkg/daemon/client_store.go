@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 
@@ -185,14 +186,23 @@ func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) 
 
 // RegisterDrvOutput registers a content-addressed realisation for a
 // derivation output. Requires protocol >= 1.31.
-func (c *Client) RegisterDrvOutput(ctx context.Context, realisation string) error {
+func (c *Client) RegisterDrvOutput(ctx context.Context, realisation *Realisation) error {
+	if realisation == nil {
+		return ErrNilRealisation
+	}
+
 	if err := c.requireVersion(OpRegisterDrvOutput, ProtoVersionRealisationJSON); err != nil {
 		return err
 	}
 
 	return c.doOp(ctx, OpRegisterDrvOutput,
 		func(w io.Writer) error {
-			return wire.WriteString(w, realisation)
+			data, err := json.Marshal(realisation)
+			if err != nil {
+				return &ProtocolError{Op: "RegisterDrvOutput marshal JSON", Err: err}
+			}
+
+			return wire.WriteString(w, string(data))
 		},
 		nil,
 	)

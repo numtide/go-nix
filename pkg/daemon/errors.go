@@ -27,6 +27,9 @@ var (
 	// ErrNilConn is returned when a nil connection is provided.
 	ErrNilConn = errors.New("nil connection")
 
+	// ErrNilRealisation is returned when a nil realisation is provided.
+	ErrNilRealisation = errors.New("nil realisation")
+
 	// ErrUnsupportedOperation is returned when an operation is not supported by the negotiated protocol version.
 	ErrUnsupportedOperation = errors.New("unsupported operation for negotiated protocol version")
 )

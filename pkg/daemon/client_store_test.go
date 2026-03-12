@@ -276,7 +276,10 @@ func TestClientRegisterDrvOutput(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	err = client.RegisterDrvOutput(context.Background(), "sha256:abc!out")
+	err = client.RegisterDrvOutput(context.Background(), &daemon.Realisation{
+		ID:      "sha256:abc!out",
+		OutPath: "/nix/store/abc-out",
+	})
 	assert.NoError(t, err)
 }
 
@@ -706,7 +709,10 @@ func TestRegisterDrvOutputUnsupportedVersion(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	err = client.RegisterDrvOutput(context.Background(), "sha256:abc!out")
+	err = client.RegisterDrvOutput(context.Background(), &daemon.Realisation{
+		ID:      "sha256:abc!out",
+		OutPath: "/nix/store/abc-out",
+	})
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
 }
