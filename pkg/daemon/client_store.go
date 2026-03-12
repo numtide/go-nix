@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
@@ -293,7 +294,7 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 	}
 
 	// Write derivation path as BaseStorePath (basename without /nix/store/ prefix).
-	basePath := strings.TrimPrefix(drvPath, DefaultStoreDir)
+	basePath := strings.TrimPrefix(drvPath, storepath.StoreDir+"/")
 	if err := wire.WriteString(ow, basePath); err != nil {
 		ow.Abort()
 

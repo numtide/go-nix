@@ -6,9 +6,6 @@ import (
 	"time"
 )
 
-// DefaultStoreDir is the default Nix store directory prefix.
-const DefaultStoreDir = "/nix/store/"
-
 // Protocol handshake constants.
 const (
 	// ClientMagic is the magic number sent by the client to initiate the handshake.
