@@ -13,6 +13,85 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestClientAddToStore(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	dumpData := []byte("fake-nar-content-for-testing")
+
+	expected := &daemon.PathInfo{
+		StorePath:        "/nix/store/abc123-hello-2.12.1",
+		Deriver:          "",
+		NarHash:          "sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+		References:       []string{},
+		RegistrationTime: 1700000000,
+		NarSize:          uint64(len(dumpData)),
+		Ultimate:         true,
+		Sigs:             []string{},
+		CA:               "fixed:r:sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+	}
+
+	go func() {
+		mock.handshake()
+		mock.respondAddToStore(expected)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	info, err := client.AddToStore(
+		context.Background(),
+		"hello-2.12.1",
+		"fixed:r:sha256",
+		[]string{},
+		false,
+		bytes.NewReader(dumpData),
+	)
+	assert.NoError(t, err)
+	assert.NotNil(t, info)
+	assert.Equal(t, expected.StorePath, info.StorePath)
+	assert.Equal(t, expected.Deriver, info.Deriver)
+	assert.Equal(t, expected.NarHash, info.NarHash)
+	assert.Equal(t, expected.References, info.References)
+	assert.Equal(t, expected.RegistrationTime, info.RegistrationTime)
+	assert.Equal(t, expected.NarSize, info.NarSize)
+	assert.Equal(t, expected.Ultimate, info.Ultimate)
+	assert.Equal(t, expected.Sigs, info.Sigs)
+	assert.Equal(t, expected.CA, info.CA)
+}
+
+func TestAddToStoreUnsupportedVersion(t *testing.T) {
+	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.AddToStore(
+		context.Background(),
+		"hello",
+		"fixed:r:sha256",
+		nil,
+		false,
+		bytes.NewReader([]byte("data")),
+	)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+}
+
+func TestAddToStoreNilSource(t *testing.T) {
+	client := &daemon.Client{}
+
+	_, err := client.AddToStore(context.Background(), "hello", "fixed:r:sha256", nil, false, nil)
+	assert.ErrorIs(t, err, daemon.ErrNilReader)
+}
+
 func TestCollectGarbageNilOptions(t *testing.T) {
 	client := &daemon.Client{}
 	_, err := client.CollectGarbage(context.Background(), nil)

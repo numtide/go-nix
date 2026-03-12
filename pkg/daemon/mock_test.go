@@ -561,6 +561,74 @@ func (m *mockDaemon) respondQueryRealisation(realisations []string) {
 	}
 }
 
+
+func (m *mockDaemon) respondAddToStore(info *daemon.PathInfo) {
+	var buf [8]byte
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // read op code
+	op := binary.LittleEndian.Uint64(buf[:])
+	assert.Equal(m.t, uint64(daemon.OpAddToStore), op)
+
+	// Read request fields: name, caMethodWithAlgo, references, repair.
+	_, _ = wire.ReadString(m.conn, 64*1024) // name
+	_, _ = wire.ReadString(m.conn, 64*1024) // caMethodWithAlgo
+
+	// Read references (count + strings).
+	_, _ = io.ReadFull(m.conn, buf[:]) // count
+	count := binary.LittleEndian.Uint64(buf[:])
+
+	for i := uint64(0); i < count; i++ {
+		_, _ = wire.ReadString(m.conn, 64*1024)
+	}
+
+	_, _ = io.ReadFull(m.conn, buf[:]) // repair
+
+	// Read framed dump data (no padding in framed protocol).
+	fr := daemon.NewFramedReader(m.conn)
+	_, _ = io.ReadAll(fr)
+
+	// Send LogLast.
+	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+	_, _ = m.conn.Write(buf[:])
+
+	// Send response: ValidPathInfo = storePath + UnkeyedValidPathInfo.
+	writeWireStringTo(m.conn, info.StorePath)
+	writeWireStringTo(m.conn, info.Deriver)
+	writeWireStringTo(m.conn, info.NarHash)
+
+	// References.
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(info.References)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, ref := range info.References {
+		writeWireStringTo(m.conn, ref)
+	}
+
+	binary.LittleEndian.PutUint64(buf[:], info.RegistrationTime)
+	_, _ = m.conn.Write(buf[:])
+
+	binary.LittleEndian.PutUint64(buf[:], info.NarSize)
+	_, _ = m.conn.Write(buf[:])
+
+	if info.Ultimate {
+		binary.LittleEndian.PutUint64(buf[:], 1)
+	} else {
+		binary.LittleEndian.PutUint64(buf[:], 0)
+	}
+
+	_, _ = m.conn.Write(buf[:])
+
+	// Sigs.
+	binary.LittleEndian.PutUint64(buf[:], uint64(len(info.Sigs)))
+	_, _ = m.conn.Write(buf[:])
+
+	for _, sig := range info.Sigs {
+		writeWireStringTo(m.conn, sig)
+	}
+
+	writeWireStringTo(m.conn, info.CA)
+}
+
 // respondWithError reads an op code and drains the request data using the
 // provided drain function, then sends a LogError response with the given
 // daemon.Error fields.

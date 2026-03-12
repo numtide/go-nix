@@ -8,6 +8,106 @@ import (
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
+// AddToStore imports content into the store using content-addressing. The daemon
+// computes the store path from the provided data, content-address method, and
+// hash algorithm. This differs from AddToStoreNar where the caller already knows
+// the full PathInfo.
+//
+// The name parameter is the derivation name (e.g. "hello-2.12.1").
+// The caMethodWithAlgo parameter specifies the content-address method and hash
+// algorithm as a combined string:
+//   - "fixed:sha256"     — flat file, SHA256
+//   - "fixed:r:sha256"   — recursive (NAR), SHA256
+//   - "text:sha256"      — text hashing, SHA256
+//   - "fixed:git:sha256" — git hashing, SHA256
+//
+// The source provides the data to import (raw bytes for flat, NAR for recursive).
+// Returns the PathInfo computed by the daemon. Requires protocol >= 1.25.
+func (c *Client) AddToStore(
+	ctx context.Context,
+	name string,
+	caMethodWithAlgo string,
+	references []string,
+	repair bool,
+	source io.Reader,
+) (*PathInfo, error) {
+	if source == nil {
+		return nil, ErrNilReader
+	}
+
+	if err := c.requireVersion(OpAddToStore, ProtoVersionAddToStore); err != nil {
+		return nil, err
+	}
+
+	ow, err := c.DoStreaming(ctx, OpAddToStore)
+	if err != nil {
+		return nil, err
+	}
+
+	// Write name.
+	if err := wire.WriteString(ow, name); err != nil {
+		ow.Abort()
+
+		return nil, &ProtocolError{Op: "AddToStore write name", Err: err}
+	}
+
+	// Write content-address method with hash algorithm.
+	if err := wire.WriteString(ow, caMethodWithAlgo); err != nil {
+		ow.Abort()
+
+		return nil, &ProtocolError{Op: "AddToStore write caMethodWithAlgo", Err: err}
+	}
+
+	// Write references.
+	if err := WriteStrings(ow, references); err != nil {
+		ow.Abort()
+
+		return nil, &ProtocolError{Op: "AddToStore write references", Err: err}
+	}
+
+	// Write repair flag.
+	if err := wire.WriteBool(ow, repair); err != nil {
+		ow.Abort()
+
+		return nil, &ProtocolError{Op: "AddToStore write repair", Err: err}
+	}
+
+	// Flush before streaming.
+	if err := ow.Flush(); err != nil {
+		ow.Abort()
+
+		return nil, &ProtocolError{Op: "AddToStore flush", Err: err}
+	}
+
+	// Stream dump data as framed.
+	fw := ow.NewFramedWriter()
+	if _, err := io.Copy(fw, source); err != nil {
+		ow.Abort()
+
+		return nil, &ProtocolError{Op: "AddToStore stream data", Err: err}
+	}
+
+	if err := fw.Close(); err != nil {
+		ow.Abort()
+
+		return nil, &ProtocolError{Op: "AddToStore close framed writer", Err: err}
+	}
+
+	resp, err := ow.CloseRequest()
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
+
+	// Read response: ValidPathInfo = storePath + UnkeyedValidPathInfo.
+	storePath, err := wire.ReadString(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "AddToStore read storePath", Err: err}
+	}
+
+	return ReadPathInfo(resp, storePath, c.info.Version)
+}
+
 // AddTempRoot adds a temporary GC root for the given store path. Temporary
 // roots prevent the garbage collector from deleting the path for the duration
 // of the daemon session.
