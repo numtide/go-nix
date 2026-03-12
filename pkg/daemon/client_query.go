@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -373,12 +374,12 @@ func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo
 
 // QueryRealisation looks up content-addressed realisations for the given
 // output identifier. Requires protocol >= 1.31.
-func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]string, error) {
+func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]Realisation, error) {
 	if err := c.requireVersion(OpQueryRealisation, ProtoVersionRealisationJSON); err != nil {
 		return nil, err
 	}
 
-	var realisations []string
+	var realisations []Realisation
 
 	err := c.doOp(ctx, OpQueryRealisation,
 		func(w io.Writer) error {
@@ -390,7 +391,13 @@ func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]strin
 				return err
 			}
 
-			realisations = ss
+			realisations = make([]Realisation, len(ss))
+
+			for i, s := range ss {
+				if err := json.Unmarshal([]byte(s), &realisations[i]); err != nil {
+					return &ProtocolError{Op: "QueryRealisation parse JSON", Err: err}
+				}
+			}
 
 			return nil
 		},

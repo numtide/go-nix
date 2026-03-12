@@ -10,6 +10,7 @@ import (
 	"github.com/nix-community/go-nix/pkg/daemon"
 	"github.com/nix-community/go-nix/pkg/wire"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClientIsValidPath(t *testing.T) {
@@ -463,7 +464,7 @@ func TestClientQueryRealisation(t *testing.T) {
 	defer mock.conn.Close()
 
 	realisations := []string{
-		`{"id":"sha256:abc!out","outPath":"/nix/store/abc-out"}`,
+		`{"id":"sha256:abc!out","outPath":"/nix/store/abc-out","signatures":["mykey:c2ln"],"dependentRealisations":{}}`,
 	}
 
 	go func() {
@@ -477,7 +478,10 @@ func TestClientQueryRealisation(t *testing.T) {
 
 	result, err := client.QueryRealisation(context.Background(), "sha256:abc!out")
 	assert.NoError(t, err)
-	assert.Equal(t, realisations, result)
+	require.Len(t, result, 1)
+	assert.Equal(t, "sha256:abc!out", result[0].ID)
+	assert.Equal(t, "/nix/store/abc-out", result[0].OutPath)
+	assert.Equal(t, []string{"mykey:c2ln"}, result[0].Signatures)
 }
 
 // Version-specific query tests
