@@ -8,6 +8,7 @@ import (
 	"net"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
 	"github.com/nix-community/go-nix/pkg/wire"
@@ -289,4 +290,51 @@ func TestClientDaemonErrorWithTraces(t *testing.T) {
 	assert.Equal(t, "while calling the 'derivationStrict' builtin", daemonErr.Traces[1].Message)
 	assert.Equal(t, uint64(0), daemonErr.Traces[0].HavePos)
 	assert.Equal(t, uint64(0), daemonErr.Traces[1].HavePos)
+}
+
+// TestClientContextCancellation verifies that cancelling a context unblocks
+// a pending operation and that the client remains usable for subsequent ops.
+func TestClientContextCancellation(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		var buf [8]byte
+
+		mock.handshake()
+
+		// First op: read the op code and path, then stall — never send
+		// a response. The client's context cancellation should unblock it.
+		_, _ = io.ReadFull(mock.conn, buf[:]) // op code
+		_, _ = wire.ReadString(mock.conn, 64*1024)
+
+		// Wait for the client to observe the cancellation and release
+		// the mutex, then drain any leftover bytes from the cancelled op.
+		time.Sleep(50 * time.Millisecond)
+
+		// Second op: respond normally to prove the client recovered.
+		mock.respondIsValidPath(true)
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	// Start an operation with a context we'll cancel.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel the context after a short delay.
+	time.AfterFunc(20*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err = client.IsValidPath(ctx, "/nix/store/abc-test")
+	elapsed := time.Since(start)
+
+	assert.Error(t, err, "cancelled operation should return an error")
+	assert.Less(t, elapsed, 2*time.Second, "cancelled operation should unblock promptly")
+
+	// The client should still be usable for a subsequent operation.
+	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	assert.NoError(t, err, "subsequent operation should succeed after cancellation")
+	assert.True(t, valid)
 }
