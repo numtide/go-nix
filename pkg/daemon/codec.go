@@ -207,7 +207,10 @@ func readOptionalMicroseconds(r io.Reader) (*time.Duration, error) {
 		return nil, err
 	}
 
-	if tag == optionalSome {
+	switch tag {
+	case 0: // none
+		return nil, nil
+	case optionalSome:
 		us, err := wire.ReadUint64(r)
 		if err != nil {
 			return nil, err
@@ -216,9 +219,12 @@ func readOptionalMicroseconds(r io.Reader) (*time.Duration, error) {
 		d := time.Duration(us) * time.Microsecond
 
 		return &d, nil
+	default:
+		return nil, &ProtocolError{
+			Op:  "read optional microseconds",
+			Err: fmt.Errorf("unexpected optional tag %d", tag),
+		}
 	}
-
-	return nil, nil
 }
 
 // ReadBuildResult reads a BuildResult from the wire.
