@@ -12,6 +12,9 @@ import (
 // framed streaming, then call CloseRequest to transition to the response
 // phase. If an error occurs before CloseRequest, call Abort to release
 // the connection mutex.
+//
+// OpWriter is not safe for concurrent use. All methods must be called from
+// a single goroutine.
 type OpWriter struct {
 	w       *bufio.Writer
 	r       io.Reader

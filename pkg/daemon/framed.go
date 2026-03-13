@@ -15,6 +15,8 @@ const defaultFrameSize = 32 * 1024 // 32KB
 //
 // This matches the Nix C++ FramedSource format: repeated
 // [length(uint64)][raw_data], terminated by [0(uint64)].
+//
+// FramedReader is not safe for concurrent use.
 type FramedReader struct {
 	r          io.Reader
 	remaining  uint64 // bytes remaining in current frame
@@ -91,6 +93,8 @@ func (fr *FramedReader) nextFrame() error {
 //
 // This matches the Nix C++ FramedSink format: each frame is
 // [length(uint64)][raw_data] with no padding.
+//
+// FramedWriter is not safe for concurrent use.
 type FramedWriter struct {
 	w      io.Writer
 	buf    []byte
