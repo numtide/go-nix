@@ -91,10 +91,13 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 			return nil, &ProtocolError{Op: "handshake read daemon features", Err: err}
 		}
 
-		// Intersect: keep only features we both support.
-		// Since we currently support none, the result is always empty,
-		// but implement the intersection for forward compatibility.
-		_ = daemonFeatures
+		// Intersect: keep only features both client and daemon support.
+		clientFeatures := map[string]bool{} // no client features yet
+		for _, f := range daemonFeatures {
+			if clientFeatures[f] {
+				features = append(features, f)
+			}
+		}
 	}
 
 	// 7. Client sends CPU affinity flag: false (v1.14+).
