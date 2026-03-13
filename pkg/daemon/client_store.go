@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"strings"
 
 	"github.com/nix-community/go-nix/pkg/storepath"
 	"github.com/nix-community/go-nix/pkg/wire"
@@ -293,9 +292,15 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 		return err
 	}
 
-	// Write derivation path as BaseStorePath (basename without /nix/store/ prefix).
-	basePath := strings.TrimPrefix(drvPath, storepath.StoreDir+"/")
-	if err := wire.WriteString(ow, basePath); err != nil {
+	// Parse and validate the store path, then send as BaseStorePath (basename only).
+	sp, err := storepath.FromAbsolutePath(drvPath)
+	if err != nil {
+		ow.Abort()
+
+		return &ProtocolError{Op: "AddBuildLog validate drvPath", Err: err}
+	}
+
+	if err := wire.WriteString(ow, sp.String()); err != nil {
 		ow.Abort()
 
 		return &ProtocolError{Op: "AddBuildLog write drvPath", Err: err}

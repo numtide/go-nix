@@ -348,7 +348,7 @@ func TestClientAddBuildLog(t *testing.T) {
 	mock, clientConn := newMockDaemon(t)
 	defer mock.conn.Close()
 
-	logContent := "building '/nix/store/abc-test.drv'...\nok\n"
+	logContent := "building '/nix/store/00000000000000000000000000000000-test.drv'...\nok\n"
 
 	go func() {
 		var buf [8]byte
@@ -360,7 +360,7 @@ func TestClientAddBuildLog(t *testing.T) {
 		assert.Equal(t, uint64(daemon.OpAddBuildLog), op)
 
 		drvPath, _ := wire.ReadString(mock.conn, 64*1024) // drvPath (BaseStorePath)
-		assert.Equal(t, "abc-test.drv", drvPath)
+		assert.Equal(t, "00000000000000000000000000000000-test.drv", drvPath)
 
 		// Read framed log data (no padding in framed protocol)
 		fr := daemon.NewFramedReader(mock.conn)
@@ -381,8 +381,24 @@ func TestClientAddBuildLog(t *testing.T) {
 	assert.NoError(t, err)
 	defer client.Close()
 
-	err = client.AddBuildLog(context.Background(), "/nix/store/abc-test.drv", strings.NewReader(logContent))
+	err = client.AddBuildLog(context.Background(), "/nix/store/00000000000000000000000000000000-test.drv", strings.NewReader(logContent))
 	assert.NoError(t, err)
+}
+
+func TestClientAddBuildLogInvalidPath(t *testing.T) {
+	mock, clientConn := newMockDaemon(t)
+	defer mock.conn.Close()
+
+	go func() {
+		mock.handshake()
+	}()
+
+	client, err := daemon.NewClientFromConn(clientConn)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	err = client.AddBuildLog(context.Background(), "/tmp/not-a-store-path", strings.NewReader("log"))
+	assert.Error(t, err)
 }
 
 func TestClientAddMultipleToStore(t *testing.T) {
