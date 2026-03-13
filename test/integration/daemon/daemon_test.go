@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -910,6 +911,77 @@ func TestIntegrationOptimiseStore(t *testing.T) {
 
 	err := client.OptimiseStore(context.Background())
 	assert.NoError(t, err)
+}
+
+// --- Structured Error Parsing ---
+
+func TestIntegrationStructuredError(t *testing.T) {
+	client := startTestDaemon(t)
+
+	// EnsurePath on a nonexistent, non-substitutable path should trigger
+	// a daemon error with structured fields (Type, Level, Name, Message).
+	err := client.EnsurePath(context.Background(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	require.Error(t, err, "EnsurePath on a nonexistent path should fail")
+
+	var de *daemon.Error
+	require.True(t, errors.As(err, &de), "error should be a *daemon.Error, got: %T: %v", err, err)
+
+	assert.NotEmpty(t, de.Type, "Error.Type should be populated")
+	assert.NotEmpty(t, de.Message, "Error.Message should be populated")
+
+	t.Logf("Structured error: type=%q level=%d name=%q message=%q traces=%d",
+		de.Type, de.Level, de.Name, de.Message, len(de.Traces))
+
+	for i, tr := range de.Traces {
+		t.Logf("  trace[%d]: havePos=%d message=%q", i, tr.HavePos, tr.Message)
+	}
+
+	// Verify the connection is still usable after a daemon error.
+	valid, err := client.IsValidPath(context.Background(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	assert.NoError(t, err, "connection should remain usable after daemon error")
+	assert.False(t, valid)
+}
+
+func TestIntegrationStructuredErrorBuildDerivation(t *testing.T) {
+	client := startTestDaemon(t)
+
+	drv := &daemon.BasicDerivation{
+		Outputs: map[string]daemon.DerivationOutput{
+			"out": {Path: "/nix/store/00000000000000000000000000000000-go-nix-error-test-out"},
+		},
+		Inputs:   []string{},
+		Platform: "x86_64-linux",
+		Builder:  "/nix/store/00000000000000000000000000000000-nonexistent-builder",
+		Args:     []string{},
+		Env:      map[string]string{"out": "/nix/store/00000000000000000000000000000000-go-nix-error-test-out"},
+	}
+
+	result, err := client.BuildDerivation(
+		context.Background(),
+		"/nix/store/00000000000000000000000000000000-go-nix-error-test.drv",
+		drv,
+		daemon.BuildModeNormal,
+	)
+
+	if err != nil {
+		// Some daemon configurations return a protocol-level error.
+		var de *daemon.Error
+		if errors.As(err, &de) {
+			assert.NotEmpty(t, de.Type)
+			assert.NotEmpty(t, de.Message)
+			t.Logf("BuildDerivation daemon error: type=%q message=%q", de.Type, de.Message)
+		} else {
+			t.Logf("BuildDerivation error (non-daemon): %v", err)
+		}
+
+		return
+	}
+
+	// If we got a result, verify it reports a build failure.
+	assert.NotEqual(t, daemon.BuildStatusBuilt, result.Status,
+		"build with nonexistent builder should not succeed")
+	assert.NotEmpty(t, result.ErrorMsg, "failed build should have an error message")
+	t.Logf("BuildDerivation result: status=%s errorMsg=%q", result.Status, result.ErrorMsg)
 }
 
 // --- AddMultipleToStore ---
