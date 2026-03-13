@@ -20,7 +20,7 @@ type OpResponse struct {
 }
 
 // Read reads response data from the daemon connection.
-// Returns io.ErrClosedPipe if the response has been closed.
+// Returns ErrClosed if the response has been closed.
 func (resp *OpResponse) Read(p []byte) (int, error) {
 	if resp.closed {
 		return 0, ErrClosed
@@ -30,7 +30,7 @@ func (resp *OpResponse) Read(p []byte) (int, error) {
 }
 
 // Close releases the connection mutex. It is idempotent and safe to call
-// multiple times. After Close, Read returns io.ErrClosedPipe.
+// multiple times. After Close, Read returns ErrClosed.
 func (resp *OpResponse) Close() error {
 	resp.closed = true
 	resp.once.Do(func() {
