@@ -126,7 +126,7 @@ func dumpPath(nw *Writer, path string, subpath string, filter SourceFilterFunc) 
 		}
 
 		// open the file
-		f, err := os.Open(p)
+		f, err := os.Open(p) //nolint:gosec // G304 - path comes from filesystem traversal
 		if err != nil {
 			return err
 		}

@@ -119,7 +119,7 @@ func TestReadBytes(t *testing.T) {
 
 	// concatenate the 10 bytes, then 8 bytes dummy data together,
 	// and see if we can get out both bytes. This will test we properly skip over the padding.
-	payloadCombined := []byte{}
+	payloadCombined := make([]byte, 0, len(wire10Bytes)+len(wire8Bytes))
 	payloadCombined = append(payloadCombined, wire10Bytes...)
 	payloadCombined = append(payloadCombined, wire8Bytes...)
 

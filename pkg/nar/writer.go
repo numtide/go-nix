@@ -55,6 +55,7 @@ func NewWriter(w io.Writer) (*Writer, error) {
 		// as an empty nar is invalid, we return an error
 		if !ok {
 			narWriter.errors <- fmt.Errorf("unexpected Close()")
+
 			close(narWriter.errors)
 
 			return
@@ -63,6 +64,7 @@ func NewWriter(w io.Writer) (*Writer, error) {
 		// ensure the first item received always has a "/" as path.
 		if header.Path != "/" {
 			narWriter.errors <- fmt.Errorf("first header always needs to have a / as path")
+
 			close(narWriter.errors)
 
 			return
@@ -299,6 +301,7 @@ func (nw *Writer) WriteHeader(hdr *Header) error {
 	}
 
 	nw.headers <- hdr
+
 	select {
 	case err := <-nw.errors:
 		return err

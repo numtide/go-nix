@@ -256,7 +256,7 @@ func TestNarInfoWithUnknownDeriver(t *testing.T) {
 	// Test to string
 	assert.Equal(
 		t,
-		strings.Replace(strNarinfoSampleWithUnknownDeriver, "Deriver: unknown-deriver\n", "", -1),
+		strings.ReplaceAll(strNarinfoSampleWithUnknownDeriver, "Deriver: unknown-deriver\n", ""),
 		"\n"+ni.String(),
 	)
 }

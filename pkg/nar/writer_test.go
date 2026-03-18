@@ -12,6 +12,7 @@ import (
 
 func TestWriterEmpty(t *testing.T) {
 	var buf bytes.Buffer
+
 	nw, err := nar.NewWriter(&buf)
 	assert.NoError(t, err)
 
@@ -19,12 +20,13 @@ func TestWriterEmpty(t *testing.T) {
 	assert.Error(t, nw.Close())
 
 	assert.NotPanics(t, func() {
-		nw.Close()
+		_ = nw.Close()
 	}, "closing a second time, after the first one failed shouldn't panic")
 }
 
 func TestWriterEmptyDirectory(t *testing.T) {
 	var buf bytes.Buffer
+
 	nw, err := nar.NewWriter(&buf)
 	assert.NoError(t, err)
 
@@ -42,13 +44,14 @@ func TestWriterEmptyDirectory(t *testing.T) {
 	assert.Equal(t, genEmptyDirectoryNar(), buf.Bytes())
 
 	assert.NotPanics(t, func() {
-		nw.Close()
+		_ = nw.Close()
 	}, "closing a second time shouldn't panic")
 }
 
 // TestWriterOneByteRegular writes a NAR only containing a single file at the root.
 func TestWriterOneByteRegular(t *testing.T) {
 	var buf bytes.Buffer
+
 	nw, err := nar.NewWriter(&buf)
 	assert.NoError(t, err)
 
@@ -75,6 +78,7 @@ func TestWriterOneByteRegular(t *testing.T) {
 // TestWriterSymlink writes a NAR only containing a symlink.
 func TestWriterSymlink(t *testing.T) {
 	var buf bytes.Buffer
+
 	nw, err := nar.NewWriter(&buf)
 	assert.NoError(t, err)
 
@@ -138,6 +142,7 @@ func TestWriterSmoketest(t *testing.T) {
 
 	// drive the nar writer
 	var buf bytes.Buffer
+
 	nw, err := nar.NewWriter(&buf)
 	assert.NoError(t, err)
 
@@ -162,6 +167,7 @@ func TestWriterSmoketest(t *testing.T) {
 func TestWriterErrorsTransitions(t *testing.T) {
 	t.Run("missing directory in between", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		nw, err := nar.NewWriter(&buf)
 		assert.NoError(t, err)
 
@@ -183,6 +189,7 @@ func TestWriterErrorsTransitions(t *testing.T) {
 
 	t.Run("missing directory at the beginning, writing another directory", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		nw, err := nar.NewWriter(&buf)
 		assert.NoError(t, err)
 
@@ -196,6 +203,7 @@ func TestWriterErrorsTransitions(t *testing.T) {
 
 	t.Run("missing directory at the beginning, writing a symlink", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		nw, err := nar.NewWriter(&buf)
 		assert.NoError(t, err)
 
@@ -210,6 +218,7 @@ func TestWriterErrorsTransitions(t *testing.T) {
 
 	t.Run("transition via a symlink, not directory", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		nw, err := nar.NewWriter(&buf)
 		assert.NoError(t, err)
 
@@ -239,6 +248,7 @@ func TestWriterErrorsTransitions(t *testing.T) {
 
 	t.Run("not lexicographically sorted", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		nw, err := nar.NewWriter(&buf)
 		assert.NoError(t, err)
 
@@ -268,6 +278,7 @@ func TestWriterErrorsTransitions(t *testing.T) {
 
 	t.Run("not lexicographically sorted, but the same", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		nw, err := nar.NewWriter(&buf)
 		assert.NoError(t, err)
 
@@ -297,6 +308,7 @@ func TestWriterErrorsTransitions(t *testing.T) {
 
 	t.Run("lexicographically sorted with nested directory and common prefix", func(t *testing.T) {
 		var buf bytes.Buffer
+
 		nw, err := nar.NewWriter(&buf)
 		assert.NoError(t, err)
 
