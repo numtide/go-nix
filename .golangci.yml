@@ -1,15 +1,15 @@
+version: "2"
+
 linters:
+    default: none
     enable:
         - errname
         - exhaustive
-        - gci
         - gochecknoglobals
         - gochecknoinits
         - goconst
         - godot
-        - gofumpt
         - goheader
-        - goimports
         - gosec
         - importas
         - ireturn
@@ -27,12 +27,24 @@ linters:
         - predeclared
         - revive
         - rowserrcheck
-        - stylecheck
+        - staticcheck
         - tagliatelle
-        - tenv
         - testpackage
         - unconvert
         - unparam
         - wastedassign
         - whitespace
-        - wsl
+        - wsl_v5
+    settings:
+        revive:
+            rules:
+                - name: exported
+                  disabled: true
+                - name: package-comments
+                  disabled: true
+
+formatters:
+    enable:
+        - gci
+        - gofumpt
+        - goimports
