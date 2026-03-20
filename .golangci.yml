@@ -1,50 +1,50 @@
 version: "2"
 
 linters:
-    default: none
-    enable:
-        - errname
-        - exhaustive
-        - gochecknoglobals
-        - gochecknoinits
-        - goconst
-        - godot
-        - goheader
-        - gosec
-        - importas
-        - ireturn
-        - lll
-        - makezero
-        - misspell
-        - nakedret
-        - nestif
-        - nilerr
-        - nilnil
-        - nlreturn
-        - noctx
-        - nolintlint
-        - prealloc
-        - predeclared
-        - revive
-        - rowserrcheck
-        - staticcheck
-        - tagliatelle
-        - testpackage
-        - unconvert
-        - unparam
-        - wastedassign
-        - whitespace
-        - wsl_v5
-    settings:
-        revive:
-            rules:
-                - name: exported
-                  disabled: true
-                - name: package-comments
-                  disabled: true
+  default: none
+  enable:
+    - errname
+    - exhaustive
+    - gochecknoglobals
+    - gochecknoinits
+    - goconst
+    - godot
+    - goheader
+    - gosec
+    - importas
+    - ireturn
+    - lll
+    - makezero
+    - misspell
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - nlreturn
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - revive
+    - rowserrcheck
+    - staticcheck
+    - tagliatelle
+    - testpackage
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+    - wsl_v5
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
 
 formatters:
-    enable:
-        - gci
-        - gofumpt
-        - goimports
+  enable:
+    - gci
+    - gofumpt
+    - goimports
