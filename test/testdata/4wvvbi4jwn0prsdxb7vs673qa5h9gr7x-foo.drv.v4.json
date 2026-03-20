@@ -1,0 +1,32 @@
+{
+  "version": 4,
+  "derivations": {
+    "4wvvbi4jwn0prsdxb7vs673qa5h9gr7x-foo.drv": {
+      "name": "foo",
+      "outputs": {
+        "out": {
+          "path": "5vyvcwah9l9kf07d52rcgdk70g2f4y13-foo"
+        }
+      },
+      "inputs": {
+        "srcs": [],
+        "drvs": {
+          "0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv": {
+            "outputs": ["out"],
+            "dynamicOutputs": {}
+          }
+        }
+      },
+      "system": ":",
+      "builder": ":",
+      "args": [],
+      "env": {
+        "bar": "/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar",
+        "builder": ":",
+        "name": "foo",
+        "out": "/nix/store/5vyvcwah9l9kf07d52rcgdk70g2f4y13-foo",
+        "system": ":"
+      }
+    }
+  }
+}
