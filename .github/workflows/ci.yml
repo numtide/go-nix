@@ -9,19 +9,18 @@ on:
 
 jobs:
   fixtures:
-    name: fixtures-up-to-date
-    runs-on: ubuntu-latest
+    name: Verify fixtures are up-to-date
+    runs-on: ubuntu-slim
     steps:
-      - uses: actions/checkout@v6
-      - uses: cachix/install-nix-action@v31
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
         with:
           install_url: https://releases.nixos.org/nix/nix-2.33.0/install
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Build fixtures
-        run: bash -c 'cd test/testdata && ./build-fixtures.go'
-      - name: Diff fixtures
+      - name: Regenerate fixtures
+        run: nix develop --command bash -c 'cd test/testdata && ./build-fixtures.go'
+      - name: Check for fixture drift
         run: git diff --exit-code test/testdata
 
   build:
@@ -33,9 +32,11 @@ jobs:
 
     name: Build (Go ${{ matrix.go }}, OS ${{ matrix.os }})
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
-      - name: go test -race -bench='.+' -v ./...
+      - name: Run tests with race detector and benchmarks
         run: go test -race -bench='.+' -v ./...
