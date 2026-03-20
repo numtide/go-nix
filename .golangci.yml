@@ -16,6 +16,7 @@ linters:
     - lll
     - makezero
     - misspell
+    - modernize
     - nakedret
     - nestif
     - nilerr
@@ -46,5 +47,14 @@ linters:
 formatters:
   enable:
     - gci
+    - gofmt
     - gofumpt
     - goimports
+  settings:
+    gofmt:
+      simplify: true
+      rewrite-rules:
+        - pattern: "interface{}"
+          replacement: "any"
+        - pattern: "a[b:len(a)]"
+          replacement: "a[b:]"
