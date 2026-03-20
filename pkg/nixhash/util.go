@@ -7,8 +7,8 @@ package nixhash
 // It consumes 1 byte at a time, and XOR's it with the current value in the output buffer.
 func CompressHash(input []byte, outputSize int) []byte {
 	buf := make([]byte, outputSize)
-	for i := 0; i < len(input); i++ {
-		buf[i%outputSize] ^= input[i]
+	for i, b := range input {
+		buf[i%outputSize] ^= b
 	}
 
 	return buf

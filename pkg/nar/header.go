@@ -72,7 +72,7 @@ type headerFileInfo struct {
 func (fi headerFileInfo) Size() int64        { return fi.h.Size }
 func (fi headerFileInfo) IsDir() bool        { return fi.h.Type == TypeDirectory }
 func (fi headerFileInfo) ModTime() time.Time { return time.Unix(0, 0) }
-func (fi headerFileInfo) Sys() interface{}   { return fi.h }
+func (fi headerFileInfo) Sys() any           { return fi.h }
 
 // Name of the file.
 // Will be an empty string, if this describes the root of a NAR.

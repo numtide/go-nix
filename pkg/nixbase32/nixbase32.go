@@ -35,7 +35,7 @@ func DecodeString(s string) ([]byte, error) {
 func Decode(dst, src []byte) (n int, err error) {
 	maxDstSize := DecodedLen(len(src))
 
-	for n := 0; n < len(src); n++ {
+	for n := range len(src) {
 		b := uint64(n) * 5
 		i := int(b / 8)
 		j := int(b % 8)
@@ -70,7 +70,7 @@ func Decode(dst, src []byte) (n int, err error) {
 func ValidateString(src string) error {
 	maxDstSize := DecodedLen(len(src))
 
-	for n := 0; n < len(src); n++ {
+	for n := range len(src) {
 		b := uint64(n) * 5
 		i := int(b / 8)
 		j := int(b % 8)
