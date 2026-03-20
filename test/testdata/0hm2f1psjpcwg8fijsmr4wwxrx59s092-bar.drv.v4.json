@@ -1,0 +1,31 @@
+{
+  "version": 4,
+  "derivations": {
+    "0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv": {
+      "name": "bar",
+      "outputs": {
+        "out": {
+          "path": "4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar",
+          "method": "nar",
+          "hash": "sha256-CIE8vumQPGK+TFAncmpBijANpFALLTadOvkob0gVzro="
+        }
+      },
+      "inputs": {
+        "srcs": [],
+        "drvs": {}
+      },
+      "system": ":",
+      "builder": ":",
+      "args": [],
+      "env": {
+        "builder": ":",
+        "name": "bar",
+        "out": "/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar",
+        "outputHash": "08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba",
+        "outputHashAlgo": "sha256",
+        "outputHashMode": "recursive",
+        "system": ":"
+      }
+    }
+  }
+}

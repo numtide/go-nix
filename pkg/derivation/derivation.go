@@ -14,9 +14,10 @@ import (
 // that the `nix show-derivation /path/to.drv` is using,
 // even though this might change in the future.
 type Derivation struct {
-	// Structured don't have the env name right in the regular spot but in the nested JSON object.
-	// This is an internal variable only used for structured attrs derivations, which can currently only be created
-	// from an existing drv file.
+	// name holds the derivation name when it is not stored in env["name"].
+	// This occurs with structured attrs (where name is in the __json blob)
+	// and with Nix v4 JSON derivations (where name is a top-level field,
+	// not an env variable). Use SetName() to set this field.
 	name string
 
 	// Outputs are always lexicographically sorted by their name (key in this map)
@@ -116,8 +117,9 @@ func (d *Derivation) Validate() error {
 		return fmt.Errorf("required attribute 'builder' missing")
 	}
 
-	// there has to be an env variable with key `name`.
-	hasNameEnv := false
+	// The derivation name must be available either via env["name"],
+	// the explicit name field (v4 JSON / structured attrs), or __json.
+	hasName := d.name != ""
 
 	for k := range d.Env {
 		if k == "" {
@@ -125,24 +127,33 @@ func (d *Derivation) Validate() error {
 		}
 
 		if k == "name" {
-			hasNameEnv = true
+			hasName = true
 		}
 
 		// Structured attrs
 		if k == "__json" {
-			hasNameEnv = d.name != ""
+			hasName = d.name != ""
 		}
 	}
 
-	if !hasNameEnv {
-		return fmt.Errorf("env 'name' not found")
+	if !hasName {
+		return fmt.Errorf("derivation name not found (set env 'name' or use SetName)")
 	}
 
 	return nil
 }
 
+// SetName sets the derivation name explicitly. Use this for derivations
+// where the name is not stored in env["name"] (e.g., Nix v4 JSON format).
+func (d *Derivation) SetName(name string) {
+	d.name = name
+}
+
+// Name returns the derivation name. It checks, in order:
+//  1. The explicit name field (set via SetName or structured attrs parsing)
+//  2. The env["name"] variable (traditional ATerm derivations)
 func (d *Derivation) Name() string {
-	if _, ok := d.Env["__json"]; ok {
+	if d.name != "" {
 		return d.name
 	}
 
