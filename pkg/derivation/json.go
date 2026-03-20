@@ -92,24 +92,10 @@ func ReadDerivationsJSON(reader io.Reader) (map[string]*Derivation, error) {
 	}
 
 	// Check for v4 wrapper: has "version" and "derivations" keys.
-	if versionRaw, hasVersion := raw["version"]; hasVersion {
-		if derivationsRaw, hasDrvs := raw["derivations"]; hasDrvs {
-			var version int
-			if err := json.Unmarshal(versionRaw, &version); err != nil {
-				return nil, fmt.Errorf("parsing wrapper version: %w", err)
-			}
-
-			if version != 4 {
-				return nil, fmt.Errorf("expected wrapper version 4, got %d", version)
-			}
-
-			var innerMap map[string]json.RawMessage
-			if err := json.Unmarshal(derivationsRaw, &innerMap); err != nil {
-				return nil, fmt.Errorf("parsing v4 derivations: %w", err)
-			}
-
-			return parseDrvMap(innerMap, parseV4Derivation)
-		}
+	if drvs, ok, err := tryParseV4Wrapper(raw); ok {
+		return drvs, err
+	} else if err != nil {
+		return nil, err
 	}
 
 	// Otherwise it's a map of drvPath -> derivation data.
@@ -153,6 +139,39 @@ func detectInnerVersion(data json.RawMessage) (int, error) {
 	return peek.Version, nil
 }
 
+// tryParseV4Wrapper checks if raw is a v4 wrapper document and parses it.
+// Returns (result, true, nil) on success, (nil, false, nil) if not a v4 wrapper,
+// or (nil, false, err) on parse failure.
+func tryParseV4Wrapper(raw map[string]json.RawMessage) (map[string]*Derivation, bool, error) {
+	versionRaw, hasVersion := raw["version"]
+	if !hasVersion {
+		return nil, false, nil
+	}
+
+	derivationsRaw, hasDrvs := raw["derivations"]
+	if !hasDrvs {
+		return nil, false, nil
+	}
+
+	var version int
+	if err := json.Unmarshal(versionRaw, &version); err != nil {
+		return nil, false, fmt.Errorf("parsing wrapper version: %w", err)
+	}
+
+	if version != 4 {
+		return nil, false, fmt.Errorf("expected wrapper version 4, got %d", version)
+	}
+
+	var innerMap map[string]json.RawMessage
+	if err := json.Unmarshal(derivationsRaw, &innerMap); err != nil {
+		return nil, false, fmt.Errorf("parsing v4 derivations: %w", err)
+	}
+
+	result, err := parseDrvMap(innerMap, parseV4Derivation)
+
+	return result, true, err
+}
+
 // storePathMinLen is the minimum length of a short store path: 32 nixbase32 chars + "-" + at least 1 name char.
 const storePathMinLen = 34
 
@@ -167,7 +186,10 @@ func expandStorePath(s string) string {
 }
 
 // parseDrvMap parses derivations from a map using the provided parse function.
-func parseDrvMap(raw map[string]json.RawMessage, parse func(json.RawMessage) (*Derivation, error)) (map[string]*Derivation, error) {
+func parseDrvMap(
+	raw map[string]json.RawMessage,
+	parse func(json.RawMessage) (*Derivation, error),
+) (map[string]*Derivation, error) {
 	result := make(map[string]*Derivation, len(raw))
 
 	for path, rawDrv := range raw {
@@ -265,7 +287,10 @@ func parseV4Derivation(data json.RawMessage) (*Derivation, error) {
 }
 
 // convertOutputs converts JSON outputs to internal Output structs using the provided converter.
-func convertOutputs(jOutputs map[string]jsonOutput, convert func(jsonOutput) (*Output, error)) (map[string]*Output, error) {
+func convertOutputs(
+	jOutputs map[string]jsonOutput,
+	convert func(jsonOutput) (*Output, error),
+) (map[string]*Output, error) {
 	outputs := make(map[string]*Output, len(jOutputs))
 
 	for name, jo := range jOutputs {

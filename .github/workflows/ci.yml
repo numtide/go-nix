@@ -17,9 +17,7 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31
         with:
-          # Pin to Nix 2.32.x: Nix 2.33+ produces v4 derivation JSON format
-          # which the Go code doesn't support yet.
-          install_url: https://releases.nixos.org/nix/nix-2.32.6/install
+          install_url: https://releases.nixos.org/nix/nix-2.34.1/install
       - name: Regenerate fixtures
         run: nix develop --command bash -c 'cd test/testdata && ./build-fixtures.go'
       - name: Check for fixture drift

@@ -19,6 +19,7 @@ func parseATerm(t *testing.T, basename string) *derivation.Derivation {
 
 	f, err := os.Open(filepath.FromSlash("../../test/testdata/" + basename))
 	require.NoError(t, err)
+
 	defer f.Close()
 
 	data, err := io.ReadAll(f)
@@ -36,6 +37,7 @@ func parseJSONSingle(t *testing.T, filename string) *derivation.Derivation {
 
 	f, err := os.Open(filepath.FromSlash("../../test/testdata/" + filename))
 	require.NoError(t, err)
+
 	defer f.Close()
 
 	drv, err := derivation.ReadDerivationJSON(f)
@@ -50,6 +52,7 @@ func parseJSONMulti(t *testing.T, filename string) map[string]*derivation.Deriva
 
 	f, err := os.Open(filepath.FromSlash("../../test/testdata/" + filename))
 	require.NoError(t, err)
+
 	defer f.Close()
 
 	drvs, err := derivation.ReadDerivationsJSON(f)
@@ -141,15 +144,15 @@ func TestReadDerivationJSON_VersionDetection(t *testing.T) {
 	}{
 		{
 			name: "v1",
-			json: `{"/nix/store/0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv":{"outputs":{"out":{"path":"/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","hashAlgo":"r:sha256","hash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba"}},"inputSrcs":[],"inputDrvs":{},"system":":","builder":":","args":[],"env":{"builder":":","name":"bar","out":"/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","outputHash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba","outputHashAlgo":"sha256","outputHashMode":"recursive","system":":"}}}`,
+			json: `{"/nix/store/0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv":{"outputs":{"out":{"path":"/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","hashAlgo":"r:sha256","hash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba"}},"inputSrcs":[],"inputDrvs":{},"system":":","builder":":","args":[],"env":{"builder":":","name":"bar","out":"/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","outputHash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba","outputHashAlgo":"sha256","outputHashMode":"recursive","system":":"}}}`, //nolint:lll
 		},
 		{
 			name: "v3",
-			json: `{"/nix/store/0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv":{"name":"bar","version":3,"outputs":{"out":{"path":"4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","method":"nar","hashAlgo":"sha256","hash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba"}},"inputSrcs":[],"inputDrvs":{},"system":":","builder":":","args":[],"env":{"builder":":","name":"bar","out":"/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","outputHash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba","outputHashAlgo":"sha256","outputHashMode":"recursive","system":":"}}}`,
+			json: `{"/nix/store/0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv":{"name":"bar","version":3,"outputs":{"out":{"path":"4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","method":"nar","hashAlgo":"sha256","hash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba"}},"inputSrcs":[],"inputDrvs":{},"system":":","builder":":","args":[],"env":{"builder":":","name":"bar","out":"/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","outputHash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba","outputHashAlgo":"sha256","outputHashMode":"recursive","system":":"}}}`, //nolint:lll
 		},
 		{
 			name: "v4_wrapper",
-			json: `{"version":4,"derivations":{"0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv":{"name":"bar","outputs":{"out":{"path":"4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","method":"nar","hash":"sha256-CIE8vumQPGK+TFAncmpBijANpFALLTadOvkob0gVzro="}},"inputs":{"srcs":[],"drvs":{}},"system":":","builder":":","args":[],"env":{"builder":":","name":"bar","out":"/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","outputHash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba","outputHashAlgo":"sha256","outputHashMode":"recursive","system":":" }}}}`,
+			json: `{"version":4,"derivations":{"0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv":{"name":"bar","outputs":{"out":{"path":"4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","method":"nar","hash":"sha256-CIE8vumQPGK+TFAncmpBijANpFALLTadOvkob0gVzro="}},"inputs":{"srcs":[],"drvs":{}},"system":":","builder":":","args":[],"env":{"builder":":","name":"bar","out":"/nix/store/4q0pg5zpfmznxscq3avycvf9xdvx50n3-bar","outputHash":"08813cbee9903c62be4c5027726a418a300da4500b2d369d3af9286f4815ceba","outputHashAlgo":"sha256","outputHashMode":"recursive","system":":" }}}}`, //nolint:lll
 		},
 	}
 
@@ -158,6 +161,7 @@ func TestReadDerivationJSON_VersionDetection(t *testing.T) {
 			drv, err := derivation.ReadDerivationJSON(strings.NewReader(tt.json))
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 
