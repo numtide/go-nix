@@ -254,6 +254,10 @@ func parseV3Derivation(data json.RawMessage) (*Derivation, error) {
 		drv.SetName(jd.Name)
 	}
 
+	if err := drv.computeMissingOutputPaths(); err != nil {
+		return nil, err
+	}
+
 	return drv, nil
 }
 
@@ -281,6 +285,10 @@ func parseV4Derivation(data json.RawMessage) (*Derivation, error) {
 
 	if jd.Name != "" {
 		drv.SetName(jd.Name)
+	}
+
+	if err := drv.computeMissingOutputPaths(); err != nil {
+		return nil, err
 	}
 
 	return drv, nil
@@ -390,6 +398,39 @@ func convertInputDrvs(jInputDrvs map[string]jsonInputDrv) map[string][]string {
 	}
 
 	return result
+}
+
+// computeMissingOutputPaths computes output paths for CA fixed-output
+// derivations where the path was omitted from JSON (Nix 2.34+).
+// For CA fixed outputs, the path is deterministic from the hash algorithm,
+// hash, and derivation name — no input derivation replacements needed.
+func (d *Derivation) computeMissingOutputPaths() error {
+	needsCompute := false
+
+	for _, o := range d.Outputs {
+		if o.Path == "" && o.HashAlgorithm != "" {
+			needsCompute = true
+
+			break
+		}
+	}
+
+	if !needsCompute {
+		return nil
+	}
+
+	paths, err := d.CalculateOutputPaths(nil)
+	if err != nil {
+		return fmt.Errorf("computing output paths: %w", err)
+	}
+
+	for name, o := range d.Outputs {
+		if o.Path == "" && o.HashAlgorithm != "" {
+			o.Path = paths[name]
+		}
+	}
+
+	return nil
 }
 
 // expandStorePaths expands a slice of potentially short store paths.

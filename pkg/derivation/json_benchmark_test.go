@@ -34,8 +34,8 @@ func BenchmarkReadDerivationJSON(b *testing.B) {
 		file string
 	}{
 		// Small fixtures
-		{"v1/small-ca-fixed", "0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv.json"},
-		{"v1/small-input-addressed", "4wvvbi4jwn0prsdxb7vs673qa5h9gr7x-foo.drv.json"},
+		{"v1/small-ca-fixed", "0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv.v1.json"},
+		{"v1/small-input-addressed", "4wvvbi4jwn0prsdxb7vs673qa5h9gr7x-foo.drv.v1.json"},
 		{"v3/small-ca-fixed", "0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv.v3.json"},
 		{"v3/small-input-addressed", "4wvvbi4jwn0prsdxb7vs673qa5h9gr7x-foo.drv.v3.json"},
 		{"v4/small-ca-fixed", "0hm2f1psjpcwg8fijsmr4wwxrx59s092-bar.drv.v4.json"},

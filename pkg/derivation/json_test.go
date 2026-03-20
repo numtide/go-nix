@@ -54,7 +54,7 @@ func TestJSONSerialize(t *testing.T) {
 		assert.NoError(t, err, "encoding a derivation to JSON shouldn't error")
 
 		// compare the output with the prerecorded json output
-		derivationJSONFile, err := os.Open(filepath.FromSlash("../../test/testdata/" + drvBasename + ".json"))
+		derivationJSONFile, err := os.Open(filepath.FromSlash("../../test/testdata/" + drvBasename + ".v1.json"))
 		if err != nil {
 			panic(err)
 		}

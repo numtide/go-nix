@@ -84,7 +84,7 @@ func TestReadDerivationJSON(t *testing.T) {
 		for _, basename := range drvBasenames {
 			t.Run(basename, func(t *testing.T) {
 				expected := parseATerm(t, basename)
-				actual := parseJSONSingle(t, basename+".json")
+				actual := parseJSONSingle(t, basename+".v1.json")
 				compareDrv(t, expected, actual)
 			})
 		}
@@ -105,6 +105,16 @@ func TestReadDerivationJSON(t *testing.T) {
 			t.Run(basename, func(t *testing.T) {
 				expected := parseATerm(t, basename)
 				actual := parseJSONSingle(t, basename+".v4.json")
+				compareDrv(t, expected, actual)
+			})
+		}
+	})
+
+	t.Run("v4_generated", func(t *testing.T) {
+		for _, basename := range drvBasenames {
+			t.Run(basename, func(t *testing.T) {
+				expected := parseATerm(t, basename)
+				actual := parseJSONSingle(t, basename+".json")
 				compareDrv(t, expected, actual)
 			})
 		}
