@@ -1,40 +1,44 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: CI
 
 on:
-    push:
-        branches:
-            - main
-    pull_request:
+  push:
+    branches:
+      - main
+  pull_request:
 
 jobs:
-    fixtures:
-        name: fixtures-up-to-date
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v3
-            - uses: cachix/install-nix-action@v22
-              with:
-                  install_url: https://releases.nixos.org/nix/nix-2.12.1/install
-            - uses: actions/setup-go@v4
-              with:
-                  go-version: "1.21"
-            - name: Build fixtures
-              run: bash -c 'cd test/testdata && ./build-fixtures.go'
-            - name: Diff fixtures
-              run: git diff --exit-code test/testdata
+  fixtures:
+    name: Verify fixtures are up-to-date
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          # Pin to Nix 2.32.x: Nix 2.33+ produces v4 derivation JSON format
+          # which the Go code doesn't support yet.
+          install_url: https://releases.nixos.org/nix/nix-2.32.6/install
+      - name: Regenerate fixtures
+        run: nix develop --command bash -c 'cd test/testdata && ./build-fixtures.go'
+      - name: Check for fixture drift
+        run: git diff --exit-code test/testdata
 
-    build:
-        strategy:
-            matrix:
-                os: ["ubuntu-latest", "macos-latest", "windows-latest"]
-                go: ["1.20", "1.21"]
-        runs-on: ${{ matrix.os }}
+  build:
+    strategy:
+      matrix:
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        go: ["1.26"]
+    runs-on: ${{ matrix.os }}
 
-        name: Build (Go ${{ matrix.go }}, OS ${{ matrix.os }})
-        steps:
-            - uses: actions/checkout@v3
-            - uses: actions/setup-go@v4
-              with:
-                  go-version: ${{ matrix.go }}
-            - name: go test -race -bench='.+' -v ./...
-              run: go test -race -bench='.+' -v ./...
+    name: Build (Go ${{ matrix.go }}, OS ${{ matrix.os }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Run tests with race detector and benchmarks
+        run: go test -race -bench='.+' -v ./...

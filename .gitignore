@@ -1,1 +1,8 @@
 /gonix
+
+# Nix
+/result
+/result-*
+
+# direnv
+.direnv/

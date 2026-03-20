@@ -15,14 +15,9 @@ func PathIsLexicographicallyOrdered(path1 string, path2 string) bool {
 	}
 
 	// n is the lower number of characters of the two paths.
-	var n int
-	if len(path1) < len(path2) {
-		n = len(path1)
-	} else {
-		n = len(path2)
-	}
+	n := min(len(path1), len(path2))
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if path1[i] == path2[i] {
 			continue
 		}

@@ -10,7 +10,7 @@ var (
 	padding [8]byte
 
 	bufPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return new([8]byte)
 		},
 	}

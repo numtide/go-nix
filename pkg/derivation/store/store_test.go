@@ -190,7 +190,6 @@ func TestStores(t *testing.T) {
 
 func BenchmarkStores(b *testing.B) {
 	for _, s := range stores {
-		s := s
 		b.Run(s.Title, func(b *testing.B) {
 			store := s.NewStore(b.TempDir())
 			defer store.Close()

@@ -9,11 +9,11 @@ pkgs.mkShell {
   packages =
     (with pkgs; [
       delve
-      pprof
       go
-      gotools
       golangci-lint
+      gotools
       lazysql
+      pprof
       sqlc
     ])
     ++ (with perSystem; [

@@ -27,7 +27,7 @@ func headerLineString(hdr *nar.Header) string {
 	// if regular file, show size in parantheses. We don't bother about aligning it nicely,
 	// as that'd require reading in all headers first before printing them out.
 	if hdr.Size > 0 {
-		sb.WriteString(fmt.Sprintf(" (%v bytes)", hdr.Size))
+		fmt.Fprintf(&sb, " (%v bytes)", hdr.Size)
 	}
 
 	// if LinkTarget, show it

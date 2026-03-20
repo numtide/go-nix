@@ -68,8 +68,6 @@ func TestReferences(t *testing.T) {
 
 func BenchmarkReferences(b *testing.B) {
 	for _, c := range cases {
-		c := c
-
 		refScanner, err := references.NewReferenceScanner(c.Expected)
 		if err != nil {
 			panic(err)

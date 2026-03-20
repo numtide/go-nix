@@ -1,38 +1,60 @@
+version: "2"
+
 linters:
-    enable:
-        - errname
-        - exhaustive
-        - gci
-        - gochecknoglobals
-        - gochecknoinits
-        - goconst
-        - godot
-        - gofumpt
-        - goheader
-        - goimports
-        - gosec
-        - importas
-        - ireturn
-        - lll
-        - makezero
-        - misspell
-        - nakedret
-        - nestif
-        - nilerr
-        - nilnil
-        - nlreturn
-        - noctx
-        - nolintlint
-        - prealloc
-        - predeclared
-        - revive
-        - rowserrcheck
-        - stylecheck
-        - tagliatelle
-        - tenv
-        - testpackage
-        - unconvert
-        - unparam
-        - wastedassign
-        - whitespace
-        - wsl
+  default: none
+  enable:
+    - errname
+    - exhaustive
+    - gochecknoglobals
+    - gochecknoinits
+    - goconst
+    - godot
+    - goheader
+    - gosec
+    - importas
+    - ireturn
+    - lll
+    - makezero
+    - misspell
+    - modernize
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - nlreturn
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - revive
+    - rowserrcheck
+    - staticcheck
+    - tagliatelle
+    - testpackage
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+    - wsl_v5
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+      rewrite-rules:
+        - pattern: "interface{}"
+          replacement: "any"
+        - pattern: "a[b:len(a)]"
+          replacement: "a[b:]"

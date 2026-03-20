@@ -54,7 +54,7 @@ func (fs *FSStore) getFilepath(derivationPath string) string {
 func (fs *FSStore) Get(_ context.Context, derivationPath string) (*derivation.Derivation, error) {
 	path := fs.getFilepath(derivationPath)
 
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304 - path is derived from validated store directory
 	if err != nil {
 		return nil, err
 	}

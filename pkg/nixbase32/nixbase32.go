@@ -35,10 +35,10 @@ func DecodeString(s string) ([]byte, error) {
 func Decode(dst, src []byte) (n int, err error) {
 	maxDstSize := DecodedLen(len(src))
 
-	for n := 0; n < len(src); n++ {
-		b := uint64(n) * 5 //nolint:gosec
-		i := int(b / 8)    //nolint:gosec
-		j := int(b % 8)    //nolint:gosec
+	for n := range len(src) {
+		b := uint64(n) * 5
+		i := int(b / 8)
+		j := int(b % 8)
 
 		c := src[len(src)-n-1]
 		digit := strings.IndexByte(Alphabet, c)
@@ -52,9 +52,9 @@ func Decode(dst, src []byte) (n int, err error) {
 		}
 
 		// OR the main pattern
-		dst[i] |= byte(digit) << j
+		dst[i] |= byte(digit) << j //nolint:gosec // G115 - controlled bit operation, digit is 0-31
 		// calculate the "carry pattern"
-		carry := byte(digit) >> (8 - j)
+		carry := byte(digit) >> (8 - j) //nolint:gosec // G115 - controlled bit operation, digit is 0-31
 		if i+1 < maxDstSize {
 			dst[i+1] |= carry
 		} else if carry != 0 {
@@ -70,10 +70,10 @@ func Decode(dst, src []byte) (n int, err error) {
 func ValidateString(src string) error {
 	maxDstSize := DecodedLen(len(src))
 
-	for n := 0; n < len(src); n++ {
-		b := uint64(n) * 5 //nolint:gosec
-		i := int(b / 8)    //nolint:gosec
-		j := int(b % 8)    //nolint:gosec
+	for n := range len(src) {
+		b := uint64(n) * 5
+		i := int(b / 8)
+		j := int(b % 8)
 
 		c := src[len(src)-n-1]
 		digit := strings.IndexByte(Alphabet, c)
@@ -83,7 +83,7 @@ func ValidateString(src string) error {
 		}
 
 		if i+1 >= maxDstSize {
-			if carry := byte(digit) >> (8 - j); carry != 0 {
+			if carry := byte(digit) >> (8 - j); carry != 0 { //nolint:gosec // G115
 				// but have a nonzero carry, the encoding is invalid.
 				return fmt.Errorf("decode base32: non-zero padding")
 			}
@@ -115,8 +115,8 @@ func Encode(dst, src []byte) {
 
 	for n = n - 1; n >= 0; n-- {
 		b := uint64(n) * 5
-		i := int(b / 8) //nolint:gosec
-		j := int(b % 8) //nolint:gosec
+		i := int(b / 8) //nolint:gosec // G115
+		j := int(b % 8)
 		c := src[i] >> j
 
 		if i+1 < len(src) {
@@ -137,8 +137,8 @@ func EncodeToString(src []byte) string {
 
 	for n = n - 1; n >= 0; n-- {
 		b := uint64(n) * 5
-		i := int(b / 8) //nolint:gosec
-		j := int(b % 8) //nolint:gosec
+		i := int(b / 8) //nolint:gosec // G115
+		j := int(b % 8)
 		c := src[i] >> j
 
 		if i+1 < len(src) {

@@ -22,7 +22,7 @@ func TestReaderEmpty(t *testing.T) {
 	assert.Nil(t, hdr, "returned header should be nil")
 
 	assert.NotPanics(t, func() {
-		nr.Close()
+		_ = nr.Close()
 	}, "closing the reader shouldn't panic")
 }
 
@@ -43,7 +43,7 @@ func TestReaderEmptyDirectory(t *testing.T) {
 	assert.Nil(t, hdr, "returned header should be nil")
 
 	assert.NotPanics(t, func() {
-		nr.Close()
+		_ = nr.Close()
 	}, "closing the reader shouldn't panic")
 }
 
@@ -71,7 +71,7 @@ func TestReaderOneByteRegular(t *testing.T) {
 	assert.Nil(t, hdr, "returned header should be nil")
 
 	assert.NotPanics(t, func() {
-		nr.Close()
+		_ = nr.Close()
 	}, "closing the reader shouldn't panic")
 }
 
@@ -100,7 +100,7 @@ func TestReaderSymlink(t *testing.T) {
 	assert.Nil(t, hdr, "returned header should be nil")
 
 	assert.NotPanics(t, func() {
-		nr.Close()
+		_ = nr.Close()
 	}, "closing the reader shouldn't panic")
 }
 
