@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Lint
+
+on:
+  push:
+    tags:
+      - v*
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  golangci:
+    name: Run golangci-lint
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+      - name: Lint with golangci-lint
+        run: nix develop --command golangci-lint run --timeout=10m
