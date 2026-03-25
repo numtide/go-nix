@@ -73,6 +73,7 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	// 6. Feature set exchange (v1.38+): client sends its features, then reads
 	// the daemon's features. The negotiated features are the intersection.
 	var features []string
+
 	if negotiated >= ProtoVersionFeatureExchange {
 		// We currently support no protocol features; send empty list.
 		if err := wire.WriteStrings(w, nil); err != nil {
@@ -117,8 +118,10 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 
 	// 9. Server sends Nix version string (v1.33+).
 	daemonVersion := ""
+
 	if negotiated >= ProtoVersionNixVersion {
 		var err error
+
 		daemonVersion, err = wire.ReadString(r, MaxStringSize)
 		if err != nil {
 			return nil, &ProtocolError{Op: "handshake read daemon version", Err: err}
@@ -127,8 +130,10 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 
 	// 10. Server sends trust level (v1.35+).
 	var trustRaw uint64
+
 	if negotiated >= ProtoVersionTrust {
 		var err error
+
 		trustRaw, err = wire.ReadUint64(r)
 		if err != nil {
 			return nil, &ProtocolError{Op: "handshake read trust level", Err: err}

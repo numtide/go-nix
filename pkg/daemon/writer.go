@@ -101,6 +101,6 @@ func (ow *OpWriter) release() {
 		ow.cancel()
 	}
 
-	ow.conn.SetDeadline(noDeadline) //nolint:errcheck // best-effort deadline reset
+	ow.conn.SetDeadline(noDeadline) //nolint:errcheck,gosec // best-effort deadline reset
 	ow.mu.Unlock()
 }

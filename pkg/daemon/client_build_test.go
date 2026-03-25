@@ -50,6 +50,7 @@ func TestClientBuildPaths(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.BuildPaths(context.Background(), []string{"/nix/store/abc-test.drv"}, daemon.BuildModeNormal)
@@ -82,6 +83,7 @@ func TestClientEnsurePath(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.EnsurePath(context.Background(), "/nix/store/abc-test")
@@ -141,6 +143,7 @@ func TestClientBuildPathsWithResults(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	results, err := client.BuildPathsWithResults(
@@ -251,6 +254,7 @@ func TestClientBuildDerivation(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.BuildDerivation(context.Background(), "/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
@@ -273,6 +277,7 @@ func TestBuildPathsWithResultsUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.BuildPathsWithResults(context.Background(), []string{"/nix/store/abc.drv!out"}, daemon.BuildModeNormal)
@@ -358,6 +363,7 @@ func TestClientBuildDerivationProto127(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	assert.Equal(t, daemon.ProtoVersion(1, 27), client.Info().Version)
@@ -394,8 +400,9 @@ func TestClientBuildPathsDaemonError(t *testing.T) {
 			var buf [8]byte
 			// Read count + path strings
 			_, _ = io.ReadFull(mock.conn, buf[:]) // count
+
 			count := binary.LittleEndian.Uint64(buf[:])
-			for i := uint64(0); i < count; i++ {
+			for range count {
 				_, _ = wire.ReadString(mock.conn, 64*1024)
 			}
 			// Read build mode
@@ -405,6 +412,7 @@ func TestClientBuildPathsDaemonError(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.BuildPaths(context.Background(), []string{"/nix/store/zzz-fail.drv"}, daemon.BuildModeNormal)

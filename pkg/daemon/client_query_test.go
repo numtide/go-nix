@@ -24,6 +24,7 @@ func TestClientIsValidPath(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
@@ -42,6 +43,7 @@ func TestClientIsValidPathFalse(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/nonexistent")
@@ -74,6 +76,7 @@ func TestClientQueryPathInfo(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
@@ -101,6 +104,7 @@ func TestClientQueryPathInfoNotFound(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	info, err := client.QueryPathInfo(context.Background(), "/nix/store/nonexistent")
@@ -141,6 +145,7 @@ func TestClientNarFromPath(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	rc, err := client.NarFromPath(context.Background(), "/nix/store/abc-test")
@@ -181,6 +186,7 @@ func TestClientFindRoots(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	roots, err := client.FindRoots(context.Background())
@@ -205,6 +211,7 @@ func TestClientQueryAllValidPaths(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	paths, err := client.QueryAllValidPaths(context.Background())
@@ -234,6 +241,7 @@ func TestClientQueryValidPaths(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QueryValidPaths(context.Background(), queryPaths, true)
@@ -261,6 +269,7 @@ func TestClientQuerySubstitutablePaths(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QuerySubstitutablePaths(context.Background(), queryPaths)
@@ -294,6 +303,7 @@ func TestClientQuerySubstitutablePathInfos(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
@@ -326,6 +336,7 @@ func TestClientQuerySubstitutablePathInfosEmpty(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
@@ -351,6 +362,7 @@ func TestClientQueryReferrers(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QueryReferrers(context.Background(), "/nix/store/abc-test")
@@ -374,6 +386,7 @@ func TestClientQueryValidDerivers(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QueryValidDerivers(context.Background(), "/nix/store/abc-test")
@@ -398,6 +411,7 @@ func TestClientQueryDerivationOutputMap(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QueryDerivationOutputMap(context.Background(), "/nix/store/abc-test.drv")
@@ -424,6 +438,7 @@ func TestClientQueryMissing(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QueryMissing(context.Background(), []string{
@@ -452,6 +467,7 @@ func TestClientQueryPathFromHashPart(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QueryPathFromHashPart(context.Background(), "abc123")
@@ -474,6 +490,7 @@ func TestClientQueryRealisation(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	result, err := client.QueryRealisation(context.Background(), "sha256:abc!out")
@@ -496,6 +513,7 @@ func TestQueryDerivationOutputMapUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.QueryDerivationOutputMap(context.Background(), "/nix/store/abc.drv")
@@ -513,6 +531,7 @@ func TestQueryMissingUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.QueryMissing(context.Background(), []string{"/nix/store/abc.drv!out"})
@@ -530,6 +549,7 @@ func TestQueryRealisationUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.QueryRealisation(context.Background(), "sha256:abc!out")
@@ -601,6 +621,7 @@ func TestClientQueryPathInfoProto123(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	assert.Equal(t, daemon.ProtoVersion(1, 23), client.Info().Version)
@@ -653,7 +674,7 @@ func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
 		count := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(2), count)
 
-		for i := uint64(0); i < count; i++ {
+		for range count {
 			_, _ = wire.ReadString(mock.conn, 64*1024)
 		}
 
@@ -674,6 +695,7 @@ func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	assert.Equal(t, daemon.ProtoVersion(1, 23), client.Info().Version)
@@ -705,6 +727,7 @@ func TestClientIsValidPathDaemonError(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.IsValidPath(context.Background(), "/nix/store/xxx-invalid")
@@ -736,6 +759,7 @@ func TestClientQueryPathInfoDaemonError(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.QueryPathInfo(context.Background(), "/nix/store/yyy-broken")

@@ -10,6 +10,7 @@ import (
 
 func TestWriteReadStrings(t *testing.T) {
 	var buf bytes.Buffer
+
 	err := wire.WriteStrings(&buf, []string{"foo", "bar", "baz"})
 	assert.NoError(t, err)
 	result, err := wire.ReadStrings(&buf, 1024)
@@ -19,6 +20,7 @@ func TestWriteReadStrings(t *testing.T) {
 
 func TestWriteReadStringsEmpty(t *testing.T) {
 	var buf bytes.Buffer
+
 	err := wire.WriteStrings(&buf, []string{})
 	assert.NoError(t, err)
 	result, err := wire.ReadStrings(&buf, 1024)

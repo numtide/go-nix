@@ -22,7 +22,7 @@ func writeTestString(buf *bytes.Buffer, s string) {
 	buf.WriteString(s)
 
 	pad := (8 - (len(s) % 8)) % 8
-	for i := 0; i < pad; i++ {
+	for range pad {
 		buf.WriteByte(0)
 	}
 }
@@ -262,6 +262,7 @@ func TestProcessStderrActivityWithFields(t *testing.T) {
 
 func TestLogChannelSinkDropCounter(t *testing.T) {
 	ch := make(chan daemon.LogMessage, 1)
+
 	var dropped atomic.Uint64
 
 	sink := daemon.NewLogChannelSink(ch, &dropped)

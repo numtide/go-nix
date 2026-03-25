@@ -59,14 +59,16 @@ func WithLogSink(sink LogSink) ConnectOption {
 
 // Connect dials the Nix daemon Unix socket and performs the handshake.
 func Connect(socketPath string, opts ...ConnectOption) (*Client, error) {
-	conn, err := net.Dial("unix", socketPath)
+	var d net.Dialer
+
+	conn, err := d.DialContext(context.Background(), "unix", socketPath)
 	if err != nil {
 		return nil, &ProtocolError{Op: "connect", Err: err}
 	}
 
 	client, err := newClient(conn, opts...)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 
 		return nil, err
 	}
@@ -91,9 +93,10 @@ func (c *Client) Close() error {
 	}
 
 	var err error
+
 	c.closeOnce.Do(func() {
 		c.closed.Store(true)
-		c.conn.SetDeadline(time.Now()) //nolint:errcheck // unblock any in-flight I/O
+		c.conn.SetDeadline(time.Now()) //nolint:errcheck,gosec // unblock any in-flight I/O
 		err = c.conn.Close()
 	})
 
@@ -120,11 +123,12 @@ func (c *Client) lockForCtx(ctx context.Context) (func() bool, error) {
 
 	if c.closed.Load() {
 		c.mu.Unlock()
+
 		return nil, ErrClosed
 	}
 
 	return context.AfterFunc(ctx, func() {
-		c.conn.SetDeadline(time.Now()) //nolint:errcheck // break blocked I/O
+		c.conn.SetDeadline(time.Now()) //nolint:errcheck,gosec // break blocked I/O
 	}), nil
 }
 
@@ -150,6 +154,7 @@ func (c *Client) requireVersion(op Operation, minVersion uint64) error {
 	if c.info.Version < minVersion {
 		return &UnsupportedOperationError{Op: op, MinVersion: minVersion, CurrentVersion: c.info.Version}
 	}
+
 	return nil
 }
 
@@ -157,7 +162,7 @@ func (c *Client) requireVersion(op Operation, minVersion uint64) error {
 // connection deadline. Used on error paths in Do/DoStreaming.
 func (c *Client) release(cancel func() bool) {
 	cancel()
-	c.conn.SetDeadline(noDeadline) //nolint:errcheck // best-effort reset
+	c.conn.SetDeadline(noDeadline) //nolint:errcheck,gosec // best-effort reset
 	c.mu.Unlock()
 }
 

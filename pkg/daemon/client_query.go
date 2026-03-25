@@ -202,7 +202,7 @@ func (c *Client) QuerySubstitutablePathInfos(
 
 			result = make(map[string]*SubstitutablePathInfo, count)
 
-			for i := uint64(0); i < count; i++ {
+			for range count {
 				storePath, err := wire.ReadString(r, MaxStringSize)
 				if err != nil {
 					return err
@@ -472,6 +472,7 @@ func (c *Client) NarFromPath(
 
 	go func() {
 		err := drainNAR(tee)
+
 		c.release(cancel)
 		pw.CloseWithError(err)
 	}()

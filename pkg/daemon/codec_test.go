@@ -49,6 +49,7 @@ func TestWriteReadPathInfoRoundTrip(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+
 	err := daemon.WritePathInfo(&buf, info, daemon.ProtocolVersion)
 	assert.NoError(t, err)
 
@@ -78,6 +79,7 @@ func TestWriteBasicDerivation(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+
 	err := daemon.WriteBasicDerivation(&buf, drv)
 	assert.NoError(t, err)
 
@@ -190,6 +192,7 @@ func TestWriteBasicDerivationEmpty(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+
 	err := daemon.WriteBasicDerivation(&buf, drv)
 	assert.NoError(t, err)
 
@@ -229,16 +232,16 @@ func TestWriteBasicDerivationEmpty(t *testing.T) {
 func TestReadBuildResult(t *testing.T) {
 	var buf bytes.Buffer
 
-	writeTestUint64(&buf, 0)               // status = Built
-	writeTestString(&buf, "")              // errorMsg
-	writeTestUint64(&buf, 1)               // timesBuilt
-	writeTestUint64(&buf, 0)               // isNonDeterministic = false
-	writeTestUint64(&buf, 1700000000)      // startTime
-	writeTestUint64(&buf, 1700000060)      // stopTime
-	writeTestUint64(&buf, 0)               // cpuUser: None
-	writeTestUint64(&buf, 0)               // cpuSystem: None
-	writeTestUint64(&buf, 1)     // builtOutputs count
-	writeTestString(&buf, "out") // output name
+	writeTestUint64(&buf, 0)          // status = Built
+	writeTestString(&buf, "")         // errorMsg
+	writeTestUint64(&buf, 1)          // timesBuilt
+	writeTestUint64(&buf, 0)          // isNonDeterministic = false
+	writeTestUint64(&buf, 1700000000) // startTime
+	writeTestUint64(&buf, 1700000060) // stopTime
+	writeTestUint64(&buf, 0)          // cpuUser: None
+	writeTestUint64(&buf, 0)          // cpuSystem: None
+	writeTestUint64(&buf, 1)          // builtOutputs count
+	writeTestString(&buf, "out")      // output name
 	writeTestString(&buf, `{"id":"sha256:abc123!out","outPath":"/nix/store/zzz-hello","signatures":["mykey:c2ln"],"dependentRealisations":{}}`)
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
@@ -253,11 +256,11 @@ func TestReadBuildResult(t *testing.T) {
 	assert.Nil(t, result.CpuSystem)
 	assert.Len(t, result.BuiltOutputs, 1)
 
-	real := result.BuiltOutputs["out"]
-	assert.Equal(t, "sha256:abc123!out", real.ID)
-	assert.Equal(t, "/nix/store/zzz-hello", real.OutPath)
-	assert.Equal(t, []string{"mykey:c2ln"}, real.Signatures)
-	assert.Empty(t, real.DependentRealisations)
+	realisation := result.BuiltOutputs["out"]
+	assert.Equal(t, "sha256:abc123!out", realisation.ID)
+	assert.Equal(t, "/nix/store/zzz-hello", realisation.OutPath)
+	assert.Equal(t, []string{"mykey:c2ln"}, realisation.Signatures)
+	assert.Empty(t, realisation.DependentRealisations)
 }
 
 func TestReadBuildResultNoOutputs(t *testing.T) {
@@ -326,10 +329,10 @@ func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 	writeTestUint64(&buf, 1)       // tag: present
 	writeTestUint64(&buf, 1000000) // value
 	// cpuSystem: optional<microseconds> = Some(250000)
-	writeTestUint64(&buf, 1)               // tag: present
-	writeTestUint64(&buf, 250000)          // value
-	writeTestUint64(&buf, 1)     // builtOutputs count
-	writeTestString(&buf, "out") // output name
+	writeTestUint64(&buf, 1)      // tag: present
+	writeTestUint64(&buf, 250000) // value
+	writeTestUint64(&buf, 1)      // builtOutputs count
+	writeTestString(&buf, "out")  // output name
 	writeTestString(&buf, `{"id":"sha256:def456!out","outPath":"/nix/store/yyy-world","signatures":[],"dependentRealisations":{}}`)
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
@@ -339,6 +342,7 @@ func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 
 	expectedCpuUser := time.Second
 	expectedCpuSystem := 250 * time.Millisecond
+
 	assert.Equal(t, &expectedCpuUser, result.CpuUser)
 	assert.Equal(t, &expectedCpuSystem, result.CpuSystem)
 
@@ -369,8 +373,8 @@ func TestReadBuildResultProto127(t *testing.T) {
 func TestReadBuildResultProto128(t *testing.T) {
 	// Proto 1.28 (0x011c): status + errorMsg + builtOutputs (no timing, no CPU)
 	var buf bytes.Buffer
-	writeTestUint64(&buf, 1)               // status = Substituted
-	writeTestString(&buf, "")              // errorMsg
+	writeTestUint64(&buf, 1)     // status = Substituted
+	writeTestString(&buf, "")    // errorMsg
 	writeTestUint64(&buf, 1)     // builtOutputs count
 	writeTestString(&buf, "out") // output name
 	writeTestString(&buf, `{"id":"sha256:abc!out","outPath":"/nix/store/zzz-pkg","signatures":[],"dependentRealisations":{}}`)
@@ -421,6 +425,7 @@ func TestWriteReadPathInfoRoundTripPreMeta(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+
 	err := daemon.WritePathInfo(&buf, info, daemon.ProtoVersion(1, 15))
 	assert.NoError(t, err)
 

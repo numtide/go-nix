@@ -43,7 +43,7 @@ func (resp *OpResponse) Close() error {
 			resp.cancel()
 		}
 
-		resp.conn.SetDeadline(noDeadline) //nolint:errcheck // best-effort deadline reset
+		resp.conn.SetDeadline(noDeadline) //nolint:errcheck,gosec // best-effort deadline reset
 		resp.mu.Unlock()
 	})
 

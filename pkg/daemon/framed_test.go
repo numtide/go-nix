@@ -53,6 +53,7 @@ func TestFramedWriterRoundTrip(t *testing.T) {
 	payload := []byte("hello, this is a test of framed writing with some data")
 
 	var buf bytes.Buffer
+
 	fw := daemon.NewFramedWriter(&buf)
 	_, err := fw.Write(payload)
 	assert.NoError(t, err)
@@ -68,6 +69,7 @@ func TestFramedWriterRoundTrip(t *testing.T) {
 
 func TestFramedWriterEmpty(t *testing.T) {
 	var buf bytes.Buffer
+
 	fw := daemon.NewFramedWriter(&buf)
 	err := fw.Close()
 	assert.NoError(t, err)
@@ -97,6 +99,7 @@ func TestFramedWriterNoPadding(t *testing.T) {
 	//   [h,e,l,l,o]       frame data (NO padding)
 	//   [0,0,0,0,0,0,0,0] terminator
 	var buf bytes.Buffer
+
 	fw := daemon.NewFramedWriter(&buf)
 	_, err := fw.Write([]byte("hello"))
 	assert.NoError(t, err)

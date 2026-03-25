@@ -181,6 +181,7 @@ func TestWriteClientSettingsWithOverrides(t *testing.T) {
 
 func TestWriteClientSettingsPreOverrides(t *testing.T) {
 	var buf bytes.Buffer
+
 	settings := daemon.DefaultClientSettings()
 	settings.Overrides = map[string]string{"sandbox": "true"} // Set, but should NOT be written
 

@@ -38,7 +38,7 @@ type LogChannelSink struct {
 
 // NewLogChannelSink wraps a channel with optional drop counter. If ch is nil,
 // the returned sink discards messages.
-func NewLogChannelSink(ch chan<- LogMessage, dropped *atomic.Uint64) LogSink {
+func NewLogChannelSink(ch chan<- LogMessage, dropped *atomic.Uint64) LogSink { //nolint:ireturn // factory function
 	return LogChannelSink{Ch: ch, Dropped: dropped}
 }
 
@@ -185,7 +185,7 @@ func readError(r io.Reader, version uint64) error {
 
 	traces := make([]ErrorTrace, nrTraces)
 
-	for i := uint64(0); i < nrTraces; i++ {
+	for i := range nrTraces {
 		havePos, err := wire.ReadUint64(r)
 		if err != nil {
 			return &ProtocolError{Op: "read trace havePos", Err: err}
@@ -292,7 +292,7 @@ func readActivityResult(r io.Reader) (*ActivityResult, error) {
 func readFields(r io.Reader, count uint64) ([]LogField, error) {
 	fields := make([]LogField, count)
 
-	for i := uint64(0); i < count; i++ {
+	for i := range count {
 		fieldType, err := wire.ReadUint64(r)
 		if err != nil {
 			return nil, &ProtocolError{Op: "read field type", Err: err}

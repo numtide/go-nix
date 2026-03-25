@@ -22,6 +22,7 @@ func TestClientConnectWrongMagic(t *testing.T) {
 
 	go func() {
 		var buf [8]byte
+
 		_, _ = io.ReadFull(server, buf[:]) // read client magic
 		binary.LittleEndian.PutUint64(buf[:], 0xdeadbeef)
 		_, _ = server.Write(buf[:])
@@ -41,6 +42,7 @@ func TestClientConnect(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	assert.Equal(t, daemon.ProtocolVersion, client.Info().Version)
@@ -62,9 +64,11 @@ func TestClientNilContext(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	var ctx context.Context
+
 	_, err = client.IsValidPath(ctx, "/nix/store/abc-test")
 	assert.ErrorIs(t, err, daemon.ErrNilContext)
 }
@@ -113,6 +117,7 @@ func TestClientWithLogChannel(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn, daemon.WithLogChannel(logs))
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	assert.NotNil(t, client.Logs())
@@ -128,6 +133,7 @@ func TestClientLogsNilByDefault(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	assert.Nil(t, client.Logs())
@@ -170,6 +176,7 @@ func TestClientSequentialOperations(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	// Op 1: IsValidPath -> true
@@ -235,6 +242,7 @@ func TestClientOperationAfterError(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	// First call: should fail with daemon error
@@ -275,6 +283,7 @@ func TestClientDaemonErrorWithTraces(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.IsValidPath(context.Background(), "/nix/store/abc-test")
@@ -318,6 +327,7 @@ func TestClientContextCancellation(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	// Start an operation with a context we'll cancel.

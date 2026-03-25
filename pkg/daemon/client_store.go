@@ -218,6 +218,7 @@ func (c *Client) AddToStoreNar(
 	if info == nil {
 		return ErrNilPathInfo
 	}
+
 	if source == nil {
 		return ErrNilReader
 	}
@@ -363,7 +364,7 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 			}
 
 			// Deprecated fields, always zero.
-			for i := 0; i < numDeprecatedGCFields; i++ {
+			for range numDeprecatedGCFields {
 				if err := wire.WriteUint64(w, 0); err != nil {
 					return err
 				}
@@ -472,7 +473,7 @@ func (c *Client) AddMultipleToStore(
 		return err
 	}
 
-	for i := 0; i < len(items); i++ {
+	for i := range len(items) {
 		if items[i].Source == nil {
 			return ErrNilReader
 		}
@@ -514,7 +515,7 @@ func (c *Client) AddMultipleToStore(
 	}
 
 	// Write each item: PathInfo + NAR data, all inside the framed stream.
-	for i := 0; i < len(items); i++ {
+	for i := range len(items) {
 		if err := WritePathInfo(fw, &items[i].Info, c.info.Version); err != nil {
 			ow.Abort()
 

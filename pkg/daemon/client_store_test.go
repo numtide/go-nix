@@ -38,6 +38,7 @@ func TestClientAddToStore(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	info, err := client.AddToStore(
@@ -71,6 +72,7 @@ func TestAddToStoreUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.AddToStore(
@@ -141,6 +143,7 @@ func TestClientAddTempRoot(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddTempRoot(context.Background(), "/nix/store/abc-test")
@@ -173,6 +176,7 @@ func TestClientAddIndirectRoot(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddIndirectRoot(context.Background(), "/home/user/result")
@@ -205,6 +209,7 @@ func TestClientAddPermRoot(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	resultPath, err := client.AddPermRoot(context.Background(), "/nix/store/abc-test", "/home/user/result")
@@ -246,6 +251,7 @@ func TestClientAddSignatures(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddSignatures(context.Background(), "/nix/store/abc-test", []string{"sig1", "sig2"})
@@ -274,6 +280,7 @@ func TestClientRegisterDrvOutput(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.RegisterDrvOutput(context.Background(), &daemon.Realisation{
@@ -338,6 +345,7 @@ func TestClientAddToStoreNar(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddToStoreNar(context.Background(), info, bytes.NewReader(narData), false, true)
@@ -379,6 +387,7 @@ func TestClientAddBuildLog(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddBuildLog(context.Background(), "/nix/store/00000000000000000000000000000000-test.drv", strings.NewReader(logContent))
@@ -395,6 +404,7 @@ func TestClientAddBuildLogInvalidPath(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddBuildLog(context.Background(), "/tmp/not-a-store-path", strings.NewReader("log"))
@@ -507,6 +517,7 @@ func TestClientAddMultipleToStore(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddMultipleToStore(context.Background(), items, true, false)
@@ -553,6 +564,7 @@ func TestClientAddMultipleToStoreEmpty(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddMultipleToStore(context.Background(), nil, false, false)
@@ -570,6 +582,7 @@ func TestClientSetOptions(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	settings := &daemon.ClientSettings{
@@ -610,6 +623,7 @@ func TestClientCollectGarbage(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	options := &daemon.GCOptions{
@@ -636,6 +650,7 @@ func TestClientVerifyStore(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	errorsFound, err := client.VerifyStore(context.Background(), true, false)
@@ -654,6 +669,7 @@ func TestClientOptimiseStore(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.OptimiseStore(context.Background())
@@ -672,6 +688,7 @@ func TestAddBuildLogUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddBuildLog(context.Background(), "/nix/store/abc-test.drv", strings.NewReader("log"))
@@ -689,6 +706,7 @@ func TestAddMultipleToStoreUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.AddMultipleToStore(context.Background(), nil, false, false)
@@ -706,6 +724,7 @@ func TestAddPermRootUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	_, err = client.AddPermRoot(context.Background(), "/nix/store/abc-test", "/home/user/result")
@@ -723,6 +742,7 @@ func TestRegisterDrvOutputUnsupportedVersion(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	err = client.RegisterDrvOutput(context.Background(), &daemon.Realisation{
@@ -748,6 +768,7 @@ func TestClientSetOptionsProto123(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn)
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	assert.Equal(t, daemon.ProtoVersion(1, 23), client.Info().Version)

@@ -48,6 +48,7 @@ func TestClientLogForwarding(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn, daemon.WithLogChannel(logs))
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
@@ -56,9 +57,11 @@ func TestClientLogForwarding(t *testing.T) {
 
 	// Verify log messages
 	assert.Len(t, logs, 2)
+
 	msg1 := <-logs
 	assert.Equal(t, daemon.LogNext, msg1.Type)
 	assert.Equal(t, "building...", msg1.Text)
+
 	msg2 := <-logs
 	assert.Equal(t, daemon.LogNext, msg2.Type)
 	assert.Equal(t, "done", msg2.Text)
@@ -110,6 +113,7 @@ func TestClientLogStartStopActivity(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn, daemon.WithLogChannel(logs))
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
@@ -133,6 +137,7 @@ func TestClientLogChannelFull(t *testing.T) {
 	defer mock.conn.Close()
 
 	logs := make(chan daemon.LogMessage, 1)
+
 	var dropped atomic.Uint64
 
 	go func() {
@@ -144,7 +149,7 @@ func TestClientLogChannelFull(t *testing.T) {
 		_, _ = wire.ReadString(mock.conn, 64*1024)
 
 		// Send 5 LogNext messages
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
 			_, _ = mock.conn.Write(buf[:])
 			writeWireStringTo(mock.conn, fmt.Sprintf("msg %d", i))
@@ -161,6 +166,7 @@ func TestClientLogChannelFull(t *testing.T) {
 
 	client, err := daemon.NewClientFromConn(clientConn, daemon.WithLogChannelWithDropCounter(logs, &dropped))
 	assert.NoError(t, err)
+
 	defer client.Close()
 
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")

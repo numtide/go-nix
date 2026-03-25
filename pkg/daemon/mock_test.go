@@ -206,7 +206,7 @@ func (m *mockDaemon) respondSetOptions() {
 	_, _ = io.ReadFull(m.conn, buf[:]) // overrides count
 	count := binary.LittleEndian.Uint64(buf[:])
 
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		_, _ = wire.ReadString(m.conn, 64*1024) // key
 		_, _ = wire.ReadString(m.conn, 64*1024) // value
 	}
@@ -249,7 +249,7 @@ func (m *mockDaemon) respondQueryValidPaths(valid []string) {
 	_, _ = io.ReadFull(m.conn, buf[:]) // count
 	count := binary.LittleEndian.Uint64(buf[:])
 
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		_, _ = wire.ReadString(m.conn, 64*1024)
 	}
 
@@ -280,7 +280,7 @@ func (m *mockDaemon) respondQuerySubstitutablePaths(paths []string) {
 	_, _ = io.ReadFull(m.conn, buf[:]) // count
 	count := binary.LittleEndian.Uint64(buf[:])
 
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		_, _ = wire.ReadString(m.conn, 64*1024)
 	}
 
@@ -385,7 +385,7 @@ func (m *mockDaemon) respondQueryMissing(info *daemon.MissingInfo) {
 	_, _ = io.ReadFull(m.conn, buf[:]) // count
 	count := binary.LittleEndian.Uint64(buf[:])
 
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		_, _ = wire.ReadString(m.conn, 64*1024)
 	}
 
@@ -459,7 +459,7 @@ func (m *mockDaemon) respondCollectGarbage(result *daemon.GCResult) {
 	_, _ = io.ReadFull(m.conn, buf[:]) // count
 	count := binary.LittleEndian.Uint64(buf[:])
 
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		_, _ = wire.ReadString(m.conn, 64*1024)
 	}
 
@@ -572,7 +572,7 @@ func (m *mockDaemon) respondQuerySubstitutablePathInfos(infos map[string]*daemon
 	_, _ = io.ReadFull(m.conn, buf[:]) // count
 	count := binary.LittleEndian.Uint64(buf[:])
 
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		_, _ = wire.ReadString(m.conn, 64*1024) // storePath
 		_, _ = wire.ReadString(m.conn, 64*1024) // ca (optional, empty string for none)
 	}
@@ -620,7 +620,7 @@ func (m *mockDaemon) respondAddToStore(info *daemon.PathInfo) {
 	_, _ = io.ReadFull(m.conn, buf[:]) // count
 	count := binary.LittleEndian.Uint64(buf[:])
 
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		_, _ = wire.ReadString(m.conn, 64*1024)
 	}
 

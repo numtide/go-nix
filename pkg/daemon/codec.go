@@ -209,14 +209,14 @@ func readOptionalMicroseconds(r io.Reader) (*time.Duration, error) {
 
 	switch tag {
 	case 0: // none
-		return nil, nil
+		return nil, nil //nolint:nilnil // nil pointer with nil error means "absent optional"
 	case optionalSome:
 		us, err := wire.ReadUint64(r)
 		if err != nil {
 			return nil, err
 		}
 
-		d := time.Duration(us) * time.Microsecond
+		d := time.Duration(us) * time.Microsecond //nolint:gosec // G115: microsecond values won't overflow int64
 
 		return &d, nil
 	default:
@@ -290,7 +290,7 @@ func ReadBuildResult(r io.Reader, version uint64) (*BuildResult, error) {
 
 		builtOutputs := make(map[string]Realisation, nrOutputs)
 
-		for i := uint64(0); i < nrOutputs; i++ {
+		for range nrOutputs {
 			name, err := wire.ReadString(r, MaxStringSize)
 			if err != nil {
 				return nil, &ProtocolError{Op: "read build result output name", Err: err}
@@ -301,12 +301,12 @@ func ReadBuildResult(r io.Reader, version uint64) (*BuildResult, error) {
 				return nil, &ProtocolError{Op: "read build result realisation", Err: err}
 			}
 
-			var real Realisation
-			if err := json.Unmarshal([]byte(realisationJSON), &real); err != nil {
+			var realisation Realisation
+			if err := json.Unmarshal([]byte(realisationJSON), &realisation); err != nil {
 				return nil, &ProtocolError{Op: "read build result realisation JSON", Err: err}
 			}
 
-			builtOutputs[name] = real
+			builtOutputs[name] = realisation
 		}
 
 		result.BuiltOutputs = builtOutputs
