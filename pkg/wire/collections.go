@@ -30,7 +30,7 @@ func ReadStrings(r io.Reader, maxBytes uint64) ([]string, error) {
 
 	ss := make([]string, count)
 
-	for i := uint64(0); i < count; i++ {
+	for i := range count {
 		s, err := ReadString(r, maxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("read string list entry: %w", err)
@@ -77,7 +77,7 @@ func ReadStringMap(r io.Reader, maxBytes uint64) (map[string]string, error) {
 
 	m := make(map[string]string, count)
 
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		key, err := ReadString(r, maxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("read string map key: %w", err)

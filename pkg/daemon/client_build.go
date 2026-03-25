@@ -49,7 +49,7 @@ func (c *Client) BuildPathsWithResults(ctx context.Context, paths []string, mode
 
 			results = make([]BuildResult, count)
 
-			for i := uint64(0); i < count; i++ {
+			for i := range count {
 				// Each entry is a DerivedPath string (ignored) followed by a BuildResult.
 				_, err := wire.ReadString(r, MaxStringSize)
 				if err != nil {

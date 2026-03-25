@@ -51,10 +51,7 @@ func (fr *FramedReader) Read(p []byte) (int, error) {
 	}
 
 	// Limit the read to the remaining bytes in the current frame.
-	toRead := uint64(len(p))
-	if toRead > fr.remaining {
-		toRead = fr.remaining
-	}
+	toRead := min(uint64(len(p)), fr.remaining)
 
 	n, err := fr.r.Read(p[:toRead])
 	fr.remaining -= uint64(n) //nolint:gosec // G115: n is always non-negative from a Read call
@@ -119,10 +116,7 @@ func (fw *FramedWriter) Write(p []byte) (int, error) {
 
 	for len(p) > 0 {
 		// Fill the buffer up to capacity.
-		space := cap(fw.buf) - len(fw.buf)
-		if space > len(p) {
-			space = len(p)
-		}
+		space := min(cap(fw.buf)-len(fw.buf), len(p))
 
 		fw.buf = append(fw.buf, p[:space]...)
 		p = p[space:]

@@ -51,10 +51,7 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	}
 
 	// 4. Client computes negotiated version = min(serverVersion, ProtocolVersion).
-	negotiated := serverVersion
-	if ProtocolVersion < negotiated {
-		negotiated = ProtocolVersion
-	}
+	negotiated := min(serverVersion, ProtocolVersion)
 
 	// Validate the negotiated version is at least the minimum we support.
 	if negotiated < MinProtocolVersion {
