@@ -44,3 +44,13 @@ func (e *Encoder) WriteStringMap(m map[string]string) error {
 func (e *Encoder) Writer() io.Writer {
 	return e.w
 }
+
+// Encode encodes a value that implements Marshaler.
+func (e *Encoder) Encode(v Marshaler) error {
+	return v.MarshalNix(e)
+}
+
+// Marshaler is implemented by types that can serialize themselves in Nix wire format.
+type Marshaler interface {
+	MarshalNix(enc *Encoder) error
+}

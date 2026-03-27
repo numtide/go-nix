@@ -87,24 +87,12 @@ func (c *Client) EnsurePath(ctx context.Context, path string) error {
 // BuildDerivation builds a derivation given its store path and definition.
 // The derivation is serialized as a BasicDerivation on the wire, and mode
 // controls rebuild behaviour.
-func (c *Client) BuildDerivation(
-	ctx context.Context, drvPath string, drv *BasicDerivation, mode BuildMode,
-) (*BuildResult, error) {
-	if drv == nil {
+func (c *Client) BuildDerivation(ctx context.Context, req *BuildDerivationRequest) (*BuildResult, error) {
+	if req.Derivation == nil {
 		return nil, ErrNilDerivation
 	}
 
-	resp, err := c.Execute(ctx, OpBuildDerivation, func(enc *wire.Encoder) error {
-		if err := enc.WriteString(drvPath); err != nil {
-			return err
-		}
-
-		if err := WriteBasicDerivation(enc, drv); err != nil {
-			return err
-		}
-
-		return enc.WriteUint64(uint64(mode))
-	})
+	resp, err := c.Execute(ctx, OpBuildDerivation, req.MarshalNix)
 	if err != nil {
 		return nil, err
 	}

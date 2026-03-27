@@ -194,32 +194,12 @@ func (c *Client) QuerySubstitutablePathInfos(
 			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
 		}
 
-		deriver, err := dec.ReadString()
-		if err != nil {
+		var info SubstitutablePathInfo
+		if err := dec.Decode(&info); err != nil {
 			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
 		}
 
-		references, err := dec.ReadStrings()
-		if err != nil {
-			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
-		}
-
-		downloadSize, err := dec.ReadUint64()
-		if err != nil {
-			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
-		}
-
-		narSize, err := dec.ReadUint64()
-		if err != nil {
-			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
-		}
-
-		result[storePath] = &SubstitutablePathInfo{
-			Deriver:      deriver,
-			References:   references,
-			DownloadSize: downloadSize,
-			NarSize:      narSize,
-		}
+		result[storePath] = &info
 	}
 
 	return result, nil

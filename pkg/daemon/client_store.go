@@ -24,15 +24,8 @@ import (
 //
 // The source provides the data to import (raw bytes for flat, NAR for recursive).
 // Returns the PathInfo computed by the daemon. Requires protocol >= 1.25.
-func (c *Client) AddToStore(
-	ctx context.Context,
-	name string,
-	caMethodWithAlgo string,
-	references []string,
-	repair bool,
-	source io.Reader,
-) (*PathInfo, error) {
-	if source == nil {
+func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest) (*PathInfo, error) {
+	if req.Source == nil {
 		return nil, ErrNilReader
 	}
 
@@ -40,31 +33,7 @@ func (c *Client) AddToStore(
 		return nil, err
 	}
 
-	resp, err := c.Execute(ctx, OpAddToStore, func(enc *wire.Encoder) error {
-		if err := enc.WriteString(name); err != nil {
-			return err
-		}
-
-		if err := enc.WriteString(caMethodWithAlgo); err != nil {
-			return err
-		}
-
-		if err := enc.WriteStrings(references); err != nil {
-			return err
-		}
-
-		if err := enc.WriteBool(repair); err != nil {
-			return err
-		}
-
-		// stream dump data as framed.
-		fw := NewFramedWriter(enc.Writer())
-		if _, err := io.Copy(fw, source); err != nil {
-			return err
-		}
-
-		return fw.Close()
-	})
+	resp, err := c.Execute(ctx, OpAddToStore, req.MarshalNix)
 	if err != nil {
 		return nil, err
 	}
@@ -269,54 +238,16 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 		return nil, ErrNilOptions
 	}
 
-	resp, err := c.Execute(ctx, OpCollectGarbage, func(enc *wire.Encoder) error {
-		if err := enc.WriteUint64(uint64(options.Action)); err != nil {
-			return err
-		}
-
-		if err := enc.WriteStrings(options.PathsToDelete); err != nil {
-			return err
-		}
-
-		if err := enc.WriteBool(options.IgnoreLiveness); err != nil {
-			return err
-		}
-
-		if err := enc.WriteUint64(options.MaxFreed); err != nil {
-			return err
-		}
-
-		// deprecated fields, always zero.
-		for range numDeprecatedGCFields {
-			if err := enc.WriteUint64(0); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
+	resp, err := c.Execute(ctx, OpCollectGarbage, options.MarshalNix)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Close()
 
-	dec := wire.NewDecoder(resp, MaxStringSize)
-
 	var result GCResult
 
-	result.Paths, err = dec.ReadStrings()
-	if err != nil {
-		return nil, &ProtocolError{Op: "CollectGarbage read response", Err: err}
-	}
-
-	result.BytesFreed, err = dec.ReadUint64()
-	if err != nil {
-		return nil, &ProtocolError{Op: "CollectGarbage read response", Err: err}
-	}
-
-	// deprecated field, ignored.
-	_, err = dec.ReadUint64()
-	if err != nil {
+	dec := wire.NewDecoder(resp, MaxStringSize)
+	if err := dec.Decode(&result); err != nil {
 		return nil, &ProtocolError{Op: "CollectGarbage read response", Err: err}
 	}
 

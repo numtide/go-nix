@@ -44,3 +44,13 @@ func (d *Decoder) ReadStrings() ([]string, error) {
 func (d *Decoder) ReadStringMap() (map[string]string, error) {
 	return ReadStringMap(d.r, d.maxBytes)
 }
+
+// Decode decodes a value that implements Unmarshaler.
+func (d *Decoder) Decode(v Unmarshaler) error {
+	return v.UnmarshalNix(d)
+}
+
+// Unmarshaler is implemented by types that can deserialize themselves from Nix wire format.
+type Unmarshaler interface {
+	UnmarshalNix(dec *Decoder) error
+}

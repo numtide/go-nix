@@ -636,13 +636,12 @@ func TestIntegrationAddToStore(t *testing.T) {
 
 	// Use AddToStore with fixed:r:sha256 (recursive NAR, SHA-256).
 	// The daemon computes the store path from the NAR content.
-	info, err := client.AddToStore(ctx,
-		"go-nix-addtostore-test",
-		"fixed:r:sha256",
-		[]string{},
-		false,
-		bytes.NewReader(narData),
-	)
+	info, err := client.AddToStore(ctx, &daemon.AddToStoreRequest{
+		Name:             "go-nix-addtostore-test",
+		CAMethodWithAlgo: "fixed:r:sha256",
+		References:       []string{},
+		Source:           bytes.NewReader(narData),
+	})
 	require.NoError(t, err)
 	require.NotNil(t, info)
 
@@ -675,13 +674,12 @@ func TestIntegrationAddToStoreFlat(t *testing.T) {
 	// For flat content addressing, the source is the raw file content (not NAR).
 	content := []byte("flat content-addressed file\n")
 
-	info, err := client.AddToStore(ctx,
-		"go-nix-flat-test",
-		"fixed:sha256",
-		[]string{},
-		false,
-		bytes.NewReader(content),
-	)
+	info, err := client.AddToStore(ctx, &daemon.AddToStoreRequest{
+		Name:             "go-nix-flat-test",
+		CAMethodWithAlgo: "fixed:sha256",
+		References:       []string{},
+		Source:           bytes.NewReader(content),
+	})
 	require.NoError(t, err)
 	require.NotNil(t, info)
 
@@ -703,10 +701,18 @@ func TestIntegrationAddToStoreIdempotent(t *testing.T) {
 	content := []byte("idempotent content\n")
 
 	// Add the same content twice — should return the same path both times.
-	info1, err := client.AddToStore(ctx, "go-nix-idempotent", "fixed:sha256", nil, false, bytes.NewReader(content))
+	info1, err := client.AddToStore(ctx, &daemon.AddToStoreRequest{
+		Name:             "go-nix-idempotent",
+		CAMethodWithAlgo: "fixed:sha256",
+		Source:           bytes.NewReader(content),
+	})
 	require.NoError(t, err)
 
-	info2, err := client.AddToStore(ctx, "go-nix-idempotent", "fixed:sha256", nil, false, bytes.NewReader(content))
+	info2, err := client.AddToStore(ctx, &daemon.AddToStoreRequest{
+		Name:             "go-nix-idempotent",
+		CAMethodWithAlgo: "fixed:sha256",
+		Source:           bytes.NewReader(content),
+	})
 	require.NoError(t, err)
 
 	assert.Equal(t, info1.StorePath, info2.StorePath, "same content should produce same store path")

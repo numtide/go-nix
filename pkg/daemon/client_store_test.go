@@ -39,14 +39,12 @@ func TestClientAddToStore(t *testing.T) {
 
 	defer client.Close()
 
-	info, err := client.AddToStore(
-		t.Context(),
-		"hello-2.12.1",
-		"fixed:r:sha256",
-		[]string{},
-		false,
-		bytes.NewReader(dumpData),
-	)
+	info, err := client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
+		Name:             "hello-2.12.1",
+		CAMethodWithAlgo: "fixed:r:sha256",
+		References:       []string{},
+		Source:           bytes.NewReader(dumpData),
+	})
 	rq.NoError(err)
 	rq.NotNil(info)
 	rq.Equal(expected.StorePath, info.StorePath)
@@ -71,14 +69,11 @@ func TestAddToStoreUnsupportedVersion(t *testing.T) {
 
 	defer client.Close()
 
-	_, err = client.AddToStore(
-		t.Context(),
-		"hello",
-		"fixed:r:sha256",
-		nil,
-		false,
-		bytes.NewReader([]byte("data")),
-	)
+	_, err = client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
+		Name:             "hello",
+		CAMethodWithAlgo: "fixed:r:sha256",
+		Source:           bytes.NewReader([]byte("data")),
+	})
 	rq.Error(err)
 	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
@@ -86,7 +81,10 @@ func TestAddToStoreUnsupportedVersion(t *testing.T) {
 func TestAddToStoreNilSource(t *testing.T) {
 	client := &daemon.Client{}
 
-	_, err := client.AddToStore(t.Context(), "hello", "fixed:r:sha256", nil, false, nil)
+	_, err := client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
+		Name:             "hello",
+		CAMethodWithAlgo: "fixed:r:sha256",
+	})
 	require.ErrorIs(t, err, daemon.ErrNilReader)
 }
 

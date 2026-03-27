@@ -12,7 +12,10 @@ import (
 func TestBuildDerivationNil(t *testing.T) {
 	client := &daemon.Client{}
 
-	_, err := client.BuildDerivation(t.Context(), "/nix/store/abc.drv", nil, daemon.BuildModeNormal)
+	_, err := client.BuildDerivation(t.Context(), &daemon.BuildDerivationRequest{
+		DrvPath: "/nix/store/abc.drv",
+		Mode:    daemon.BuildModeNormal,
+	})
 	require.ErrorIs(t, err, daemon.ErrNilDerivation)
 }
 
@@ -227,7 +230,11 @@ func TestClientBuildDerivation(t *testing.T) {
 
 	defer client.Close()
 
-	result, err := client.BuildDerivation(t.Context(), "/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
+	result, err := client.BuildDerivation(t.Context(), &daemon.BuildDerivationRequest{
+		DrvPath:    "/nix/store/xyz-test.drv",
+		Derivation: drv,
+		Mode:       daemon.BuildModeNormal,
+	})
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusBuilt, result.Status)
 	rq.Equal(uint64(1), result.TimesBuilt)
@@ -334,7 +341,11 @@ func TestClientBuildDerivationProto127(t *testing.T) {
 
 	rq.Equal(daemon.ProtoVersion(1, 27), client.Info().Version)
 
-	result, err := client.BuildDerivation(t.Context(), "/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
+	result, err := client.BuildDerivation(t.Context(), &daemon.BuildDerivationRequest{
+		DrvPath:    "/nix/store/xyz-test.drv",
+		Derivation: drv,
+		Mode:       daemon.BuildModeNormal,
+	})
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusBuilt, result.Status)
 	rq.Equal("", result.ErrorMsg)

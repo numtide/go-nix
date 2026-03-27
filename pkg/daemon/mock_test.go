@@ -513,40 +513,16 @@ func respondCollectGarbage(result *daemon.GCResult) func(net.Conn) error {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpCollectGarbage, op)
 		}
 
-		// read request: action (uint64)
-		_, _ = dec.ReadUint64()
+		// drain request
+		var req daemon.GCOptions
 
-		// read pathsToDelete (count + strings)
-		count, _ := dec.ReadUint64()
-		for range count {
-			_, _ = dec.ReadString()
-		}
-
-		// read ignoreLiveness (bool)
-		_, _ = dec.ReadUint64()
-
-		// read maxFreed (uint64)
-		_, _ = dec.ReadUint64()
-
-		// read 3 deprecated fields
-		_, _ = dec.ReadUint64()
-		_, _ = dec.ReadUint64()
-		_, _ = dec.ReadUint64()
+		_ = dec.Decode(&req)
 
 		// send LogLast
 		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// send response: paths (count + strings)
-		_ = enc.WriteUint64(uint64(len(result.Paths)))
-		for _, p := range result.Paths {
-			_ = enc.WriteString(p)
-		}
-
-		// bytesFreed
-		_ = enc.WriteUint64(result.BytesFreed)
-
-		// deprecated field
-		_ = enc.WriteUint64(0)
+		// send response
+		_ = enc.Encode(result)
 
 		return nil
 	}
