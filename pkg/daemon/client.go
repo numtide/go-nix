@@ -128,12 +128,13 @@ func (c *Client) requireVersion(op Operation, minVersion uint64) error {
 	return nil
 }
 
-// Execute executes a simple (non-streaming) operation. It writes the operation
-// code, copies req to the wire (if non-nil), flushes, drains stderr, and
-// returns an OpResponse for reading the reply. The caller must call
-// OpResponse.Close when done, before starting another operation.
+// Execute executes a daemon operation. It writes the operation code, calls
+// writeReq (if non-nil) to let the caller write request data via a
+// wire.Encoder, flushes, and returns an OpResponse for reading the reply.
+// The caller must call OpResponse.Close when done, before starting another
+// operation.
 func (c *Client) Execute(
-	ctx context.Context, op Operation, args io.Reader,
+	ctx context.Context, op Operation, writeReq func(enc *wire.Encoder) error,
 ) (resp *OpResponse, err error) {
 	var unsetCancelDeadline func() error
 
@@ -155,13 +156,15 @@ func (c *Client) Execute(
 		}
 	}()
 
+	enc := wire.NewEncoder(c.w)
+
 	// write the op code
-	if err = wire.WriteUint64(c.w, uint64(op)); err != nil {
+	if err = enc.WriteUint64(uint64(op)); err != nil {
 		return nil, &ProtocolError{Op: op.String() + " write op", Err: err}
 	}
 
-	if args != nil {
-		if _, err = io.Copy(c.w, args); err != nil {
+	if writeReq != nil {
+		if err = writeReq(enc); err != nil {
 			return nil, &ProtocolError{Op: op.String() + " write request", Err: err}
 		}
 	}

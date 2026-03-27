@@ -1,7 +1,6 @@
 package daemon_test
 
 import (
-	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -125,26 +124,25 @@ func TestClientNarFromPath(t *testing.T) {
 	fileContent := "fake-nar-content-for-testing"
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		rq.Equal(uint64(daemon.OpNarFromPath), op)
 
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		_, _ = dec.ReadString() // path
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// Send a valid NAR (raw format, not length-prefixed).
-		writeWireStringTo(conn, "nix-archive-1")
-		writeWireStringTo(conn, "(")
-		writeWireStringTo(conn, "type")
-		writeWireStringTo(conn, "regular")
-		writeWireStringTo(conn, "contents")
-		writeWireStringTo(conn, fileContent)
-		writeWireStringTo(conn, ")")
+		_ = enc.WriteString("nix-archive-1")
+		_ = enc.WriteString("(")
+		_ = enc.WriteString("type")
+		_ = enc.WriteString("regular")
+		_ = enc.WriteString("contents")
+		_ = enc.WriteString(fileContent)
+		_ = enc.WriteString(")")
 
 		return nil
 	})
@@ -178,19 +176,18 @@ func TestClientFindRoots(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op code
+		_, _ = dec.ReadUint64() // op code
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// Map: count=1
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
-		writeWireStringTo(conn, "/proc/1/root")
-		writeWireStringTo(conn, "/nix/store/abc-test")
+		_ = enc.WriteUint64(1)
+		_ = enc.WriteString("/proc/1/root")
+		_ = enc.WriteString("/nix/store/abc-test")
 
 		return nil
 	})
@@ -600,48 +597,40 @@ func TestClientQueryPathInfoProto123(t *testing.T) {
 	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		// Read op code
-		_, _ = io.ReadFull(conn, buf[:])
-		op := binary.LittleEndian.Uint64(buf[:])
+		// read op code
+		op, _ := dec.ReadUint64()
 		rq.Equal(uint64(daemon.OpQueryPathInfo), op)
 
-		// Read path string
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read path string
+		_, _ = dec.ReadString()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send found = true
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		// send found = true
+		_ = enc.WriteUint64(1)
 
-		// Send PathInfo fields
-		writeWireStringTo(conn, "/nix/store/xyz-test.drv") // deriver
-		writeWireStringTo(conn, "sha256:abc123")           // narHash
+		// send PathInfo fields
+		_ = enc.WriteString("/nix/store/xyz-test.drv") // deriver
+		_ = enc.WriteString("sha256:abc123")           // narHash
 
 		// references: count=1
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
-		writeWireStringTo(conn, "/nix/store/dep-one")
+		_ = enc.WriteUint64(1)
+		_ = enc.WriteString("/nix/store/dep-one")
 
-		binary.LittleEndian.PutUint64(buf[:], 1700000000) // registrationTime
-		_, _ = conn.Write(buf[:])
-
-		binary.LittleEndian.PutUint64(buf[:], 54321) // narSize
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1700000000) // registrationTime
+		_ = enc.WriteUint64(54321)      // narSize
 
 		// Proto 1.23 >= 1.16, so we DO send ultimate/sigs/ca
-		binary.LittleEndian.PutUint64(buf[:], 0) // ultimate = false
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteBool(false) // ultimate = false
 
 		// sigs: count=0
-		binary.LittleEndian.PutUint64(buf[:], 0)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(0)
 
-		writeWireStringTo(conn, "") // ca = ""
+		_ = enc.WriteString("") // ca = ""
 
 		return nil
 	})
@@ -691,34 +680,30 @@ func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
 	}
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		// Read op code
-		_, _ = io.ReadFull(conn, buf[:])
-		op := binary.LittleEndian.Uint64(buf[:])
+		// read op code
+		op, _ := dec.ReadUint64()
 		rq.Equal(uint64(daemon.OpQueryValidPaths), op)
 
-		// Read paths list: count + strings
-		_, _ = io.ReadFull(conn, buf[:])
-		count := binary.LittleEndian.Uint64(buf[:])
+		// read paths list: count + strings
+		count, _ := dec.ReadUint64()
 		rq.Equal(uint64(2), count)
 
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024)
+			_, _ = dec.ReadString()
 		}
 
 		// DO NOT read substituteOk — proto 1.21 < 1.27
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send result paths: count + strings
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(validResult)))
-		_, _ = conn.Write(buf[:])
-
+		// send result paths: count + strings
+		_ = enc.WriteUint64(uint64(len(validResult)))
 		for _, p := range validResult {
-			writeWireStringTo(conn, p)
+			_ = enc.WriteString(p)
 		}
 
 		return nil
@@ -754,7 +739,8 @@ func TestClientIsValidPathDaemonError(t *testing.T) {
 	}
 
 	mock.onAccept(respondWithError(daemon.OpIsValidPath, func(conn net.Conn) {
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		dec := wire.NewDecoder(conn, 64*1024)
+		_, _ = dec.ReadString() // path
 	}, expectedErr))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
@@ -787,7 +773,8 @@ func TestClientQueryPathInfoDaemonError(t *testing.T) {
 	}
 
 	mock.onAccept(respondWithError(daemon.OpQueryPathInfo, func(conn net.Conn) {
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		dec := wire.NewDecoder(conn, 64*1024)
+		_, _ = dec.ReadString() // path
 	}, expectedErr))
 
 	client, err := daemon.Connect(t.Context(), mock.path)

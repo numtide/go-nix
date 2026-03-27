@@ -26,7 +26,9 @@ func TestReadPathInfo(t *testing.T) {
 	writeTestString(&buf, "cache.example.com-1:abc123sig") // signature
 	writeTestString(&buf, "")                              // contentAddress
 
-	info, err := daemon.ReadPathInfo(&buf, "/nix/store/xyz-test", daemon.ProtocolVersion)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	info, err := daemon.ReadPathInfo(dec, "/nix/store/xyz-test", daemon.ProtocolVersion)
 	rq.NoError(err)
 	rq.Equal("/nix/store/xyz-test", info.StorePath)
 	rq.Equal("/nix/store/abc-foo.drv", info.Deriver)
@@ -54,17 +56,21 @@ func TestWriteReadPathInfoRoundTrip(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	err := daemon.WritePathInfo(&buf, info, daemon.ProtocolVersion)
+	enc := wire.NewEncoder(&buf)
+
+	err := daemon.WritePathInfo(enc, info, daemon.ProtocolVersion)
 	rq.NoError(err)
 
 	// ReadPathInfo reads UnkeyedValidPathInfo (no storePath prefix),
 	// but WritePathInfo writes ValidPathInfo (with storePath prefix).
 	// So we need to read the storePath first.
-	storePath, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	storePath, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/xyz-test", storePath)
 
-	got, err := daemon.ReadPathInfo(&buf, storePath, daemon.ProtocolVersion)
+	got, err := daemon.ReadPathInfo(dec, storePath, daemon.ProtocolVersion)
 	rq.NoError(err)
 	rq.Equal(info, got)
 }
@@ -86,104 +92,108 @@ func TestWriteBasicDerivation(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	err := daemon.WriteBasicDerivation(&buf, drv)
+	enc := wire.NewEncoder(&buf)
+
+	err := daemon.WriteBasicDerivation(enc, drv)
 	rq.NoError(err)
 
-	// Verify outputs count = 2
-	count, err := wire.ReadUint64(&buf)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	// verify outputs count = 2
+	count, err := dec.ReadUint64()
 	rq.NoError(err)
 	rq.Equal(uint64(2), count)
 
-	// First output should be "dev" (sorted)
-	name, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	// first output should be "dev" (sorted)
+	name, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("dev", name)
 
-	path, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	path, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/abc-dev", path)
 
-	hashAlgo, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	hashAlgo, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("", hashAlgo)
 
-	hash, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	hash, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("", hash)
 
-	// Second output should be "out"
-	name, err = wire.ReadString(&buf, daemon.MaxStringSize)
+	// second output should be "out"
+	name, err = dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("out", name)
 
-	path, err = wire.ReadString(&buf, daemon.MaxStringSize)
+	path, err = dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/abc-out", path)
 
-	_, err = wire.ReadString(&buf, daemon.MaxStringSize) // hashAlgo
+	_, err = dec.ReadString() // hashAlgo
 	rq.NoError(err)
 
-	_, err = wire.ReadString(&buf, daemon.MaxStringSize) // hash
+	_, err = dec.ReadString() // hash
 	rq.NoError(err)
 
-	// Verify inputs count = 2
-	count, err = wire.ReadUint64(&buf)
+	// verify inputs count = 2
+	count, err = dec.ReadUint64()
 	rq.NoError(err)
 	rq.Equal(uint64(2), count)
 
-	input1, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	input1, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/def-input", input1)
 
-	input2, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	input2, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/ghi-input", input2)
 
-	// Verify platform
-	platform, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	// verify platform
+	platform, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("x86_64-linux", platform)
 
-	// Verify builder
-	builder, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	// verify builder
+	builder, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/bash/bin/bash", builder)
 
-	// Verify args count = 2
-	count, err = wire.ReadUint64(&buf)
+	// verify args count = 2
+	count, err = dec.ReadUint64()
 	rq.NoError(err)
 	rq.Equal(uint64(2), count)
 
-	arg1, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	arg1, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("-e", arg1)
 
-	arg2, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	arg2, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("builder.sh", arg2)
 
-	// Verify env count = 2 (sorted: "dev" < "out")
-	count, err = wire.ReadUint64(&buf)
+	// verify env count = 2 (sorted: "dev" < "out")
+	count, err = dec.ReadUint64()
 	rq.NoError(err)
 	rq.Equal(uint64(2), count)
 
-	key1, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	key1, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("dev", key1)
 
-	val1, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	val1, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/abc-dev", val1)
 
-	key2, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	key2, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("out", key2)
 
-	val2, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	val2, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/abc-out", val2)
 
-	// Buffer should be fully consumed
+	// buffer should be fully consumed
 	rq.Equal(0, buf.Len())
 }
 
@@ -201,36 +211,40 @@ func TestWriteBasicDerivationEmpty(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	err := daemon.WriteBasicDerivation(&buf, drv)
+	enc := wire.NewEncoder(&buf)
+
+	err := daemon.WriteBasicDerivation(enc, drv)
 	rq.NoError(err)
 
-	// Outputs count = 0
-	count, err := wire.ReadUint64(&buf)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	// outputs count = 0
+	count, err := dec.ReadUint64()
 	rq.NoError(err)
 	rq.Equal(uint64(0), count)
 
-	// Inputs count = 0
-	count, err = wire.ReadUint64(&buf)
+	// inputs count = 0
+	count, err = dec.ReadUint64()
 	rq.NoError(err)
 	rq.Equal(uint64(0), count)
 
-	// Platform
-	platform, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	// platform
+	platform, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("x86_64-linux", platform)
 
-	// Builder
-	builder, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	// builder
+	builder, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/bin/sh", builder)
 
-	// Args count = 0
-	count, err = wire.ReadUint64(&buf)
+	// args count = 0
+	count, err = dec.ReadUint64()
 	rq.NoError(err)
 	rq.Equal(uint64(0), count)
 
-	// Env count = 0
-	count, err = wire.ReadUint64(&buf)
+	// env count = 0
+	count, err = dec.ReadUint64()
 	rq.NoError(err)
 	rq.Equal(uint64(0), count)
 
@@ -254,7 +268,9 @@ func TestReadBuildResult(t *testing.T) {
 	writeTestString(&buf, "out")      // output name
 	writeTestString(&buf, `{"id":"sha256:abc123!out","outPath":"/nix/store/zzz-hello","signatures":["mykey:c2ln"],"dependentRealisations":{}}`)
 
-	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	result, err := daemon.ReadBuildResult(dec, daemon.ProtocolVersion)
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusBuilt, result.Status)
 	rq.Equal("", result.ErrorMsg)
@@ -288,7 +304,9 @@ func TestReadBuildResultNoOutputs(t *testing.T) {
 	writeTestUint64(&buf, 0)              // cpuSystem: None
 	writeTestUint64(&buf, 0)              // builtOutputs count
 
-	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	result, err := daemon.ReadBuildResult(dec, daemon.ProtocolVersion)
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusPermanentFailure, result.Status)
 	rq.Equal("build failed", result.ErrorMsg)
@@ -315,7 +333,9 @@ func TestReadBuildResultWithCPUTimes(t *testing.T) {
 	writeTestUint64(&buf, 0) // tag: absent
 	writeTestUint64(&buf, 0) // builtOutputs count
 
-	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	result, err := daemon.ReadBuildResult(dec, daemon.ProtocolVersion)
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusBuilt, result.Status)
 	rq.Equal(uint64(1), result.TimesBuilt)
@@ -351,7 +371,9 @@ func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 	writeTestString(&buf, "out")  // output name
 	writeTestString(&buf, `{"id":"sha256:def456!out","outPath":"/nix/store/yyy-world","signatures":[],"dependentRealisations":{}}`)
 
-	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	result, err := daemon.ReadBuildResult(dec, daemon.ProtocolVersion)
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusBuilt, result.Status)
 	rq.Equal(uint64(2), result.TimesBuilt)
@@ -376,7 +398,9 @@ func TestReadBuildResultProto127(t *testing.T) {
 	writeTestUint64(&buf, 0)            // status = Built
 	writeTestString(&buf, "some error") // errorMsg
 
-	result, err := daemon.ReadBuildResult(&buf, daemon.ProtoVersion(1, 27))
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	result, err := daemon.ReadBuildResult(dec, daemon.ProtoVersion(1, 27))
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusBuilt, result.Status)
 	rq.Equal("some error", result.ErrorMsg)
@@ -399,7 +423,9 @@ func TestReadBuildResultProto128(t *testing.T) {
 	writeTestString(&buf, "out") // output name
 	writeTestString(&buf, `{"id":"sha256:abc!out","outPath":"/nix/store/zzz-pkg","signatures":[],"dependentRealisations":{}}`)
 
-	result, err := daemon.ReadBuildResult(&buf, daemon.ProtoVersion(1, 28))
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	result, err := daemon.ReadBuildResult(dec, daemon.ProtoVersion(1, 28))
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusSubstituted, result.Status)
 	rq.Equal(uint64(0), result.TimesBuilt) // no timing fields
@@ -422,7 +448,9 @@ func TestReadBuildResultProto129(t *testing.T) {
 	writeTestUint64(&buf, 1700000060) // stopTime
 	writeTestUint64(&buf, 0)          // builtOutputs count
 
-	result, err := daemon.ReadBuildResult(&buf, daemon.ProtoVersion(1, 29))
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	result, err := daemon.ReadBuildResult(dec, daemon.ProtoVersion(1, 29))
 	rq.NoError(err)
 	rq.Equal(daemon.BuildStatusBuilt, result.Status)
 	rq.Equal(uint64(3), result.TimesBuilt)
@@ -450,16 +478,20 @@ func TestWriteReadPathInfoRoundTripPreMeta(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	err := daemon.WritePathInfo(&buf, info, daemon.ProtoVersion(1, 15))
+	enc := wire.NewEncoder(&buf)
+
+	err := daemon.WritePathInfo(enc, info, daemon.ProtoVersion(1, 15))
 	rq.NoError(err)
 
 	// Read back storePath (WritePathInfo writes it as first field)
-	storePath, err := wire.ReadString(&buf, daemon.MaxStringSize)
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	storePath, err := dec.ReadString()
 	rq.NoError(err)
 	rq.Equal("/nix/store/xyz-test", storePath)
 
 	// Read PathInfo at proto 1.15
-	got, err := daemon.ReadPathInfo(&buf, storePath, daemon.ProtoVersion(1, 15))
+	got, err := daemon.ReadPathInfo(dec, storePath, daemon.ProtoVersion(1, 15))
 	rq.NoError(err)
 
 	// At proto 1.15: ultimate/sigs/ca are NOT written or read
@@ -490,7 +522,9 @@ func TestReadPathInfoPreMeta(t *testing.T) {
 	writeTestUint64(&buf, 12345)                     // narSize
 	// NO ultimate, sigs, ca fields
 
-	info, err := daemon.ReadPathInfo(&buf, "/nix/store/xyz-test", daemon.ProtoVersion(1, 15))
+	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
+
+	info, err := daemon.ReadPathInfo(dec, "/nix/store/xyz-test", daemon.ProtoVersion(1, 15))
 	rq.NoError(err)
 	rq.Equal("/nix/store/xyz-test", info.StorePath)
 	rq.Equal("/nix/store/abc-foo.drv", info.Deriver)

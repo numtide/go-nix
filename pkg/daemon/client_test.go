@@ -2,8 +2,6 @@ package daemon_test
 
 import (
 	"context"
-	"encoding/binary"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -33,11 +31,11 @@ func TestClientConnectWrongMagic(t *testing.T) {
 		}
 		defer conn.Close()
 
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read client magic
-		binary.LittleEndian.PutUint64(buf[:], 0xdeadbeef)
-		_, _ = conn.Write(buf[:])
+		_, _ = dec.ReadUint64() // read client magic
+		_ = enc.WriteUint64(0xdeadbeef)
 	}()
 
 	_, err = daemon.Connect(t.Context(), sock)
@@ -200,7 +198,8 @@ func TestClientOperationAfterError(t *testing.T) {
 	mock.onAccept(
 		// First operation: respond with error
 		respondWithError(daemon.OpIsValidPath, func(conn net.Conn) {
-			_, _ = wire.ReadString(conn, 64*1024) // drain path
+			dec := wire.NewDecoder(conn, 64*1024)
+			_, _ = dec.ReadString() // drain path
 		}, daemonErr),
 		// Second operation: respond successfully
 		respondIsValidPath(true),
@@ -242,7 +241,8 @@ func TestClientDaemonErrorWithTraces(t *testing.T) {
 	}
 
 	mock.onAccept(respondWithError(daemon.OpIsValidPath, func(conn net.Conn) {
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		dec := wire.NewDecoder(conn, 64*1024)
+		_, _ = dec.ReadString() // path
 	}, expectedErr))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
@@ -273,12 +273,12 @@ func TestClientContextCancellation(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
 
 		// First op: read the op code and path, then stall — never send
 		// a response. The client's context cancellation should unblock it.
-		_, _ = io.ReadFull(conn, buf[:]) // op code
-		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = dec.ReadUint64() // op code
+		_, _ = dec.ReadString()
 
 		// Wait for the client to observe the cancellation and clean up,
 		// then drain any leftover bytes from the cancelled op.

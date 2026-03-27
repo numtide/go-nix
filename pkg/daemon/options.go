@@ -1,8 +1,6 @@
 package daemon
 
 import (
-	"io"
-
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
@@ -47,62 +45,62 @@ func DefaultClientSettings() *ClientSettings {
 	}
 }
 
-// WriteClientSettings serializes the SetOptions request fields to the writer
-// in the Nix daemon wire format. The version parameter is the negotiated
-// protocol version.
-func WriteClientSettings(w io.Writer, s *ClientSettings, version uint64) error {
+// WriteClientSettings serializes the SetOptions request fields using the
+// encoder in the Nix daemon wire format. The version parameter is the
+// negotiated protocol version.
+func WriteClientSettings(enc *wire.Encoder, s *ClientSettings, version uint64) error {
 	if s == nil {
 		s = DefaultClientSettings()
 	}
 
-	if err := wire.WriteBool(w, s.KeepFailed); err != nil {
+	if err := enc.WriteBool(s.KeepFailed); err != nil {
 		return err
 	}
 
-	if err := wire.WriteBool(w, s.KeepGoing); err != nil {
+	if err := enc.WriteBool(s.KeepGoing); err != nil {
 		return err
 	}
 
-	if err := wire.WriteBool(w, s.TryFallback); err != nil {
+	if err := enc.WriteBool(s.TryFallback); err != nil {
 		return err
 	}
 
-	if err := wire.WriteUint64(w, uint64(s.Verbosity)); err != nil {
+	if err := enc.WriteUint64(uint64(s.Verbosity)); err != nil {
 		return err
 	}
 
-	if err := wire.WriteUint64(w, s.MaxBuildJobs); err != nil {
+	if err := enc.WriteUint64(s.MaxBuildJobs); err != nil {
 		return err
 	}
 
-	if err := wire.WriteUint64(w, s.MaxSilentTime); err != nil {
+	if err := enc.WriteUint64(s.MaxSilentTime); err != nil {
 		return err
 	}
 
 	// useBuildHook — deprecated, always true.
-	if err := wire.WriteBool(w, true); err != nil {
+	if err := enc.WriteBool(true); err != nil {
 		return err
 	}
 
-	if err := wire.WriteUint64(w, uint64(s.BuildVerbosity)); err != nil {
+	if err := enc.WriteUint64(uint64(s.BuildVerbosity)); err != nil {
 		return err
 	}
 
 	// logType — deprecated, always 0.
-	if err := wire.WriteUint64(w, 0); err != nil {
+	if err := enc.WriteUint64(0); err != nil {
 		return err
 	}
 
 	// printBuildTrace — deprecated, always 0.
-	if err := wire.WriteUint64(w, 0); err != nil {
+	if err := enc.WriteUint64(0); err != nil {
 		return err
 	}
 
-	if err := wire.WriteUint64(w, s.BuildCores); err != nil {
+	if err := enc.WriteUint64(s.BuildCores); err != nil {
 		return err
 	}
 
-	if err := wire.WriteBool(w, s.UseSubstitutes); err != nil {
+	if err := enc.WriteBool(s.UseSubstitutes); err != nil {
 		return err
 	}
 
@@ -113,7 +111,7 @@ func WriteClientSettings(w io.Writer, s *ClientSettings, version uint64) error {
 			overrides = map[string]string{}
 		}
 
-		if err := wire.WriteStringMap(w, overrides); err != nil {
+		if err := enc.WriteStringMap(overrides); err != nil {
 			return err
 		}
 	}

@@ -1,7 +1,6 @@
 package daemon_test
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -91,80 +90,66 @@ func handshake(conn net.Conn, version uint64) {
 		mockVersion = daemon.ProtocolVersion
 	}
 
-	var buf [8]byte
+	dec := wire.NewDecoder(conn, 64*1024)
+	enc := wire.NewEncoder(conn)
 
-	_, _ = io.ReadFull(conn, buf[:]) // read client magic
+	_, _ = dec.ReadUint64() // read client magic
 
-	binary.LittleEndian.PutUint64(buf[:], daemon.ServerMagic)
-	_, _ = conn.Write(buf[:])
+	_ = enc.WriteUint64(daemon.ServerMagic)
+	_ = enc.WriteUint64(mockVersion)
 
-	binary.LittleEndian.PutUint64(buf[:], mockVersion)
-	_, _ = conn.Write(buf[:])
-
-	_, _ = io.ReadFull(conn, buf[:]) // negotiated version
-	negotiated := binary.LittleEndian.Uint64(buf[:])
+	negotiated, _ := dec.ReadUint64() // negotiated version
 
 	// feature exchange (>= 1.38)
 	if negotiated >= daemon.ProtoVersionFeatureExchange {
-		// Read client features (string list: count + entries).
-		_, _ = wire.ReadUint64(conn) // count (0 = no features)
+		// read client features (string list: count + entries).
+		_, _ = dec.ReadUint64() // count (0 = no features)
 
-		// Send empty daemon features.
-		binary.LittleEndian.PutUint64(buf[:], 0)
-		_, _ = conn.Write(buf[:])
+		// send empty daemon features.
+		_ = enc.WriteUint64(0)
 	}
 
 	// cpu affinity (>= 1.14)
 	if negotiated >= daemon.ProtoVersionCPUAffinity {
-		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = dec.ReadUint64()
 	}
 
 	// reserve space (>= 1.11)
 	if negotiated >= daemon.ProtoVersionReserveSpace {
-		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = dec.ReadUint64()
 	}
 
 	// nix version string (>= 1.33)
 	if negotiated >= daemon.ProtoVersionNixVersion {
-		writeWireStringTo(conn, "nix (Nix) 2.24.0")
+		_ = enc.WriteString("nix (Nix) 2.24.0")
 	}
 
 	// trust level (>= 1.35)
 	if negotiated >= daemon.ProtoVersionTrust {
-		binary.LittleEndian.PutUint64(buf[:], 1) // TrustTrusted
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1) // TrustTrusted
 	}
 
-	// Post-handshake: daemon sends startWork/stopWork (STDERR_LAST).
-	binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-	_, _ = conn.Write(buf[:])
+	// post-handshake: daemon sends startWork/stopWork (STDERR_LAST).
+	_ = enc.WriteUint64(uint64(daemon.LogLast))
 }
 
 func respondIsValidPath(valid bool) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpIsValidPath) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpIsValidPath, op)
 		}
 
-		_, _ = wire.ReadString(conn, 64*1024) // read path string
+		_, _ = dec.ReadString() // read path
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send bool result
-		if valid {
-			binary.LittleEndian.PutUint64(buf[:], 1)
-		} else {
-			binary.LittleEndian.PutUint64(buf[:], 0)
-		}
-
-		_, _ = conn.Write(buf[:])
+		// send bool result
+		_ = enc.WriteBool(valid)
 
 		return nil
 	}
@@ -172,60 +157,43 @@ func respondIsValidPath(valid bool) func(net.Conn) error {
 
 func respondQueryPathInfo(info *daemon.PathInfo) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryPathInfo) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryPathInfo, op)
 		}
 
-		_, _ = wire.ReadString(conn, 64*1024) // read path string
+		_, _ = dec.ReadString() // read path string
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// found = true
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)
 
 		// PathInfo fields (UnkeyedValidPathInfo format)
-		writeWireStringTo(conn, info.Deriver)
-		writeWireStringTo(conn, info.NarHash)
+		_ = enc.WriteString(info.Deriver)
+		_ = enc.WriteString(info.NarHash)
 
-		// References
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(info.References)))
-		_, _ = conn.Write(buf[:])
-
+		// references
+		_ = enc.WriteUint64(uint64(len(info.References)))
 		for _, ref := range info.References {
-			writeWireStringTo(conn, ref)
+			_ = enc.WriteString(ref)
 		}
 
-		binary.LittleEndian.PutUint64(buf[:], info.RegistrationTime)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(info.RegistrationTime)
+		_ = enc.WriteUint64(info.NarSize)
+		_ = enc.WriteBool(info.Ultimate)
 
-		binary.LittleEndian.PutUint64(buf[:], info.NarSize)
-		_, _ = conn.Write(buf[:])
-
-		if info.Ultimate {
-			binary.LittleEndian.PutUint64(buf[:], 1)
-		} else {
-			binary.LittleEndian.PutUint64(buf[:], 0)
-		}
-
-		_, _ = conn.Write(buf[:])
-
-		// Sigs
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(info.Sigs)))
-		_, _ = conn.Write(buf[:])
-
+		// sigs
+		_ = enc.WriteUint64(uint64(len(info.Sigs)))
 		for _, sig := range info.Sigs {
-			writeWireStringTo(conn, sig)
+			_ = enc.WriteString(sig)
 		}
 
-		writeWireStringTo(conn, info.CA)
+		_ = enc.WriteString(info.CA)
 
 		return nil
 	}
@@ -233,24 +201,21 @@ func respondQueryPathInfo(info *daemon.PathInfo) func(net.Conn) error {
 
 func respondQueryPathInfoNotFound() func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryPathInfo) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryPathInfo, op)
 		}
 
-		_, _ = wire.ReadString(conn, 64*1024) // read path string
+		_, _ = dec.ReadString() // read path string
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// found = false
-		binary.LittleEndian.PutUint64(buf[:], 0)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(0)
 
 		return nil
 	}
@@ -258,41 +223,38 @@ func respondQueryPathInfoNotFound() func(net.Conn) error {
 
 func respondSetOptions() func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpSetOptions) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpSetOptions, op)
 		}
 
-		// Read all ClientSettings fields from the wire:
-		_, _ = io.ReadFull(conn, buf[:]) // keepFailed (bool)
-		_, _ = io.ReadFull(conn, buf[:]) // keepGoing (bool)
-		_, _ = io.ReadFull(conn, buf[:]) // tryFallback (bool)
-		_, _ = io.ReadFull(conn, buf[:]) // verbosity (uint64)
-		_, _ = io.ReadFull(conn, buf[:]) // maxBuildJobs (uint64)
-		_, _ = io.ReadFull(conn, buf[:]) // maxSilentTime (uint64)
-		_, _ = io.ReadFull(conn, buf[:]) // useBuildHook (bool, deprecated)
-		_, _ = io.ReadFull(conn, buf[:]) // buildVerbosity (uint64)
-		_, _ = io.ReadFull(conn, buf[:]) // logType (uint64, deprecated)
-		_, _ = io.ReadFull(conn, buf[:]) // printBuildTrace (uint64, deprecated)
-		_, _ = io.ReadFull(conn, buf[:]) // buildCores (uint64)
-		_, _ = io.ReadFull(conn, buf[:]) // useSubstitutes (bool)
+		// read all ClientSettings fields from the wire:
+		_, _ = dec.ReadUint64() // keepFailed (bool)
+		_, _ = dec.ReadUint64() // keepGoing (bool)
+		_, _ = dec.ReadUint64() // tryFallback (bool)
+		_, _ = dec.ReadUint64() // verbosity (uint64)
+		_, _ = dec.ReadUint64() // maxBuildJobs (uint64)
+		_, _ = dec.ReadUint64() // maxSilentTime (uint64)
+		_, _ = dec.ReadUint64() // useBuildHook (bool, deprecated)
+		_, _ = dec.ReadUint64() // buildVerbosity (uint64)
+		_, _ = dec.ReadUint64() // logType (uint64, deprecated)
+		_, _ = dec.ReadUint64() // printBuildTrace (uint64, deprecated)
+		_, _ = dec.ReadUint64() // buildCores (uint64)
+		_, _ = dec.ReadUint64() // useSubstitutes (bool)
 
-		// Read overrides map (protocol >= 1.12): count + key/value pairs
-		_, _ = io.ReadFull(conn, buf[:]) // overrides count
-		count := binary.LittleEndian.Uint64(buf[:])
+		// read overrides map (protocol >= 1.12): count + key/value pairs
+		count, _ := dec.ReadUint64()
 
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024) // key
-			_, _ = wire.ReadString(conn, 64*1024) // value
+			_, _ = dec.ReadString() // key
+			_, _ = dec.ReadString() // value
 		}
 
-		// Send LogLast (no response payload for SetOptions)
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast (no response payload for SetOptions)
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		return nil
 	}
@@ -300,27 +262,23 @@ func respondSetOptions() func(net.Conn) error {
 
 func respondQueryAllValidPaths(paths []string) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryAllValidPaths) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryAllValidPaths, op)
 		}
 
-		// No request params
+		// no request params
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: count + strings
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(paths)))
-		_, _ = conn.Write(buf[:])
-
+		// send response: count + strings
+		_ = enc.WriteUint64(uint64(len(paths)))
 		for _, p := range paths {
-			writeWireStringTo(conn, p)
+			_ = enc.WriteString(p)
 		}
 
 		return nil
@@ -329,36 +287,30 @@ func respondQueryAllValidPaths(paths []string) func(net.Conn) error {
 
 func respondQueryValidPaths(valid []string) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryValidPaths) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryValidPaths, op)
 		}
 
-		// Read request: paths (count + strings)
-		_, _ = io.ReadFull(conn, buf[:]) // count
-		count := binary.LittleEndian.Uint64(buf[:])
-
+		// read request: paths (count + strings)
+		count, _ := dec.ReadUint64()
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024)
+			_, _ = dec.ReadString()
 		}
 
-		// Read substituteOk (bool) — protocol >= 1.27
-		_, _ = io.ReadFull(conn, buf[:])
+		// read substituteOk (bool) — protocol >= 1.27
+		_, _ = dec.ReadUint64()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: count + strings
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(valid)))
-		_, _ = conn.Write(buf[:])
-
+		// send response: count + strings
+		_ = enc.WriteUint64(uint64(len(valid)))
 		for _, p := range valid {
-			writeWireStringTo(conn, p)
+			_ = enc.WriteString(p)
 		}
 
 		return nil
@@ -367,33 +319,27 @@ func respondQueryValidPaths(valid []string) func(net.Conn) error {
 
 func respondQuerySubstitutablePaths(paths []string) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQuerySubstitutablePaths) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQuerySubstitutablePaths, op)
 		}
 
-		// Read request: paths (count + strings)
-		_, _ = io.ReadFull(conn, buf[:]) // count
-		count := binary.LittleEndian.Uint64(buf[:])
-
+		// read request: paths (count + strings)
+		count, _ := dec.ReadUint64()
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024)
+			_, _ = dec.ReadString()
 		}
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: count + strings
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(paths)))
-		_, _ = conn.Write(buf[:])
-
+		// send response: count + strings
+		_ = enc.WriteUint64(uint64(len(paths)))
 		for _, p := range paths {
-			writeWireStringTo(conn, p)
+			_ = enc.WriteString(p)
 		}
 
 		return nil
@@ -402,28 +348,24 @@ func respondQuerySubstitutablePaths(paths []string) func(net.Conn) error {
 
 func respondQueryReferrers(referrers []string) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryReferrers) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryReferrers, op)
 		}
 
-		// Read request: path string
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read request: path string
+		_, _ = dec.ReadString()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: count + strings
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(referrers)))
-		_, _ = conn.Write(buf[:])
-
+		// send response: count + strings
+		_ = enc.WriteUint64(uint64(len(referrers)))
 		for _, r := range referrers {
-			writeWireStringTo(conn, r)
+			_ = enc.WriteString(r)
 		}
 
 		return nil
@@ -432,28 +374,24 @@ func respondQueryReferrers(referrers []string) func(net.Conn) error {
 
 func respondQueryValidDerivers(derivers []string) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryValidDerivers) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryValidDerivers, op)
 		}
 
-		// Read request: path string
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read request: path string
+		_, _ = dec.ReadString()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: count + strings
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(derivers)))
-		_, _ = conn.Write(buf[:])
-
+		// send response: count + strings
+		_ = enc.WriteUint64(uint64(len(derivers)))
 		for _, d := range derivers {
-			writeWireStringTo(conn, d)
+			_ = enc.WriteString(d)
 		}
 
 		return nil
@@ -462,23 +400,21 @@ func respondQueryValidDerivers(derivers []string) func(net.Conn) error {
 
 func respondQueryDerivationOutputMap(outputs map[string]string) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryDerivationOutputMap) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryDerivationOutputMap, op)
 		}
 
-		// Read request: drvPath string
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read request: drvPath string
+		_, _ = dec.ReadString()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: count + sorted key/value pairs
+		// send response: count + sorted key/value pairs
 		keys := make([]string, 0, len(outputs))
 		for k := range outputs {
 			keys = append(keys, k)
@@ -486,12 +422,10 @@ func respondQueryDerivationOutputMap(outputs map[string]string) func(net.Conn) e
 
 		sort.Strings(keys)
 
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(keys)))
-		_, _ = conn.Write(buf[:])
-
+		_ = enc.WriteUint64(uint64(len(keys)))
 		for _, k := range keys {
-			writeWireStringTo(conn, k)
-			writeWireStringTo(conn, outputs[k])
+			_ = enc.WriteString(k)
+			_ = enc.WriteString(outputs[k])
 		}
 
 		return nil
@@ -500,59 +434,47 @@ func respondQueryDerivationOutputMap(outputs map[string]string) func(net.Conn) e
 
 func respondQueryMissing(info *daemon.MissingInfo) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryMissing) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryMissing, op)
 		}
 
-		// Read request: paths (count + strings)
-		_, _ = io.ReadFull(conn, buf[:]) // count
-		count := binary.LittleEndian.Uint64(buf[:])
-
+		// read request: paths (count + strings)
+		count, _ := dec.ReadUint64()
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024)
+			_, _ = dec.ReadString()
 		}
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: willBuild, willSubstitute, unknown, downloadSize, narSize
+		// send response: willBuild, willSubstitute, unknown, downloadSize, narSize
 		// willBuild
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(info.WillBuild)))
-		_, _ = conn.Write(buf[:])
-
+		_ = enc.WriteUint64(uint64(len(info.WillBuild)))
 		for _, p := range info.WillBuild {
-			writeWireStringTo(conn, p)
+			_ = enc.WriteString(p)
 		}
 
 		// willSubstitute
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(info.WillSubstitute)))
-		_, _ = conn.Write(buf[:])
-
+		_ = enc.WriteUint64(uint64(len(info.WillSubstitute)))
 		for _, p := range info.WillSubstitute {
-			writeWireStringTo(conn, p)
+			_ = enc.WriteString(p)
 		}
 
 		// unknown
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(info.Unknown)))
-		_, _ = conn.Write(buf[:])
-
+		_ = enc.WriteUint64(uint64(len(info.Unknown)))
 		for _, p := range info.Unknown {
-			writeWireStringTo(conn, p)
+			_ = enc.WriteString(p)
 		}
 
 		// downloadSize
-		binary.LittleEndian.PutUint64(buf[:], info.DownloadSize)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(info.DownloadSize)
 
 		// narSize
-		binary.LittleEndian.PutUint64(buf[:], info.NarSize)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(info.NarSize)
 
 		return nil
 	}
@@ -560,24 +482,22 @@ func respondQueryMissing(info *daemon.MissingInfo) func(net.Conn) error {
 
 func respondQueryPathFromHashPart(path string) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryPathFromHashPart) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryPathFromHashPart, op)
 		}
 
-		// Read request: hashPart string
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read request: hashPart string
+		_, _ = dec.ReadString()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: path string
-		writeWireStringTo(conn, path)
+		// send response: path string
+		_ = enc.WriteString(path)
 
 		return nil
 	}
@@ -585,56 +505,48 @@ func respondQueryPathFromHashPart(path string) func(net.Conn) error {
 
 func respondCollectGarbage(result *daemon.GCResult) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpCollectGarbage) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpCollectGarbage, op)
 		}
 
-		// Read request: action (uint64)
-		_, _ = io.ReadFull(conn, buf[:])
+		// read request: action (uint64)
+		_, _ = dec.ReadUint64()
 
-		// Read pathsToDelete (count + strings)
-		_, _ = io.ReadFull(conn, buf[:]) // count
-		count := binary.LittleEndian.Uint64(buf[:])
-
+		// read pathsToDelete (count + strings)
+		count, _ := dec.ReadUint64()
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024)
+			_, _ = dec.ReadString()
 		}
 
-		// Read ignoreLiveness (bool)
-		_, _ = io.ReadFull(conn, buf[:])
+		// read ignoreLiveness (bool)
+		_, _ = dec.ReadUint64()
 
-		// Read maxFreed (uint64)
-		_, _ = io.ReadFull(conn, buf[:])
+		// read maxFreed (uint64)
+		_, _ = dec.ReadUint64()
 
-		// Read 3 deprecated fields
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = io.ReadFull(conn, buf[:])
+		// read 3 deprecated fields
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadUint64()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: paths (count + strings)
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(result.Paths)))
-		_, _ = conn.Write(buf[:])
-
+		// send response: paths (count + strings)
+		_ = enc.WriteUint64(uint64(len(result.Paths)))
 		for _, p := range result.Paths {
-			writeWireStringTo(conn, p)
+			_ = enc.WriteString(p)
 		}
 
 		// bytesFreed
-		binary.LittleEndian.PutUint64(buf[:], result.BytesFreed)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(result.BytesFreed)
 
 		// deprecated field
-		binary.LittleEndian.PutUint64(buf[:], 0)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(0)
 
 		return nil
 	}
@@ -642,31 +554,23 @@ func respondCollectGarbage(result *daemon.GCResult) func(net.Conn) error {
 
 func respondVerifyStore(errorsFound bool) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpVerifyStore) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpVerifyStore, op)
 		}
 
-		// Read request: checkContents (bool) + repair (bool)
-		_, _ = io.ReadFull(conn, buf[:]) // checkContents
-		_, _ = io.ReadFull(conn, buf[:]) // repair
+		// read request: checkContents (bool) + repair (bool)
+		_, _ = dec.ReadUint64() // checkContents
+		_, _ = dec.ReadUint64() // repair
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: errorsFound (bool)
-		if errorsFound {
-			binary.LittleEndian.PutUint64(buf[:], 1)
-		} else {
-			binary.LittleEndian.PutUint64(buf[:], 0)
-		}
-
-		_, _ = conn.Write(buf[:])
+		// send response: errorsFound (bool)
+		_ = enc.WriteBool(errorsFound)
 
 		return nil
 	}
@@ -674,24 +578,21 @@ func respondVerifyStore(errorsFound bool) func(net.Conn) error {
 
 func respondOptimiseStore() func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpOptimiseStore) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpOptimiseStore, op)
 		}
 
-		// No request params
+		// no request params
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: uint64 acknowledgment
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		// send response: uint64 acknowledgment
+		_ = enc.WriteUint64(1)
 
 		return nil
 	}
@@ -699,28 +600,24 @@ func respondOptimiseStore() func(net.Conn) error {
 
 func respondQueryRealisation(realisations []string) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQueryRealisation) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQueryRealisation, op)
 		}
 
-		// Read request: outputID string
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read request: outputID string
+		_, _ = dec.ReadString()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: count + strings
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(realisations)))
-		_, _ = conn.Write(buf[:])
-
+		// send response: count + strings
+		_ = enc.WriteUint64(uint64(len(realisations)))
 		for _, r := range realisations {
-			writeWireStringTo(conn, r)
+			_ = enc.WriteString(r)
 		}
 
 		return nil
@@ -729,49 +626,39 @@ func respondQueryRealisation(realisations []string) func(net.Conn) error {
 
 func respondQuerySubstitutablePathInfos(infos map[string]*daemon.SubstitutablePathInfo) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpQuerySubstitutablePathInfos) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpQuerySubstitutablePathInfos, op)
 		}
 
-		// Read StorePathCAMap: count + (storePath + ca) pairs.
-		_, _ = io.ReadFull(conn, buf[:]) // count
-		count := binary.LittleEndian.Uint64(buf[:])
-
+		// read StorePathCAMap: count + (storePath + ca) pairs.
+		count, _ := dec.ReadUint64()
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024) // storePath
-			_, _ = wire.ReadString(conn, 64*1024) // ca (optional, empty string for none)
+			_, _ = dec.ReadString() // storePath
+			_, _ = dec.ReadString() // ca (optional, empty string for none)
 		}
 
-		// Send LogLast.
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast.
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: count + entries.
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(infos)))
-		_, _ = conn.Write(buf[:])
+		// send response: count + entries.
+		_ = enc.WriteUint64(uint64(len(infos)))
 
 		for path, info := range infos {
-			writeWireStringTo(conn, path)
-			writeWireStringTo(conn, info.Deriver)
+			_ = enc.WriteString(path)
+			_ = enc.WriteString(info.Deriver)
 
-			// References.
-			binary.LittleEndian.PutUint64(buf[:], uint64(len(info.References)))
-			_, _ = conn.Write(buf[:])
-
+			// references.
+			_ = enc.WriteUint64(uint64(len(info.References)))
 			for _, ref := range info.References {
-				writeWireStringTo(conn, ref)
+				_ = enc.WriteString(ref)
 			}
 
-			binary.LittleEndian.PutUint64(buf[:], info.DownloadSize)
-			_, _ = conn.Write(buf[:])
-
-			binary.LittleEndian.PutUint64(buf[:], info.NarSize)
-			_, _ = conn.Write(buf[:])
+			_ = enc.WriteUint64(info.DownloadSize)
+			_ = enc.WriteUint64(info.NarSize)
 		}
 
 		return nil
@@ -780,73 +667,55 @@ func respondQuerySubstitutablePathInfos(infos map[string]*daemon.SubstitutablePa
 
 func respondAddToStore(info *daemon.PathInfo) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(daemon.OpAddToStore) {
 			return fmt.Errorf("expected op %d, got %d", daemon.OpAddToStore, op)
 		}
 
-		// Read request fields: name, caMethodWithAlgo, references, repair.
-		_, _ = wire.ReadString(conn, 64*1024) // name
-		_, _ = wire.ReadString(conn, 64*1024) // caMethodWithAlgo
+		// read request fields: name, caMethodWithAlgo, references, repair.
+		_, _ = dec.ReadString() // name
+		_, _ = dec.ReadString() // caMethodWithAlgo
 
-		// Read references (count + strings).
-		_, _ = io.ReadFull(conn, buf[:]) // count
-		count := binary.LittleEndian.Uint64(buf[:])
-
+		// read references (count + strings).
+		count, _ := dec.ReadUint64()
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024)
+			_, _ = dec.ReadString()
 		}
 
-		_, _ = io.ReadFull(conn, buf[:]) // repair
+		_, _ = dec.ReadUint64() // repair
 
-		// Read framed dump data (no padding in framed protocol).
+		// read framed dump data (no padding in framed protocol).
 		fr := daemon.NewFramedReader(conn)
 		_, _ = io.ReadAll(fr)
 
-		// Send LogLast.
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast.
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send response: ValidPathInfo = storePath + UnkeyedValidPathInfo.
-		writeWireStringTo(conn, info.StorePath)
-		writeWireStringTo(conn, info.Deriver)
-		writeWireStringTo(conn, info.NarHash)
+		// send response: ValidPathInfo = storePath + UnkeyedValidPathInfo.
+		_ = enc.WriteString(info.StorePath)
+		_ = enc.WriteString(info.Deriver)
+		_ = enc.WriteString(info.NarHash)
 
-		// References.
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(info.References)))
-		_, _ = conn.Write(buf[:])
-
+		// references.
+		_ = enc.WriteUint64(uint64(len(info.References)))
 		for _, ref := range info.References {
-			writeWireStringTo(conn, ref)
+			_ = enc.WriteString(ref)
 		}
 
-		binary.LittleEndian.PutUint64(buf[:], info.RegistrationTime)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(info.RegistrationTime)
+		_ = enc.WriteUint64(info.NarSize)
+		_ = enc.WriteBool(info.Ultimate)
 
-		binary.LittleEndian.PutUint64(buf[:], info.NarSize)
-		_, _ = conn.Write(buf[:])
-
-		if info.Ultimate {
-			binary.LittleEndian.PutUint64(buf[:], 1)
-		} else {
-			binary.LittleEndian.PutUint64(buf[:], 0)
-		}
-
-		_, _ = conn.Write(buf[:])
-
-		// Sigs.
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(info.Sigs)))
-		_, _ = conn.Write(buf[:])
-
+		// sigs.
+		_ = enc.WriteUint64(uint64(len(info.Sigs)))
 		for _, sig := range info.Sigs {
-			writeWireStringTo(conn, sig)
+			_ = enc.WriteString(sig)
 		}
 
-		writeWireStringTo(conn, info.CA)
+		_ = enc.WriteString(info.CA)
 
 		return nil
 	}
@@ -857,11 +726,10 @@ func respondAddToStore(info *daemon.PathInfo) func(net.Conn) error {
 // daemon.Error fields.
 func respondWithError(expectedOp daemon.Operation, drain func(net.Conn), de *daemon.Error) func(net.Conn) error {
 	return func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // read op code
-		op := binary.LittleEndian.Uint64(buf[:])
-
+		op, _ := dec.ReadUint64()
 		if op != uint64(expectedOp) {
 			return fmt.Errorf("expected op %d, got %d", expectedOp, op)
 		}
@@ -870,29 +738,21 @@ func respondWithError(expectedOp daemon.Operation, drain func(net.Conn), de *dae
 			drain(conn)
 		}
 
-		// Send LogError instead of LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogError))
-		_, _ = conn.Write(buf[:])
+		// send LogError instead of LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogError))
 
-		// Error payload: Type, Level, Name, Message, HavePos, NrTraces, traces...
-		writeWireStringTo(conn, de.Type)
+		// error payload: Type, Level, Name, Message, HavePos, NrTraces, traces...
+		_ = enc.WriteString(de.Type)
+		_ = enc.WriteUint64(de.Level)
+		_ = enc.WriteString(de.Name)
+		_ = enc.WriteString(de.Message)
 
-		binary.LittleEndian.PutUint64(buf[:], de.Level)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(0) // HavePos = 0
 
-		writeWireStringTo(conn, de.Name)
-		writeWireStringTo(conn, de.Message)
-
-		binary.LittleEndian.PutUint64(buf[:], 0) // HavePos = 0
-		_, _ = conn.Write(buf[:])
-
-		binary.LittleEndian.PutUint64(buf[:], uint64(len(de.Traces)))
-		_, _ = conn.Write(buf[:])
-
+		_ = enc.WriteUint64(uint64(len(de.Traces)))
 		for _, tr := range de.Traces {
-			binary.LittleEndian.PutUint64(buf[:], tr.HavePos)
-			_, _ = conn.Write(buf[:])
-			writeWireStringTo(conn, tr.Message)
+			_ = enc.WriteUint64(tr.HavePos)
+			_ = enc.WriteString(tr.Message)
 		}
 
 		return nil

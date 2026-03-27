@@ -2,7 +2,6 @@ package daemon_test
 
 import (
 	"bytes"
-	"encoding/binary"
 	"io"
 	"net"
 	"strings"
@@ -118,21 +117,19 @@ func TestClientAddTempRoot(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpAddTempRoot), op)
 
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		_, _ = dec.ReadString() // path
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// uint64(1) acknowledgment
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -150,21 +147,19 @@ func TestClientAddIndirectRoot(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpAddIndirectRoot), op)
 
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		_, _ = dec.ReadString() // path
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// uint64(1) acknowledgment
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -184,21 +179,20 @@ func TestClientAddPermRoot(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpAddPermRoot), op)
 
-		_, _ = wire.ReadString(conn, 64*1024) // storePath
-		_, _ = wire.ReadString(conn, 64*1024) // gcRoot
+		_, _ = dec.ReadString() // storePath
+		_, _ = dec.ReadString() // gcRoot
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// Response: result path string
-		writeWireStringTo(conn, "/nix/var/nix/gcroots/auto/abc")
+		_ = enc.WriteString("/nix/var/nix/gcroots/auto/abc")
 
 		return nil
 	})
@@ -218,29 +212,26 @@ func TestClientAddSignatures(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpAddSignatures), op)
 
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		_, _ = dec.ReadString() // path
 
-		// Read sigs: count + strings
-		_, _ = io.ReadFull(conn, buf[:]) // count
-		count := binary.LittleEndian.Uint64(buf[:])
+		// read sigs: count + strings
+		count, _ := dec.ReadUint64()
 		require.Equal(t, uint64(2), count)
 
-		_, _ = wire.ReadString(conn, 64*1024) // sig 1
-		_, _ = wire.ReadString(conn, 64*1024) // sig 2
+		_, _ = dec.ReadString() // sig 1
+		_, _ = dec.ReadString() // sig 2
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// uint64(1) acknowledgment
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -258,17 +249,16 @@ func TestClientRegisterDrvOutput(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpRegisterDrvOutput), op)
 
-		_, _ = wire.ReadString(conn, 64*1024) // realisation
+		_, _ = dec.ReadString() // realisation
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		return nil
 	})
@@ -300,39 +290,38 @@ func TestClientAddToStoreNar(t *testing.T) {
 	}
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpAddToStoreNar), op)
 
-		// Read PathInfo: storePath, deriver, narHash, refs, regTime, narSize, ultimate, sigs, ca
-		_, _ = wire.ReadString(conn, 64*1024) // storePath
-		_, _ = wire.ReadString(conn, 64*1024) // deriver
-		_, _ = wire.ReadString(conn, 64*1024) // narHash
+		// read PathInfo: storePath, deriver, narHash, refs, regTime, narSize, ultimate, sigs, ca
+		_, _ = dec.ReadString() // storePath
+		_, _ = dec.ReadString() // deriver
+		_, _ = dec.ReadString() // narHash
 
-		_, _ = io.ReadFull(conn, buf[:]) // refs count = 0
+		_, _ = dec.ReadUint64() // refs count = 0
 
-		_, _ = io.ReadFull(conn, buf[:]) // registrationTime
-		_, _ = io.ReadFull(conn, buf[:]) // narSize
-		_, _ = io.ReadFull(conn, buf[:]) // ultimate
+		_, _ = dec.ReadUint64() // registrationTime
+		_, _ = dec.ReadUint64() // narSize
+		_, _ = dec.ReadUint64() // ultimate
 
-		_, _ = io.ReadFull(conn, buf[:]) // sigs count = 0
+		_, _ = dec.ReadUint64() // sigs count = 0
 
-		_, _ = wire.ReadString(conn, 64*1024) // ca
+		_, _ = dec.ReadString() // ca
 
-		_, _ = io.ReadFull(conn, buf[:]) // repair
-		_, _ = io.ReadFull(conn, buf[:]) // dontCheckSigs
+		_, _ = dec.ReadUint64() // repair
+		_, _ = dec.ReadUint64() // dontCheckSigs
 
-		// Read framed NAR data (no padding in framed protocol)
+		// read framed NAR data (no padding in framed protocol)
 		fr := daemon.NewFramedReader(conn)
 		received, err := io.ReadAll(fr)
 		require.NoError(t, err)
 		require.Equal(t, narData, received)
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		return nil
 	})
@@ -352,28 +341,26 @@ func TestClientAddBuildLog(t *testing.T) {
 	logContent := "building '/nix/store/00000000000000000000000000000000-test.drv'...\nok\n"
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpAddBuildLog), op)
 
-		drvPath, _ := wire.ReadString(conn, 64*1024) // drvPath (BaseStorePath)
+		drvPath, _ := dec.ReadString() // drvPath (BaseStorePath)
 		require.Equal(t, "00000000000000000000000000000000-test.drv", drvPath)
 
-		// Read framed log data (no padding in framed protocol)
+		// read framed log data (no padding in framed protocol)
 		fr := daemon.NewFramedReader(conn)
 		received, err := io.ReadAll(fr)
 		require.NoError(t, err)
 		require.Equal(t, logContent, string(received))
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// uint64(1) acknowledgment
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -431,43 +418,44 @@ func TestClientAddMultipleToStore(t *testing.T) {
 	}
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
 
-		_, _ = io.ReadFull(conn, buf[:]) // repair
-		require.Equal(t, uint64(1), binary.LittleEndian.Uint64(buf[:]))
+		repair, _ := dec.ReadUint64()
+		require.Equal(t, uint64(1), repair)
 
-		_, _ = io.ReadFull(conn, buf[:]) // dontCheckSigs
-		require.Equal(t, uint64(0), binary.LittleEndian.Uint64(buf[:]))
+		dontCheckSigs, _ := dec.ReadUint64()
+		require.Equal(t, uint64(0), dontCheckSigs)
 
-		// Read all framed data into a buffer.
+		// read all framed data into a buffer.
 		fr := daemon.NewFramedReader(conn)
 		framedData, err := io.ReadAll(fr)
 		require.NoError(t, err)
 
-		// Parse the deframed data.
+		// parse the deframed data.
 		r := bytes.NewReader(framedData)
+		frameDec := wire.NewDecoder(r, daemon.MaxStringSize)
 
-		// Count.
-		count, err := wire.ReadUint64(r)
+		// count.
+		count, err := frameDec.ReadUint64()
 		require.NoError(t, err)
 		require.Equal(t, uint64(2), count)
 
 		// Item 1: PathInfo fields.
-		s, _ := wire.ReadString(r, 64*1024) // storePath
+		s, _ := frameDec.ReadString() // storePath
 		require.Equal(t, "/nix/store/aaa-one", s)
 
-		_, _ = wire.ReadString(r, 64*1024) // deriver
-		_, _ = wire.ReadString(r, 64*1024) // narHash
-		_, _ = wire.ReadUint64(r)          // refs count (0)
-		_, _ = wire.ReadUint64(r)          // registrationTime
-		_, _ = wire.ReadUint64(r)          // narSize
-		_, _ = wire.ReadUint64(r)          // ultimate
-		_, _ = wire.ReadUint64(r)          // sigs count (0)
-		_, _ = wire.ReadString(r, 64*1024) // ca
+		_, _ = frameDec.ReadString() // deriver
+		_, _ = frameDec.ReadString() // narHash
+		_, _ = frameDec.ReadUint64() // refs count (0)
+		_, _ = frameDec.ReadUint64() // registrationTime
+		_, _ = frameDec.ReadUint64() // narSize
+		_, _ = frameDec.ReadUint64() // ultimate
+		_, _ = frameDec.ReadUint64() // sigs count (0)
+		_, _ = frameDec.ReadString() // ca
 
 		// Item 1: NAR data.
 		nar1 := make([]byte, len(narData1))
@@ -475,20 +463,20 @@ func TestClientAddMultipleToStore(t *testing.T) {
 		require.Equal(t, narData1, nar1)
 
 		// Item 2: PathInfo fields.
-		s, _ = wire.ReadString(r, 64*1024) // storePath
+		s, _ = frameDec.ReadString() // storePath
 		require.Equal(t, "/nix/store/bbb-two", s)
 
-		_, _ = wire.ReadString(r, 64*1024) // deriver
-		_, _ = wire.ReadString(r, 64*1024) // narHash
-		refsCount, _ := wire.ReadUint64(r) // refs count (1)
+		_, _ = frameDec.ReadString()          // deriver
+		_, _ = frameDec.ReadString()          // narHash
+		refsCount, _ := frameDec.ReadUint64() // refs count (1)
 		require.Equal(t, uint64(1), refsCount)
 
-		_, _ = wire.ReadString(r, 64*1024) // ref
-		_, _ = wire.ReadUint64(r)          // registrationTime
-		_, _ = wire.ReadUint64(r)          // narSize
-		_, _ = wire.ReadUint64(r)          // ultimate
-		_, _ = wire.ReadUint64(r)          // sigs count (0)
-		_, _ = wire.ReadString(r, 64*1024) // ca
+		_, _ = frameDec.ReadString() // ref
+		_, _ = frameDec.ReadUint64() // registrationTime
+		_, _ = frameDec.ReadUint64() // narSize
+		_, _ = frameDec.ReadUint64() // ultimate
+		_, _ = frameDec.ReadUint64() // sigs count (0)
+		_, _ = frameDec.ReadString() // ca
 
 		// Item 2: NAR data.
 		nar2 := make([]byte, len(narData2))
@@ -496,8 +484,7 @@ func TestClientAddMultipleToStore(t *testing.T) {
 		require.Equal(t, narData2, nar2)
 
 		// LogLast.
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		return nil
 	})
@@ -515,35 +502,35 @@ func TestClientAddMultipleToStoreEmpty(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		// Read op code.
-		_, _ = io.ReadFull(conn, buf[:])
-		op := binary.LittleEndian.Uint64(buf[:])
+		// read op code.
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
 
-		// Read repair.
-		_, _ = io.ReadFull(conn, buf[:])
+		// read repair.
+		_, _ = dec.ReadUint64()
 
-		// Read dontCheckSigs.
-		_, _ = io.ReadFull(conn, buf[:])
+		// read dontCheckSigs.
+		_, _ = dec.ReadUint64()
 
-		// Read all framed data into a buffer.
+		// read all framed data into a buffer.
 		fr := daemon.NewFramedReader(conn)
 		framedData, err := io.ReadAll(fr)
 		require.NoError(t, err)
 
-		// Parse the deframed data.
+		// parse the deframed data.
 		r := bytes.NewReader(framedData)
+		frameDec := wire.NewDecoder(r, daemon.MaxStringSize)
 
-		// Count.
-		count, err := wire.ReadUint64(r)
+		// count.
+		count, err := frameDec.ReadUint64()
 		require.NoError(t, err)
 		require.Equal(t, uint64(0), count)
 
-		// Send LogLast.
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast.
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		return nil
 	})

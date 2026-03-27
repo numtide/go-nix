@@ -1,10 +1,7 @@
 package daemon_test
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"testing"
 
@@ -19,28 +16,26 @@ func TestClientLogForwarding(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
-		// Read op
-		_, _ = io.ReadFull(conn, buf[:])
-		// Read path
-		_, _ = wire.ReadString(conn, 64*1024)
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		// Send LogNext messages
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
-		_, _ = conn.Write(buf[:])
-		writeWireStringTo(conn, "building...")
+		// read op
+		_, _ = dec.ReadUint64()
+		// read path
+		_, _ = dec.ReadString()
 
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
-		_, _ = conn.Write(buf[:])
-		writeWireStringTo(conn, "done")
+		// send LogNext messages
+		_ = enc.WriteUint64(uint64(daemon.LogNext))
+		_ = enc.WriteString("building...")
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogNext))
+		_ = enc.WriteString("done")
 
-		// Send result: true
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+		// send result: true
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -50,11 +45,10 @@ func TestClientLogForwarding(t *testing.T) {
 
 	defer client.Close()
 
-	// Use Execute directly to get OpResponse with log access.
-	var reqBuf bytes.Buffer
-	rq.NoError(wire.WriteString(&reqBuf, "/nix/store/abc-test"))
-
-	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, &reqBuf)
+	// use Execute directly to get OpResponse with log access.
+	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, func(enc *wire.Encoder) error {
+		return enc.WriteString("/nix/store/abc-test")
+	})
 	rq.NoError(err)
 
 	defer resp.Close()
@@ -74,7 +68,9 @@ func TestClientLogForwarding(t *testing.T) {
 	rq.Equal("done", msgs[1].Text)
 
 	// Read response.
-	valid, err := wire.ReadBool(resp)
+	respDec := wire.NewDecoder(resp, daemon.MaxStringSize)
+
+	valid, err := respDec.ReadBool()
 	rq.NoError(err)
 	rq.True(valid)
 }
@@ -85,39 +81,31 @@ func TestClientLogStartStopActivity(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
-		// Read IsValidPath op and path
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		// Send LogStartActivity
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogStartActivity))
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 42) // id
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 3) // level (Info)
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 105) // type (ActBuild)
-		_, _ = conn.Write(buf[:])
-		writeWireStringTo(conn, "building /nix/store/abc-test")
-		binary.LittleEndian.PutUint64(buf[:], 0) // nrFields
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 0) // parent
-		_, _ = conn.Write(buf[:])
+		// read IsValidPath op and path
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
 
-		// Send LogStopActivity
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogStopActivity))
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 42) // id
-		_, _ = conn.Write(buf[:])
+		// send LogStartActivity
+		_ = enc.WriteUint64(uint64(daemon.LogStartActivity))
+		_ = enc.WriteUint64(42)  // id
+		_ = enc.WriteUint64(3)   // level (Info)
+		_ = enc.WriteUint64(105) // type (ActBuild)
+		_ = enc.WriteString("building /nix/store/abc-test")
+		_ = enc.WriteUint64(0) // nrFields
+		_ = enc.WriteUint64(0) // parent
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogStopActivity
+		_ = enc.WriteUint64(uint64(daemon.LogStopActivity))
+		_ = enc.WriteUint64(42) // id
 
-		// Send result
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+		// send result
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -127,10 +115,9 @@ func TestClientLogStartStopActivity(t *testing.T) {
 
 	defer client.Close()
 
-	var reqBuf bytes.Buffer
-	rq.NoError(wire.WriteString(&reqBuf, "/nix/store/abc-test"))
-
-	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, &reqBuf)
+	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, func(enc *wire.Encoder) error {
+		return enc.WriteString("/nix/store/abc-test")
+	})
 	rq.NoError(err)
 
 	defer resp.Close()
@@ -159,25 +146,24 @@ func TestClientLogChannelFull(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
-		// Read IsValidPath op and path
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		// Send 5 LogNext messages
+		// read IsValidPath op and path
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
+
+		// send 5 LogNext messages
 		for i := range 5 {
-			binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
-			_, _ = conn.Write(buf[:])
-			writeWireStringTo(conn, fmt.Sprintf("msg %d", i))
+			_ = enc.WriteUint64(uint64(daemon.LogNext))
+			_ = enc.WriteString(fmt.Sprintf("msg %d", i))
 		}
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send result
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		// send result
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -199,23 +185,22 @@ func TestClientLoggerAutoDrain(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
-		// Read IsValidPath op and path
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		// Send LogNext messages
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
-		_, _ = conn.Write(buf[:])
-		writeWireStringTo(conn, "auto-drained message")
+		// read IsValidPath op and path
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogNext messages
+		_ = enc.WriteUint64(uint64(daemon.LogNext))
+		_ = enc.WriteString("auto-drained message")
 
-		// Send result: true
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+		// send result: true
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -255,10 +240,9 @@ func TestClientReadLogsDrained(t *testing.T) {
 
 	defer client.Close()
 
-	var reqBuf bytes.Buffer
-	rq.NoError(wire.WriteString(&reqBuf, "/nix/store/abc-test"))
-
-	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, &reqBuf)
+	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, func(enc *wire.Encoder) error {
+		return enc.WriteString("/nix/store/abc-test")
+	})
 	rq.NoError(err)
 
 	defer resp.Close()

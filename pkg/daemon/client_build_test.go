@@ -1,8 +1,6 @@
 package daemon_test
 
 import (
-	"encoding/binary"
-	"io"
 	"net"
 	"testing"
 
@@ -22,26 +20,24 @@ func TestClientBuildPaths(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpBuildPaths), op)
 
-		// Read paths (count + strings)
-		_, _ = io.ReadFull(conn, buf[:])      // count = 1
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		// read paths (count + strings)
+		_, _ = dec.ReadUint64() // count = 1
+		_, _ = dec.ReadString() // path
 
-		// Read build mode
-		_, _ = io.ReadFull(conn, buf[:]) // mode
+		// read build mode
+		_, _ = dec.ReadUint64()
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// Response: uint64(1)
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -59,21 +55,19 @@ func TestClientEnsurePath(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpEnsurePath), op)
 
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		_, _ = dec.ReadString() // path
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// Response: uint64(1)
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)
 
 		return nil
 	})
@@ -93,48 +87,38 @@ func TestClientBuildPathsWithResults(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpBuildPathsWithResults), op)
 
-		// Read paths (count + strings)
-		_, _ = io.ReadFull(conn, buf[:])      // count = 1
-		_, _ = wire.ReadString(conn, 64*1024) // path
+		// read paths (count + strings)
+		_, _ = dec.ReadUint64() // count = 1
+		_, _ = dec.ReadString() // path
 
-		// Read build mode
-		_, _ = io.ReadFull(conn, buf[:]) // mode
+		// read build mode
+		_, _ = dec.ReadUint64()
 
 		// LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		// Response: count of results = 1
-		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)
 
 		// DerivedPath string (ignored by client)
-		writeWireStringTo(conn, "/nix/store/abc-test.drv!out")
+		_ = enc.WriteString("/nix/store/abc-test.drv!out")
 
 		// BuildResult fields
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.BuildStatusBuilt)) // status
-		_, _ = conn.Write(buf[:])
-		writeWireStringTo(conn, "")              // errorMsg
-		binary.LittleEndian.PutUint64(buf[:], 1) // timesBuilt
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 0) // isNonDeterministic
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 1700000000) // startTime
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 1700000060) // stopTime
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 0) // cpuUser: None
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 0) // cpuSystem: None
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 0) // builtOutputs count
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(uint64(daemon.BuildStatusBuilt)) // status
+		_ = enc.WriteString("")                              // errorMsg
+		_ = enc.WriteUint64(1)                               // timesBuilt
+		_ = enc.WriteUint64(0)                               // isNonDeterministic
+		_ = enc.WriteUint64(1700000000)                      // startTime
+		_ = enc.WriteUint64(1700000060)                      // stopTime
+		_ = enc.WriteUint64(0)                               // cpuUser: None
+		_ = enc.WriteUint64(0)                               // cpuSystem: None
+		_ = enc.WriteUint64(0)                               // builtOutputs count
 
 		return nil
 	})
@@ -177,77 +161,62 @@ func TestClientBuildDerivation(t *testing.T) {
 	}
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		_, _ = io.ReadFull(conn, buf[:]) // op
-		op := binary.LittleEndian.Uint64(buf[:])
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpBuildDerivation), op)
 
-		// Read drvPath
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read drvPath
+		_, _ = dec.ReadString()
 
-		// Read outputs count
-		_, _ = io.ReadFull(conn, buf[:])
-		count := binary.LittleEndian.Uint64(buf[:])
+		// read outputs count
+		count, _ := dec.ReadUint64()
 		require.Equal(t, uint64(1), count)
 
-		// Read output: name, path, hashAlgo, hash
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read output: name, path, hashAlgo, hash
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
 
-		// Read inputs count + paths
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read inputs count + paths
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
 
-		// Read platform, builder
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read platform, builder
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
 
-		// Read args count + args
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read args count + args
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
 
-		// Read env count + entries
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read env count + entries
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
 
-		// Read build mode
-		_, _ = io.ReadFull(conn, buf[:])
+		// read build mode
+		_, _ = dec.ReadUint64()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send BuildResult: status=Built(0), errorMsg="", timesBuilt=1,
+		// send BuildResult: status=Built(0), errorMsg="", timesBuilt=1,
 		// isNonDeterministic=false, startTime=100, stopTime=200, builtOutputs count=0
-		binary.LittleEndian.PutUint64(buf[:], 0) // Built
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(0) // Built
 
-		writeWireStringTo(conn, "") // errorMsg
+		_ = enc.WriteString("") // errorMsg
 
-		binary.LittleEndian.PutUint64(buf[:], 1) // timesBuilt
-		_, _ = conn.Write(buf[:])
-
-		binary.LittleEndian.PutUint64(buf[:], 0) // isNonDeterministic
-		_, _ = conn.Write(buf[:])
-
-		binary.LittleEndian.PutUint64(buf[:], 100) // startTime
-		_, _ = conn.Write(buf[:])
-
-		binary.LittleEndian.PutUint64(buf[:], 200) // stopTime
-		_, _ = conn.Write(buf[:])
-
-		binary.LittleEndian.PutUint64(buf[:], 0) // cpuUser: None
-		_, _ = conn.Write(buf[:])
-		binary.LittleEndian.PutUint64(buf[:], 0) // cpuSystem: None
-		_, _ = conn.Write(buf[:])
-
-		binary.LittleEndian.PutUint64(buf[:], 0) // builtOutputs count
-		_, _ = conn.Write(buf[:])
+		_ = enc.WriteUint64(1)   // timesBuilt
+		_ = enc.WriteUint64(0)   // isNonDeterministic
+		_ = enc.WriteUint64(100) // startTime
+		_ = enc.WriteUint64(200) // stopTime
+		_ = enc.WriteUint64(0)   // cpuUser: None
+		_ = enc.WriteUint64(0)   // cpuSystem: None
+		_ = enc.WriteUint64(0)   // builtOutputs count
 
 		return nil
 	})
@@ -305,58 +274,54 @@ func TestClientBuildDerivationProto127(t *testing.T) {
 	}
 
 	mock.onAccept(func(conn net.Conn) error {
-		var buf [8]byte
+		dec := wire.NewDecoder(conn, 64*1024)
+		enc := wire.NewEncoder(conn)
 
-		// Read op code
-		_, _ = io.ReadFull(conn, buf[:])
-		op := binary.LittleEndian.Uint64(buf[:])
+		// read op code
+		op, _ := dec.ReadUint64()
 		require.Equal(t, uint64(daemon.OpBuildDerivation), op)
 
-		// Read drvPath
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read drvPath
+		_, _ = dec.ReadString()
 
-		// Read outputs count
-		_, _ = io.ReadFull(conn, buf[:])
-		count := binary.LittleEndian.Uint64(buf[:])
+		// read outputs count
+		count, _ := dec.ReadUint64()
 		require.Equal(t, uint64(1), count)
 
-		// Read output: name, path, hashAlgo, hash
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read output: name, path, hashAlgo, hash
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
 
-		// Read inputs count + paths
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read inputs count + paths
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
 
-		// Read platform, builder
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read platform, builder
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
 
-		// Read args count + args
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read args count + args
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
 
-		// Read env count + entries
-		_, _ = io.ReadFull(conn, buf[:])
-		_, _ = wire.ReadString(conn, 64*1024)
-		_, _ = wire.ReadString(conn, 64*1024)
+		// read env count + entries
+		_, _ = dec.ReadUint64()
+		_, _ = dec.ReadString()
+		_, _ = dec.ReadString()
 
-		// Read build mode
-		_, _ = io.ReadFull(conn, buf[:])
+		// read build mode
+		_, _ = dec.ReadUint64()
 
-		// Send LogLast
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = conn.Write(buf[:])
+		// send LogLast
+		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// Send BuildResult for proto 1.27:
+		// send BuildResult for proto 1.27:
 		// Only status + errorMsg. No timing fields, no CPU times, no builtOutputs.
-		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.BuildStatusBuilt)) // status
-		_, _ = conn.Write(buf[:])
-
-		writeWireStringTo(conn, "") // errorMsg
+		_ = enc.WriteUint64(uint64(daemon.BuildStatusBuilt)) // status
+		_ = enc.WriteString("")                              // errorMsg
 
 		return nil
 	})
@@ -397,16 +362,15 @@ func TestClientBuildPathsDaemonError(t *testing.T) {
 	}
 
 	mock.onAccept(respondWithError(daemon.OpBuildPaths, func(conn net.Conn) {
-		var buf [8]byte
-		// Read count + path strings
-		_, _ = io.ReadFull(conn, buf[:]) // count
+		dec := wire.NewDecoder(conn, 64*1024)
 
-		count := binary.LittleEndian.Uint64(buf[:])
+		// read count + path strings
+		count, _ := dec.ReadUint64()
 		for range count {
-			_, _ = wire.ReadString(conn, 64*1024)
+			_, _ = dec.ReadString()
 		}
-		// Read build mode
-		_, _ = io.ReadFull(conn, buf[:])
+		// read build mode
+		_, _ = dec.ReadUint64()
 	}, expectedErr))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
