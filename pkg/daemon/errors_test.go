@@ -5,21 +5,21 @@ import (
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDaemonError(t *testing.T) {
 	e := &daemon.Error{
 		Message: "path '/nix/store/xxx' is not valid",
 	}
-	assert.Equal(t, "daemon: path '/nix/store/xxx' is not valid", e.Error())
+	require.Equal(t, "daemon: path '/nix/store/xxx' is not valid", e.Error())
 }
 
 func TestProtocolError(t *testing.T) {
 	inner := errors.New("unexpected EOF")
 	e := &daemon.ProtocolError{Op: "handshake", Err: inner}
-	assert.Equal(t, "protocol: handshake: unexpected EOF", e.Error())
-	assert.ErrorIs(t, e, inner)
+	require.Equal(t, "protocol: handshake: unexpected EOF", e.Error())
+	require.ErrorIs(t, e, inner)
 }
 
 func TestUnsupportedOperationError(t *testing.T) {
@@ -28,6 +28,6 @@ func TestUnsupportedOperationError(t *testing.T) {
 		MinVersion:     0x0122,
 		CurrentVersion: 0x011b,
 	}
-	assert.Equal(t, "BuildPathsWithResults requires protocol >= 1.34, but negotiated 1.27", e.Error())
-	assert.ErrorIs(t, e, daemon.ErrUnsupportedOperation)
+	require.Equal(t, "BuildPathsWithResults requires protocol >= 1.34, but negotiated 1.27", e.Error())
+	require.ErrorIs(t, e, daemon.ErrUnsupportedOperation)
 }

@@ -7,10 +7,12 @@ import (
 
 	"github.com/nix-community/go-nix/pkg/daemon"
 	"github.com/nix-community/go-nix/pkg/wire"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReadPathInfo(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestString(&buf, "/nix/store/abc-foo.drv")        // deriver
@@ -25,17 +27,19 @@ func TestReadPathInfo(t *testing.T) {
 	writeTestString(&buf, "")                              // contentAddress
 
 	info, err := daemon.ReadPathInfo(&buf, "/nix/store/xyz-test", daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/xyz-test", info.StorePath)
-	assert.Equal(t, "/nix/store/abc-foo.drv", info.Deriver)
-	assert.Equal(t, "sha256:abcdef1234567890", info.NarHash)
-	assert.Equal(t, []string{"/nix/store/def-bar"}, info.References)
-	assert.Equal(t, uint64(12345), info.NarSize)
-	assert.True(t, info.Ultimate)
-	assert.Equal(t, []string{"cache.example.com-1:abc123sig"}, info.Sigs)
+	rq.NoError(err)
+	rq.Equal("/nix/store/xyz-test", info.StorePath)
+	rq.Equal("/nix/store/abc-foo.drv", info.Deriver)
+	rq.Equal("sha256:abcdef1234567890", info.NarHash)
+	rq.Equal([]string{"/nix/store/def-bar"}, info.References)
+	rq.Equal(uint64(12345), info.NarSize)
+	rq.True(info.Ultimate)
+	rq.Equal([]string{"cache.example.com-1:abc123sig"}, info.Sigs)
 }
 
 func TestWriteReadPathInfoRoundTrip(t *testing.T) {
+	rq := require.New(t)
+
 	info := &daemon.PathInfo{
 		StorePath:        "/nix/store/xyz-test",
 		Deriver:          "/nix/store/abc-foo.drv",
@@ -51,21 +55,23 @@ func TestWriteReadPathInfoRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 
 	err := daemon.WritePathInfo(&buf, info, daemon.ProtocolVersion)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	// ReadPathInfo reads UnkeyedValidPathInfo (no storePath prefix),
 	// but WritePathInfo writes ValidPathInfo (with storePath prefix).
 	// So we need to read the storePath first.
 	storePath, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/xyz-test", storePath)
+	rq.NoError(err)
+	rq.Equal("/nix/store/xyz-test", storePath)
 
 	got, err := daemon.ReadPathInfo(&buf, storePath, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Equal(t, info, got)
+	rq.NoError(err)
+	rq.Equal(info, got)
 }
 
 func TestWriteBasicDerivation(t *testing.T) {
+	rq := require.New(t)
+
 	drv := &daemon.BasicDerivation{
 		Outputs: map[string]daemon.DerivationOutput{
 			"out": {Path: "/nix/store/abc-out", HashAlgorithm: "", Hash: ""},
@@ -81,107 +87,109 @@ func TestWriteBasicDerivation(t *testing.T) {
 	var buf bytes.Buffer
 
 	err := daemon.WriteBasicDerivation(&buf, drv)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	// Verify outputs count = 2
 	count, err := wire.ReadUint64(&buf)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(2), count)
+	rq.NoError(err)
+	rq.Equal(uint64(2), count)
 
 	// First output should be "dev" (sorted)
 	name, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "dev", name)
+	rq.NoError(err)
+	rq.Equal("dev", name)
 
 	path, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/abc-dev", path)
+	rq.NoError(err)
+	rq.Equal("/nix/store/abc-dev", path)
 
 	hashAlgo, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "", hashAlgo)
+	rq.NoError(err)
+	rq.Equal("", hashAlgo)
 
 	hash, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "", hash)
+	rq.NoError(err)
+	rq.Equal("", hash)
 
 	// Second output should be "out"
 	name, err = wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "out", name)
+	rq.NoError(err)
+	rq.Equal("out", name)
 
 	path, err = wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/abc-out", path)
+	rq.NoError(err)
+	rq.Equal("/nix/store/abc-out", path)
 
 	_, err = wire.ReadString(&buf, daemon.MaxStringSize) // hashAlgo
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	_, err = wire.ReadString(&buf, daemon.MaxStringSize) // hash
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	// Verify inputs count = 2
 	count, err = wire.ReadUint64(&buf)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(2), count)
+	rq.NoError(err)
+	rq.Equal(uint64(2), count)
 
 	input1, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/def-input", input1)
+	rq.NoError(err)
+	rq.Equal("/nix/store/def-input", input1)
 
 	input2, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/ghi-input", input2)
+	rq.NoError(err)
+	rq.Equal("/nix/store/ghi-input", input2)
 
 	// Verify platform
 	platform, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "x86_64-linux", platform)
+	rq.NoError(err)
+	rq.Equal("x86_64-linux", platform)
 
 	// Verify builder
 	builder, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/bash/bin/bash", builder)
+	rq.NoError(err)
+	rq.Equal("/nix/store/bash/bin/bash", builder)
 
 	// Verify args count = 2
 	count, err = wire.ReadUint64(&buf)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(2), count)
+	rq.NoError(err)
+	rq.Equal(uint64(2), count)
 
 	arg1, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "-e", arg1)
+	rq.NoError(err)
+	rq.Equal("-e", arg1)
 
 	arg2, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "builder.sh", arg2)
+	rq.NoError(err)
+	rq.Equal("builder.sh", arg2)
 
 	// Verify env count = 2 (sorted: "dev" < "out")
 	count, err = wire.ReadUint64(&buf)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(2), count)
+	rq.NoError(err)
+	rq.Equal(uint64(2), count)
 
 	key1, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "dev", key1)
+	rq.NoError(err)
+	rq.Equal("dev", key1)
 
 	val1, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/abc-dev", val1)
+	rq.NoError(err)
+	rq.Equal("/nix/store/abc-dev", val1)
 
 	key2, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "out", key2)
+	rq.NoError(err)
+	rq.Equal("out", key2)
 
 	val2, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/abc-out", val2)
+	rq.NoError(err)
+	rq.Equal("/nix/store/abc-out", val2)
 
 	// Buffer should be fully consumed
-	assert.Equal(t, 0, buf.Len())
+	rq.Equal(0, buf.Len())
 }
 
 func TestWriteBasicDerivationEmpty(t *testing.T) {
+	rq := require.New(t)
+
 	drv := &daemon.BasicDerivation{
 		Outputs:  map[string]daemon.DerivationOutput{},
 		Inputs:   []string{},
@@ -194,42 +202,44 @@ func TestWriteBasicDerivationEmpty(t *testing.T) {
 	var buf bytes.Buffer
 
 	err := daemon.WriteBasicDerivation(&buf, drv)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	// Outputs count = 0
 	count, err := wire.ReadUint64(&buf)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(0), count)
+	rq.NoError(err)
+	rq.Equal(uint64(0), count)
 
 	// Inputs count = 0
 	count, err = wire.ReadUint64(&buf)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(0), count)
+	rq.NoError(err)
+	rq.Equal(uint64(0), count)
 
 	// Platform
 	platform, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "x86_64-linux", platform)
+	rq.NoError(err)
+	rq.Equal("x86_64-linux", platform)
 
 	// Builder
 	builder, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/bin/sh", builder)
+	rq.NoError(err)
+	rq.Equal("/bin/sh", builder)
 
 	// Args count = 0
 	count, err = wire.ReadUint64(&buf)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(0), count)
+	rq.NoError(err)
+	rq.Equal(uint64(0), count)
 
 	// Env count = 0
 	count, err = wire.ReadUint64(&buf)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(0), count)
+	rq.NoError(err)
+	rq.Equal(uint64(0), count)
 
-	assert.Equal(t, 0, buf.Len())
+	rq.Equal(0, buf.Len())
 }
 
 func TestReadBuildResult(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, 0)          // status = Built
@@ -245,25 +255,27 @@ func TestReadBuildResult(t *testing.T) {
 	writeTestString(&buf, `{"id":"sha256:abc123!out","outPath":"/nix/store/zzz-hello","signatures":["mykey:c2ln"],"dependentRealisations":{}}`)
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
-	assert.Equal(t, "", result.ErrorMsg)
-	assert.Equal(t, uint64(1), result.TimesBuilt)
-	assert.False(t, result.IsNonDeterministic)
-	assert.Equal(t, uint64(1700000000), result.StartTime)
-	assert.Equal(t, uint64(1700000060), result.StopTime)
-	assert.Nil(t, result.CpuUser)
-	assert.Nil(t, result.CpuSystem)
-	assert.Len(t, result.BuiltOutputs, 1)
+	rq.NoError(err)
+	rq.Equal(daemon.BuildStatusBuilt, result.Status)
+	rq.Equal("", result.ErrorMsg)
+	rq.Equal(uint64(1), result.TimesBuilt)
+	rq.False(result.IsNonDeterministic)
+	rq.Equal(uint64(1700000000), result.StartTime)
+	rq.Equal(uint64(1700000060), result.StopTime)
+	rq.Nil(result.CpuUser)
+	rq.Nil(result.CpuSystem)
+	rq.Len(result.BuiltOutputs, 1)
 
 	realisation := result.BuiltOutputs["out"]
-	assert.Equal(t, "sha256:abc123!out", realisation.ID)
-	assert.Equal(t, "/nix/store/zzz-hello", realisation.OutPath)
-	assert.Equal(t, []string{"mykey:c2ln"}, realisation.Signatures)
-	assert.Empty(t, realisation.DependentRealisations)
+	rq.Equal("sha256:abc123!out", realisation.ID)
+	rq.Equal("/nix/store/zzz-hello", realisation.OutPath)
+	rq.Equal([]string{"mykey:c2ln"}, realisation.Signatures)
+	rq.Empty(realisation.DependentRealisations)
 }
 
 func TestReadBuildResultNoOutputs(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, 3)              // status = PermanentFailure
@@ -277,15 +289,17 @@ func TestReadBuildResultNoOutputs(t *testing.T) {
 	writeTestUint64(&buf, 0)              // builtOutputs count
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Equal(t, daemon.BuildStatusPermanentFailure, result.Status)
-	assert.Equal(t, "build failed", result.ErrorMsg)
-	assert.Nil(t, result.CpuUser)
-	assert.Nil(t, result.CpuSystem)
-	assert.Empty(t, result.BuiltOutputs)
+	rq.NoError(err)
+	rq.Equal(daemon.BuildStatusPermanentFailure, result.Status)
+	rq.Equal("build failed", result.ErrorMsg)
+	rq.Nil(result.CpuUser)
+	rq.Nil(result.CpuSystem)
+	rq.Empty(result.BuiltOutputs)
 }
 
 func TestReadBuildResultWithCPUTimes(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, 0)          // status = Built
@@ -302,21 +316,23 @@ func TestReadBuildResultWithCPUTimes(t *testing.T) {
 	writeTestUint64(&buf, 0) // builtOutputs count
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
-	assert.Equal(t, uint64(1), result.TimesBuilt)
-	assert.Equal(t, uint64(1700000000), result.StartTime)
-	assert.Equal(t, uint64(1700000060), result.StopTime)
+	rq.NoError(err)
+	rq.Equal(daemon.BuildStatusBuilt, result.Status)
+	rq.Equal(uint64(1), result.TimesBuilt)
+	rq.Equal(uint64(1700000000), result.StartTime)
+	rq.Equal(uint64(1700000060), result.StopTime)
 
 	expectedCpuUser := 500 * time.Millisecond
-	assert.Equal(t, &expectedCpuUser, result.CpuUser)
-	assert.Nil(t, result.CpuSystem)
+	rq.Equal(&expectedCpuUser, result.CpuUser)
+	rq.Nil(result.CpuSystem)
 
-	assert.Empty(t, result.BuiltOutputs)
-	assert.Equal(t, 0, buf.Len())
+	rq.Empty(result.BuiltOutputs)
+	rq.Equal(0, buf.Len())
 }
 
 func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, 0)          // status = Built
@@ -336,41 +352,45 @@ func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 	writeTestString(&buf, `{"id":"sha256:def456!out","outPath":"/nix/store/yyy-world","signatures":[],"dependentRealisations":{}}`)
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
-	assert.Equal(t, uint64(2), result.TimesBuilt)
+	rq.NoError(err)
+	rq.Equal(daemon.BuildStatusBuilt, result.Status)
+	rq.Equal(uint64(2), result.TimesBuilt)
 
 	expectedCpuUser := time.Second
 	expectedCpuSystem := 250 * time.Millisecond
 
-	assert.Equal(t, &expectedCpuUser, result.CpuUser)
-	assert.Equal(t, &expectedCpuSystem, result.CpuSystem)
+	rq.Equal(&expectedCpuUser, result.CpuUser)
+	rq.Equal(&expectedCpuSystem, result.CpuSystem)
 
-	assert.Len(t, result.BuiltOutputs, 1)
-	assert.Equal(t, "sha256:def456!out", result.BuiltOutputs["out"].ID)
-	assert.Equal(t, "/nix/store/yyy-world", result.BuiltOutputs["out"].OutPath)
-	assert.Equal(t, 0, buf.Len())
+	rq.Len(result.BuiltOutputs, 1)
+	rq.Equal("sha256:def456!out", result.BuiltOutputs["out"].ID)
+	rq.Equal("/nix/store/yyy-world", result.BuiltOutputs["out"].OutPath)
+	rq.Equal(0, buf.Len())
 }
 
 func TestReadBuildResultProto127(t *testing.T) {
+	rq := require.New(t)
+
 	// Proto 1.27 (0x011b): only status + errorMsg (no timing, no CPU, no builtOutputs)
 	var buf bytes.Buffer
 	writeTestUint64(&buf, 0)            // status = Built
 	writeTestString(&buf, "some error") // errorMsg
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtoVersion(1, 27))
-	assert.NoError(t, err)
-	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
-	assert.Equal(t, "some error", result.ErrorMsg)
-	assert.Equal(t, uint64(0), result.TimesBuilt)
-	assert.False(t, result.IsNonDeterministic)
-	assert.Equal(t, uint64(0), result.StartTime)
-	assert.Equal(t, uint64(0), result.StopTime)
-	assert.Nil(t, result.BuiltOutputs)
-	assert.Equal(t, 0, buf.Len())
+	rq.NoError(err)
+	rq.Equal(daemon.BuildStatusBuilt, result.Status)
+	rq.Equal("some error", result.ErrorMsg)
+	rq.Equal(uint64(0), result.TimesBuilt)
+	rq.False(result.IsNonDeterministic)
+	rq.Equal(uint64(0), result.StartTime)
+	rq.Equal(uint64(0), result.StopTime)
+	rq.Nil(result.BuiltOutputs)
+	rq.Equal(0, buf.Len())
 }
 
 func TestReadBuildResultProto128(t *testing.T) {
+	rq := require.New(t)
+
 	// Proto 1.28 (0x011c): status + errorMsg + builtOutputs (no timing, no CPU)
 	var buf bytes.Buffer
 	writeTestUint64(&buf, 1)     // status = Substituted
@@ -380,16 +400,18 @@ func TestReadBuildResultProto128(t *testing.T) {
 	writeTestString(&buf, `{"id":"sha256:abc!out","outPath":"/nix/store/zzz-pkg","signatures":[],"dependentRealisations":{}}`)
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtoVersion(1, 28))
-	assert.NoError(t, err)
-	assert.Equal(t, daemon.BuildStatusSubstituted, result.Status)
-	assert.Equal(t, uint64(0), result.TimesBuilt) // no timing fields
-	assert.Len(t, result.BuiltOutputs, 1)
-	assert.Equal(t, "sha256:abc!out", result.BuiltOutputs["out"].ID)
-	assert.Equal(t, "/nix/store/zzz-pkg", result.BuiltOutputs["out"].OutPath)
-	assert.Equal(t, 0, buf.Len())
+	rq.NoError(err)
+	rq.Equal(daemon.BuildStatusSubstituted, result.Status)
+	rq.Equal(uint64(0), result.TimesBuilt) // no timing fields
+	rq.Len(result.BuiltOutputs, 1)
+	rq.Equal("sha256:abc!out", result.BuiltOutputs["out"].ID)
+	rq.Equal("/nix/store/zzz-pkg", result.BuiltOutputs["out"].OutPath)
+	rq.Equal(0, buf.Len())
 }
 
 func TestReadBuildResultProto129(t *testing.T) {
+	rq := require.New(t)
+
 	// Proto 1.29 (0x011d): status + errorMsg + timing + builtOutputs (no CPU)
 	var buf bytes.Buffer
 	writeTestUint64(&buf, 0)          // status = Built
@@ -401,17 +423,19 @@ func TestReadBuildResultProto129(t *testing.T) {
 	writeTestUint64(&buf, 0)          // builtOutputs count
 
 	result, err := daemon.ReadBuildResult(&buf, daemon.ProtoVersion(1, 29))
-	assert.NoError(t, err)
-	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
-	assert.Equal(t, uint64(3), result.TimesBuilt)
-	assert.True(t, result.IsNonDeterministic)
-	assert.Equal(t, uint64(1700000000), result.StartTime)
-	assert.Equal(t, uint64(1700000060), result.StopTime)
-	assert.Empty(t, result.BuiltOutputs)
-	assert.Equal(t, 0, buf.Len())
+	rq.NoError(err)
+	rq.Equal(daemon.BuildStatusBuilt, result.Status)
+	rq.Equal(uint64(3), result.TimesBuilt)
+	rq.True(result.IsNonDeterministic)
+	rq.Equal(uint64(1700000000), result.StartTime)
+	rq.Equal(uint64(1700000060), result.StopTime)
+	rq.Empty(result.BuiltOutputs)
+	rq.Equal(0, buf.Len())
 }
 
 func TestWriteReadPathInfoRoundTripPreMeta(t *testing.T) {
+	rq := require.New(t)
+
 	info := &daemon.PathInfo{
 		StorePath:        "/nix/store/xyz-test",
 		Deriver:          "/nix/store/abc-foo.drv",
@@ -427,33 +451,35 @@ func TestWriteReadPathInfoRoundTripPreMeta(t *testing.T) {
 	var buf bytes.Buffer
 
 	err := daemon.WritePathInfo(&buf, info, daemon.ProtoVersion(1, 15))
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	// Read back storePath (WritePathInfo writes it as first field)
 	storePath, err := wire.ReadString(&buf, daemon.MaxStringSize)
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/xyz-test", storePath)
+	rq.NoError(err)
+	rq.Equal("/nix/store/xyz-test", storePath)
 
 	// Read PathInfo at proto 1.15
 	got, err := daemon.ReadPathInfo(&buf, storePath, daemon.ProtoVersion(1, 15))
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	// At proto 1.15: ultimate/sigs/ca are NOT written or read
-	assert.Equal(t, info.StorePath, got.StorePath)
-	assert.Equal(t, info.Deriver, got.Deriver)
-	assert.Equal(t, info.NarHash, got.NarHash)
-	assert.Equal(t, info.References, got.References)
-	assert.Equal(t, info.RegistrationTime, got.RegistrationTime)
-	assert.Equal(t, info.NarSize, got.NarSize)
-	assert.False(t, got.Ultimate) // Zero value — not written
-	assert.Nil(t, got.Sigs)       // Zero value — not written
-	assert.Equal(t, "", got.CA)   // Zero value — not written
+	rq.Equal(info.StorePath, got.StorePath)
+	rq.Equal(info.Deriver, got.Deriver)
+	rq.Equal(info.NarHash, got.NarHash)
+	rq.Equal(info.References, got.References)
+	rq.Equal(info.RegistrationTime, got.RegistrationTime)
+	rq.Equal(info.NarSize, got.NarSize)
+	rq.False(got.Ultimate) // Zero value — not written
+	rq.Nil(got.Sigs)       // Zero value — not written
+	rq.Equal("", got.CA)   // Zero value — not written
 
 	// Buffer should be fully consumed
-	assert.Equal(t, 0, buf.Len())
+	rq.Equal(0, buf.Len())
 }
 
 func TestReadPathInfoPreMeta(t *testing.T) {
+	rq := require.New(t)
+
 	// Proto 1.15 (0x010f): no ultimate/sigs/ca fields
 	var buf bytes.Buffer
 	writeTestString(&buf, "/nix/store/abc-foo.drv")  // deriver
@@ -465,14 +491,14 @@ func TestReadPathInfoPreMeta(t *testing.T) {
 	// NO ultimate, sigs, ca fields
 
 	info, err := daemon.ReadPathInfo(&buf, "/nix/store/xyz-test", daemon.ProtoVersion(1, 15))
-	assert.NoError(t, err)
-	assert.Equal(t, "/nix/store/xyz-test", info.StorePath)
-	assert.Equal(t, "/nix/store/abc-foo.drv", info.Deriver)
-	assert.Equal(t, "sha256:abcdef1234567890", info.NarHash)
-	assert.Equal(t, []string{"/nix/store/def-bar"}, info.References)
-	assert.Equal(t, uint64(12345), info.NarSize)
-	assert.False(t, info.Ultimate)
-	assert.Nil(t, info.Sigs)
-	assert.Equal(t, "", info.CA)
-	assert.Equal(t, 0, buf.Len())
+	rq.NoError(err)
+	rq.Equal("/nix/store/xyz-test", info.StorePath)
+	rq.Equal("/nix/store/abc-foo.drv", info.Deriver)
+	rq.Equal("sha256:abcdef1234567890", info.NarHash)
+	rq.Equal([]string{"/nix/store/def-bar"}, info.References)
+	rq.Equal(uint64(12345), info.NarSize)
+	rq.False(info.Ultimate)
+	rq.Nil(info.Sigs)
+	rq.Equal("", info.CA)
+	rq.Equal(0, buf.Len())
 }

@@ -10,39 +10,52 @@ import (
 
 	"github.com/nix-community/go-nix/pkg/daemon"
 	"github.com/nix-community/go-nix/pkg/wire"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestClientIsValidPath(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 	mock.onAccept(respondIsValidPath(true))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.True(t, valid)
+	rq.NoError(err)
+	rq.True(valid)
 }
 
 func TestClientIsValidPathFalse(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 	mock.onAccept(respondIsValidPath(false))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/nonexistent")
-	assert.NoError(t, err)
-	assert.False(t, valid)
+	rq.NoError(err)
+	rq.False(valid)
 }
 
 func TestClientQueryPathInfo(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	expected := &daemon.PathInfo{
@@ -62,40 +75,52 @@ func TestClientQueryPathInfo(t *testing.T) {
 	mock.onAccept(respondQueryPathInfo(expected))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.NotNil(t, info)
-	assert.Equal(t, expected.StorePath, info.StorePath)
-	assert.Equal(t, expected.Deriver, info.Deriver)
-	assert.Equal(t, expected.NarHash, info.NarHash)
-	assert.Equal(t, expected.References, info.References)
-	assert.Equal(t, expected.RegistrationTime, info.RegistrationTime)
-	assert.Equal(t, expected.NarSize, info.NarSize)
-	assert.Equal(t, expected.Ultimate, info.Ultimate)
-	assert.Equal(t, expected.Sigs, info.Sigs)
-	assert.Equal(t, expected.CA, info.CA)
+	rq.NoError(err)
+	rq.NotNil(info)
+	rq.Equal(expected.StorePath, info.StorePath)
+	rq.Equal(expected.Deriver, info.Deriver)
+	rq.Equal(expected.NarHash, info.NarHash)
+	rq.Equal(expected.References, info.References)
+	rq.Equal(expected.RegistrationTime, info.RegistrationTime)
+	rq.Equal(expected.NarSize, info.NarSize)
+	rq.Equal(expected.Ultimate, info.Ultimate)
+	rq.Equal(expected.Sigs, info.Sigs)
+	rq.Equal(expected.CA, info.CA)
 }
 
 func TestClientQueryPathInfoNotFound(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	mock.onAccept(respondQueryPathInfoNotFound())
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
 
-	defer client.Close()
+	rq.NoError(err)
+
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	info, err := client.QueryPathInfo(context.Background(), "/nix/store/nonexistent")
-	assert.NoError(t, err)
-	assert.Nil(t, info)
+	rq.NoError(err)
+	rq.Nil(info)
 }
 
 func TestClientNarFromPath(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	fileContent := "fake-nar-content-for-testing"
@@ -105,7 +130,7 @@ func TestClientNarFromPath(t *testing.T) {
 
 		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
-		assert.Equal(t, uint64(daemon.OpNarFromPath), op)
+		rq.Equal(uint64(daemon.OpNarFromPath), op)
 
 		_, _ = wire.ReadString(conn, 64*1024) // path
 
@@ -126,25 +151,31 @@ func TestClientNarFromPath(t *testing.T) {
 	})
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	rc, err := client.NarFromPath(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	// The returned data is the complete NAR including wire formatting.
 	data, err := io.ReadAll(rc)
-	assert.NoError(t, err)
-	assert.True(t, len(data) > 0)
+	rq.NoError(err)
+	rq.True(len(data) > 0)
 	// Check that the NAR contains the file content.
-	assert.Contains(t, string(data), fileContent)
+	rq.Contains(string(data), fileContent)
 
 	err = rc.Close()
-	assert.NoError(t, err)
+	rq.NoError(err)
 }
 
 func TestClientFindRoots(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
@@ -166,16 +197,22 @@ func TestClientFindRoots(t *testing.T) {
 	})
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
 
-	defer client.Close()
+	rq.NoError(err)
+
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	roots, err := client.FindRoots(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, map[string]string{"/proc/1/root": "/nix/store/abc-test"}, roots)
+	rq.NoError(err)
+	rq.Equal(map[string]string{"/proc/1/root": "/nix/store/abc-test"}, roots)
 }
 
 func TestClientQueryAllValidPaths(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	expected := []string{
@@ -187,16 +224,21 @@ func TestClientQueryAllValidPaths(t *testing.T) {
 	mock.onAccept(respondQueryAllValidPaths(expected))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	paths, err := client.QueryAllValidPaths(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, expected, paths)
+	rq.NoError(err)
+	rq.Equal(expected, paths)
 }
 
 func TestClientQueryValidPaths(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	queryPaths := []string{
@@ -213,16 +255,21 @@ func TestClientQueryValidPaths(t *testing.T) {
 	mock.onAccept(respondQueryValidPaths(validPaths))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QueryValidPaths(context.Background(), queryPaths, true)
-	assert.NoError(t, err)
-	assert.Equal(t, validPaths, result)
+	rq.NoError(err)
+	rq.Equal(validPaths, result)
 }
 
 func TestClientQuerySubstitutablePaths(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	queryPaths := []string{
@@ -237,16 +284,21 @@ func TestClientQuerySubstitutablePaths(t *testing.T) {
 	mock.onAccept(respondQuerySubstitutablePaths(substitutable))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QuerySubstitutablePaths(context.Background(), queryPaths)
-	assert.NoError(t, err)
-	assert.Equal(t, substitutable, result)
+	rq.NoError(err)
+	rq.Equal(substitutable, result)
 }
 
 func TestClientQuerySubstitutablePathInfos(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	expected := map[string]*daemon.SubstitutablePathInfo{
@@ -267,47 +319,57 @@ func TestClientQuerySubstitutablePathInfos(t *testing.T) {
 	mock.onAccept(respondQuerySubstitutablePathInfos(expected))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
 		"/nix/store/aaa-foo": "",
 		"/nix/store/bbb-bar": "",
 		"/nix/store/ccc-baz": "",
 	})
-	assert.NoError(t, err)
-	assert.Len(t, result, 2)
+	rq.NoError(err)
+	rq.Len(result, 2)
 
-	// The mock iterates over a Go map so order may vary; check by key.
+	// The mock iterates over a Go map, so order may vary; check by key.
 	for path, info := range expected {
 		got, ok := result[path]
-		assert.True(t, ok, "expected path %s in result", path)
-		assert.Equal(t, info.Deriver, got.Deriver)
-		assert.Equal(t, info.References, got.References)
-		assert.Equal(t, info.DownloadSize, got.DownloadSize)
-		assert.Equal(t, info.NarSize, got.NarSize)
+		rq.True(ok, "expected path %s in result", path)
+		rq.Equal(info.Deriver, got.Deriver)
+		rq.Equal(info.References, got.References)
+		rq.Equal(info.DownloadSize, got.DownloadSize)
+		rq.Equal(info.NarSize, got.NarSize)
 	}
 }
 
 func TestClientQuerySubstitutablePathInfosEmpty(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	mock.onAccept(respondQuerySubstitutablePathInfos(map[string]*daemon.SubstitutablePathInfo{}))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
 		"/nix/store/nonexistent": "",
 	})
-	assert.NoError(t, err)
-	assert.Len(t, result, 0)
+	rq.NoError(err)
+	rq.Len(result, 0)
 }
 
 func TestClientQueryReferrers(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	referrers := []string{
@@ -318,16 +380,21 @@ func TestClientQueryReferrers(t *testing.T) {
 	mock.onAccept(respondQueryReferrers(referrers))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QueryReferrers(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.Equal(t, referrers, result)
+	rq.NoError(err)
+	rq.Equal(referrers, result)
 }
 
 func TestClientQueryValidDerivers(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	derivers := []string{
@@ -338,16 +405,21 @@ func TestClientQueryValidDerivers(t *testing.T) {
 	mock.onAccept(respondQueryValidDerivers(derivers))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QueryValidDerivers(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.Equal(t, derivers, result)
+	rq.NoError(err)
+	rq.Equal(derivers, result)
 }
 
 func TestClientQueryDerivationOutputMap(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	outputs := map[string]string{
@@ -359,16 +431,21 @@ func TestClientQueryDerivationOutputMap(t *testing.T) {
 	mock.onAccept(respondQueryDerivationOutputMap(outputs))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QueryDerivationOutputMap(context.Background(), "/nix/store/abc-test.drv")
-	assert.NoError(t, err)
-	assert.Equal(t, outputs, result)
+	rq.NoError(err)
+	rq.Equal(outputs, result)
 }
 
 func TestClientQueryMissing(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	expected := &daemon.MissingInfo{
@@ -382,24 +459,29 @@ func TestClientQueryMissing(t *testing.T) {
 	mock.onAccept(respondQueryMissing(expected))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QueryMissing(context.Background(), []string{
 		"/nix/store/aaa-needs-build.drv",
 		"/nix/store/bbb-from-cache",
 		"/nix/store/ccc-unknown",
 	})
-	assert.NoError(t, err)
-	assert.Equal(t, expected.WillBuild, result.WillBuild)
-	assert.Equal(t, expected.WillSubstitute, result.WillSubstitute)
-	assert.Equal(t, expected.Unknown, result.Unknown)
-	assert.Equal(t, expected.DownloadSize, result.DownloadSize)
-	assert.Equal(t, expected.NarSize, result.NarSize)
+	rq.NoError(err)
+	rq.Equal(expected.WillBuild, result.WillBuild)
+	rq.Equal(expected.WillSubstitute, result.WillSubstitute)
+	rq.Equal(expected.Unknown, result.Unknown)
+	rq.Equal(expected.DownloadSize, result.DownloadSize)
+	rq.Equal(expected.NarSize, result.NarSize)
 }
 
 func TestClientQueryPathFromHashPart(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	expectedPath := "/nix/store/abc123-test"
@@ -407,16 +489,21 @@ func TestClientQueryPathFromHashPart(t *testing.T) {
 	mock.onAccept(respondQueryPathFromHashPart(expectedPath))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QueryPathFromHashPart(context.Background(), "abc123")
-	assert.NoError(t, err)
-	assert.Equal(t, expectedPath, result)
+	rq.NoError(err)
+	rq.Equal(expectedPath, result)
 }
 
 func TestClientQueryRealisation(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	realisations := []string{
@@ -426,57 +513,76 @@ func TestClientQueryRealisation(t *testing.T) {
 	mock.onAccept(respondQueryRealisation(realisations))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	result, err := client.QueryRealisation(context.Background(), "sha256:abc!out")
-	assert.NoError(t, err)
+	rq.NoError(err)
 	require.Len(t, result, 1)
-	assert.Equal(t, "sha256:abc!out", result[0].ID)
-	assert.Equal(t, "/nix/store/abc-out", result[0].OutPath)
-	assert.Equal(t, []string{"mykey:c2ln"}, result[0].Signatures)
+	rq.Equal("sha256:abc!out", result[0].ID)
+	rq.Equal("/nix/store/abc-out", result[0].OutPath)
+	rq.Equal([]string{"mykey:c2ln"}, result[0].Signatures)
 }
 
 // Version-specific query tests
 
 func TestQueryDerivationOutputMapUnsupportedVersion(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	_, err = client.QueryDerivationOutputMap(context.Background(), "/nix/store/abc.drv")
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+	rq.Error(err)
+	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
 
 func TestQueryMissingUnsupportedVersion(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	_, err = client.QueryMissing(context.Background(), []string{"/nix/store/abc.drv!out"})
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+	rq.Error(err)
+	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
 
 func TestQueryRealisationUnsupportedVersion(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	_, err = client.QueryRealisation(context.Background(), "sha256:abc!out")
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
+	rq.Error(err)
+	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
 
 // TestClientQueryPathInfoProto123 connects at proto 1.23 (MinProtocolVersion)
@@ -491,6 +597,7 @@ func TestQueryRealisationUnsupportedVersion(t *testing.T) {
 // through the client. This test instead verifies QueryPathInfo works correctly
 // at MinProtocolVersion with a lower-version mock daemon.
 func TestClientQueryPathInfoProto123(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
 
 	mock.onAccept(func(conn net.Conn) error {
@@ -499,7 +606,7 @@ func TestClientQueryPathInfoProto123(t *testing.T) {
 		// Read op code
 		_, _ = io.ReadFull(conn, buf[:])
 		op := binary.LittleEndian.Uint64(buf[:])
-		assert.Equal(t, uint64(daemon.OpQueryPathInfo), op)
+		rq.Equal(uint64(daemon.OpQueryPathInfo), op)
 
 		// Read path string
 		_, _ = wire.ReadString(conn, 64*1024)
@@ -541,25 +648,29 @@ func TestClientQueryPathInfoProto123(t *testing.T) {
 	})
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
-	assert.Equal(t, daemon.ProtoVersion(1, 23), client.Info().Version)
+	rq.Equal(daemon.ProtoVersion(1, 23), client.Info().Version)
 
 	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.NotNil(t, info)
-	assert.Equal(t, "/nix/store/abc-test", info.StorePath)
-	assert.Equal(t, "/nix/store/xyz-test.drv", info.Deriver)
-	assert.Equal(t, "sha256:abc123", info.NarHash)
-	assert.Equal(t, []string{"/nix/store/dep-one"}, info.References)
-	assert.Equal(t, uint64(1700000000), info.RegistrationTime)
-	assert.Equal(t, uint64(54321), info.NarSize)
+	rq.NoError(err)
+	rq.NotNil(t, info)
+	rq.Equal("/nix/store/abc-test", info.StorePath)
+	rq.Equal("/nix/store/xyz-test.drv", info.Deriver)
+	rq.Equal("sha256:abc123", info.NarHash)
+	rq.Equal([]string{"/nix/store/dep-one"}, info.References)
+	rq.Equal(uint64(1700000000), info.RegistrationTime)
+	rq.Equal(uint64(54321), info.NarSize)
 	// At proto 1.23 (>= 1.16), ultimate/sigs/ca ARE included
-	assert.False(t, info.Ultimate)
-	assert.Empty(t, info.Sigs)
-	assert.Equal(t, "", info.CA)
+	rq.False(info.Ultimate)
+	rq.Empty(info.Sigs)
+	rq.Equal("", info.CA)
 }
 
 // TestClientQueryValidPathsPreSubstituteOk connects at proto 1.23
@@ -568,6 +679,7 @@ func TestClientQueryPathInfoProto123(t *testing.T) {
 // substituteOk field is NOT sent on the wire, so the mock must NOT try
 // to read it.
 func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
 
 	queryPaths := []string{
@@ -585,12 +697,12 @@ func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
 		// Read op code
 		_, _ = io.ReadFull(conn, buf[:])
 		op := binary.LittleEndian.Uint64(buf[:])
-		assert.Equal(t, uint64(daemon.OpQueryValidPaths), op)
+		rq.Equal(uint64(daemon.OpQueryValidPaths), op)
 
 		// Read paths list: count + strings
 		_, _ = io.ReadFull(conn, buf[:])
 		count := binary.LittleEndian.Uint64(buf[:])
-		assert.Equal(t, uint64(2), count)
+		rq.Equal(uint64(2), count)
 
 		for range count {
 			_, _ = wire.ReadString(conn, 64*1024)
@@ -614,20 +726,25 @@ func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
 	})
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
-	assert.Equal(t, daemon.ProtoVersion(1, 23), client.Info().Version)
+	rq.Equal(daemon.ProtoVersion(1, 23), client.Info().Version)
 
 	result, err := client.QueryValidPaths(context.Background(), queryPaths, true)
-	assert.NoError(t, err)
-	assert.Equal(t, validResult, result)
+	rq.NoError(err)
+	rq.Equal(validResult, result)
 }
 
 // Error tests for query operations
 
 func TestClientIsValidPathDaemonError(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	expectedErr := &daemon.Error{
@@ -642,20 +759,25 @@ func TestClientIsValidPathDaemonError(t *testing.T) {
 	}, expectedErr))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	_, err = client.IsValidPath(context.Background(), "/nix/store/xxx-invalid")
-	assert.Error(t, err)
+	rq.Error(err)
 
 	var daemonErr *daemon.Error
-	assert.True(t, errors.As(err, &daemonErr))
-	assert.Equal(t, "Error", daemonErr.Type)
-	assert.Equal(t, "path '/nix/store/xxx-invalid' is not valid", daemonErr.Message)
+	rq.True(errors.As(err, &daemonErr))
+	rq.Equal("Error", daemonErr.Type)
+	rq.Equal("path '/nix/store/xxx-invalid' is not valid", daemonErr.Message)
 }
 
 func TestClientQueryPathInfoDaemonError(t *testing.T) {
+	rq := require.New(t)
 	mock := newMockDaemon(t)
 
 	expectedErr := &daemon.Error{
@@ -670,15 +792,19 @@ func TestClientQueryPathInfoDaemonError(t *testing.T) {
 	}, expectedErr))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Fatalf("failed to close client: %s", closeErr)
+		}
+	})
 
 	_, err = client.QueryPathInfo(context.Background(), "/nix/store/yyy-broken")
-	assert.Error(t, err)
+	rq.Error(err)
 
 	var daemonErr *daemon.Error
-	assert.True(t, errors.As(err, &daemonErr))
-	assert.Equal(t, "Error", daemonErr.Type)
-	assert.Equal(t, "path '/nix/store/yyy-broken' is corrupted", daemonErr.Message)
+	rq.True(errors.As(err, &daemonErr))
+	rq.Equal("Error", daemonErr.Type)
+	rq.Equal("path '/nix/store/yyy-broken' is corrupted", daemonErr.Message)
 }

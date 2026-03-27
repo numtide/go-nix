@@ -4,23 +4,24 @@ import (
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProtocolConstants(t *testing.T) {
 	t.Run("ClientMagic", func(t *testing.T) {
-		assert.Equal(t, uint64(0x6e697863), daemon.ClientMagic)
+		require.Equal(t, uint64(0x6e697863), daemon.ClientMagic)
 	})
 
 	t.Run("ServerMagic", func(t *testing.T) {
-		assert.Equal(t, uint64(0x6478696f), daemon.ServerMagic)
+		require.Equal(t, uint64(0x6478696f), daemon.ServerMagic)
 	})
 
 	t.Run("ProtocolVersion", func(t *testing.T) {
-		assert.Equal(t, uint64(0x0126), daemon.ProtocolVersion)
+		rq := require.New(t)
+		rq.Equal(uint64(0x0126), daemon.ProtocolVersion)
 		// Version 1.38 => major=1, minor=38
-		assert.Equal(t, uint64(1), daemon.ProtocolVersion>>8)
-		assert.Equal(t, uint64(38), daemon.ProtocolVersion&0xff)
+		rq.Equal(uint64(1), daemon.ProtocolVersion>>8)
+		rq.Equal(uint64(38), daemon.ProtocolVersion&0xff)
 	})
 }
 
@@ -64,17 +65,18 @@ func TestOperationCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, daemon.Operation(tt.want), tt.op)
+			require.Equal(t, daemon.Operation(tt.want), tt.op)
 		})
 	}
 }
 
 func TestOperationString(t *testing.T) {
-	assert.Equal(t, "IsValidPath", daemon.OpIsValidPath.String())
-	assert.Equal(t, "QueryPathInfo", daemon.OpQueryPathInfo.String())
-	assert.Equal(t, "BuildDerivation", daemon.OpBuildDerivation.String())
-	assert.Equal(t, "AddPermRoot", daemon.OpAddPermRoot.String())
-	assert.Equal(t, "Operation(999)", daemon.Operation(999).String())
+	rq := require.New(t)
+	rq.Equal("IsValidPath", daemon.OpIsValidPath.String())
+	rq.Equal("QueryPathInfo", daemon.OpQueryPathInfo.String())
+	rq.Equal("BuildDerivation", daemon.OpBuildDerivation.String())
+	rq.Equal("AddPermRoot", daemon.OpAddPermRoot.String())
+	rq.Equal("Operation(999)", daemon.Operation(999).String())
 }
 
 func TestLogMessageTypes(t *testing.T) {
@@ -95,55 +97,59 @@ func TestLogMessageTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, daemon.LogMessageType(tt.want), tt.msg)
+			require.Equal(t, daemon.LogMessageType(tt.want), tt.msg)
 		})
 	}
 }
 
 func TestActivityTypes(t *testing.T) {
-	assert.Equal(t, daemon.ActivityType(0), daemon.ActUnknown)
-	assert.Equal(t, daemon.ActivityType(100), daemon.ActCopyPath)
-	assert.Equal(t, daemon.ActivityType(101), daemon.ActFileTransfer)
-	assert.Equal(t, daemon.ActivityType(102), daemon.ActRealise)
-	assert.Equal(t, daemon.ActivityType(103), daemon.ActCopyPaths)
-	assert.Equal(t, daemon.ActivityType(104), daemon.ActBuilds)
-	assert.Equal(t, daemon.ActivityType(105), daemon.ActBuild)
-	assert.Equal(t, daemon.ActivityType(106), daemon.ActOptimiseStore)
-	assert.Equal(t, daemon.ActivityType(107), daemon.ActVerifyPaths)
-	assert.Equal(t, daemon.ActivityType(108), daemon.ActSubstitute)
-	assert.Equal(t, daemon.ActivityType(109), daemon.ActQueryPathInfo)
-	assert.Equal(t, daemon.ActivityType(110), daemon.ActPostBuildHook)
-	assert.Equal(t, daemon.ActivityType(111), daemon.ActBuildWaiting)
-	assert.Equal(t, daemon.ActivityType(112), daemon.ActFetchTree)
+	rq := require.New(t)
+	rq.Equal(daemon.ActivityType(0), daemon.ActUnknown)
+	rq.Equal(daemon.ActivityType(100), daemon.ActCopyPath)
+	rq.Equal(daemon.ActivityType(101), daemon.ActFileTransfer)
+	rq.Equal(daemon.ActivityType(102), daemon.ActRealise)
+	rq.Equal(daemon.ActivityType(103), daemon.ActCopyPaths)
+	rq.Equal(daemon.ActivityType(104), daemon.ActBuilds)
+	rq.Equal(daemon.ActivityType(105), daemon.ActBuild)
+	rq.Equal(daemon.ActivityType(106), daemon.ActOptimiseStore)
+	rq.Equal(daemon.ActivityType(107), daemon.ActVerifyPaths)
+	rq.Equal(daemon.ActivityType(108), daemon.ActSubstitute)
+	rq.Equal(daemon.ActivityType(109), daemon.ActQueryPathInfo)
+	rq.Equal(daemon.ActivityType(110), daemon.ActPostBuildHook)
+	rq.Equal(daemon.ActivityType(111), daemon.ActBuildWaiting)
+	rq.Equal(daemon.ActivityType(112), daemon.ActFetchTree)
 }
 
 func TestResultTypes(t *testing.T) {
-	assert.Equal(t, daemon.ResultType(100), daemon.ResFileLinked)
-	assert.Equal(t, daemon.ResultType(101), daemon.ResBuildLogLine)
-	assert.Equal(t, daemon.ResultType(102), daemon.ResUntrustedPath)
-	assert.Equal(t, daemon.ResultType(103), daemon.ResCorruptedPath)
-	assert.Equal(t, daemon.ResultType(104), daemon.ResSetPhase)
-	assert.Equal(t, daemon.ResultType(105), daemon.ResProgress)
-	assert.Equal(t, daemon.ResultType(106), daemon.ResSetExpected)
-	assert.Equal(t, daemon.ResultType(107), daemon.ResPostBuildLogLine)
-	assert.Equal(t, daemon.ResultType(108), daemon.ResFetchStatus)
+	rq := require.New(t)
+	rq.Equal(daemon.ResultType(100), daemon.ResFileLinked)
+	rq.Equal(daemon.ResultType(101), daemon.ResBuildLogLine)
+	rq.Equal(daemon.ResultType(102), daemon.ResUntrustedPath)
+	rq.Equal(daemon.ResultType(103), daemon.ResCorruptedPath)
+	rq.Equal(daemon.ResultType(104), daemon.ResSetPhase)
+	rq.Equal(daemon.ResultType(105), daemon.ResProgress)
+	rq.Equal(daemon.ResultType(106), daemon.ResSetExpected)
+	rq.Equal(daemon.ResultType(107), daemon.ResPostBuildLogLine)
+	rq.Equal(daemon.ResultType(108), daemon.ResFetchStatus)
 }
 
 func TestVerbosity(t *testing.T) {
-	assert.Equal(t, daemon.Verbosity(0), daemon.VerbError)
-	assert.Equal(t, daemon.Verbosity(1), daemon.VerbWarn)
-	assert.Equal(t, daemon.Verbosity(2), daemon.VerbNotice)
-	assert.Equal(t, daemon.Verbosity(3), daemon.VerbInfo)
-	assert.Equal(t, daemon.Verbosity(4), daemon.VerbTalkative)
-	assert.Equal(t, daemon.Verbosity(5), daemon.VerbChatty)
-	assert.Equal(t, daemon.Verbosity(6), daemon.VerbDebug)
-	assert.Equal(t, daemon.Verbosity(7), daemon.VerbVomit)
+	rq := require.New(t)
+	rq.Equal(daemon.Verbosity(0), daemon.VerbError)
+	rq.Equal(daemon.Verbosity(1), daemon.VerbWarn)
+	rq.Equal(daemon.Verbosity(2), daemon.VerbNotice)
+	rq.Equal(daemon.Verbosity(3), daemon.VerbInfo)
+	rq.Equal(daemon.Verbosity(4), daemon.VerbTalkative)
+	rq.Equal(daemon.Verbosity(5), daemon.VerbChatty)
+	rq.Equal(daemon.Verbosity(6), daemon.VerbDebug)
+	rq.Equal(daemon.Verbosity(7), daemon.VerbVomit)
 }
 
 func TestBuildMode(t *testing.T) {
-	assert.Equal(t, daemon.BuildMode(0), daemon.BuildModeNormal)
-	assert.Equal(t, daemon.BuildMode(1), daemon.BuildModeRepair)
-	assert.Equal(t, daemon.BuildMode(2), daemon.BuildModeCheck)
+	rq := require.New(t)
+	rq.Equal(daemon.BuildMode(0), daemon.BuildModeNormal)
+	rq.Equal(daemon.BuildMode(1), daemon.BuildModeRepair)
+	rq.Equal(daemon.BuildMode(2), daemon.BuildModeCheck)
 }
 
 func TestBuildStatusString(t *testing.T) {
@@ -170,64 +176,69 @@ func TestBuildStatusString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.status.String())
+			require.Equal(t, tt.want, tt.status.String())
 		})
 	}
 
 	// Unknown status
-	assert.Equal(t, "BuildStatus(99)", daemon.BuildStatus(99).String())
+	require.Equal(t, "BuildStatus(99)", daemon.BuildStatus(99).String())
 }
 
 func TestBuildStatusValues(t *testing.T) {
-	assert.Equal(t, daemon.BuildStatus(0), daemon.BuildStatusBuilt)
-	assert.Equal(t, daemon.BuildStatus(1), daemon.BuildStatusSubstituted)
-	assert.Equal(t, daemon.BuildStatus(2), daemon.BuildStatusAlreadyValid)
-	assert.Equal(t, daemon.BuildStatus(3), daemon.BuildStatusPermanentFailure)
-	assert.Equal(t, daemon.BuildStatus(4), daemon.BuildStatusInputRejected)
-	assert.Equal(t, daemon.BuildStatus(5), daemon.BuildStatusOutputRejected)
-	assert.Equal(t, daemon.BuildStatus(6), daemon.BuildStatusTransientFailure)
-	assert.Equal(t, daemon.BuildStatus(7), daemon.BuildStatusCachedFailure)
-	assert.Equal(t, daemon.BuildStatus(8), daemon.BuildStatusTimedOut)
-	assert.Equal(t, daemon.BuildStatus(9), daemon.BuildStatusMiscFailure)
-	assert.Equal(t, daemon.BuildStatus(10), daemon.BuildStatusDependencyFailed)
-	assert.Equal(t, daemon.BuildStatus(11), daemon.BuildStatusLogLimitExceeded)
-	assert.Equal(t, daemon.BuildStatus(12), daemon.BuildStatusNotDeterministic)
-	assert.Equal(t, daemon.BuildStatus(13), daemon.BuildStatusResolvesToAlreadyValid)
-	assert.Equal(t, daemon.BuildStatus(14), daemon.BuildStatusNoSubstituters)
+	rq := require.New(t)
+	rq.Equal(daemon.BuildStatus(0), daemon.BuildStatusBuilt)
+	rq.Equal(daemon.BuildStatus(1), daemon.BuildStatusSubstituted)
+	rq.Equal(daemon.BuildStatus(2), daemon.BuildStatusAlreadyValid)
+	rq.Equal(daemon.BuildStatus(3), daemon.BuildStatusPermanentFailure)
+	rq.Equal(daemon.BuildStatus(4), daemon.BuildStatusInputRejected)
+	rq.Equal(daemon.BuildStatus(5), daemon.BuildStatusOutputRejected)
+	rq.Equal(daemon.BuildStatus(6), daemon.BuildStatusTransientFailure)
+	rq.Equal(daemon.BuildStatus(7), daemon.BuildStatusCachedFailure)
+	rq.Equal(daemon.BuildStatus(8), daemon.BuildStatusTimedOut)
+	rq.Equal(daemon.BuildStatus(9), daemon.BuildStatusMiscFailure)
+	rq.Equal(daemon.BuildStatus(10), daemon.BuildStatusDependencyFailed)
+	rq.Equal(daemon.BuildStatus(11), daemon.BuildStatusLogLimitExceeded)
+	rq.Equal(daemon.BuildStatus(12), daemon.BuildStatusNotDeterministic)
+	rq.Equal(daemon.BuildStatus(13), daemon.BuildStatusResolvesToAlreadyValid)
+	rq.Equal(daemon.BuildStatus(14), daemon.BuildStatusNoSubstituters)
 }
 
 func TestTrustLevel(t *testing.T) {
-	assert.Equal(t, daemon.TrustLevel(0), daemon.TrustUnknown)
-	assert.Equal(t, daemon.TrustLevel(1), daemon.TrustTrusted)
-	assert.Equal(t, daemon.TrustLevel(2), daemon.TrustNotTrusted)
+	rq := require.New(t)
+	rq.Equal(daemon.TrustLevel(0), daemon.TrustUnknown)
+	rq.Equal(daemon.TrustLevel(1), daemon.TrustTrusted)
+	rq.Equal(daemon.TrustLevel(2), daemon.TrustNotTrusted)
 }
 
 func TestGCAction(t *testing.T) {
-	assert.Equal(t, daemon.GCAction(0), daemon.GCReturnLive)
-	assert.Equal(t, daemon.GCAction(1), daemon.GCReturnDead)
-	assert.Equal(t, daemon.GCAction(2), daemon.GCDeleteDead)
-	assert.Equal(t, daemon.GCAction(3), daemon.GCDeleteSpecific)
+	rq := require.New(t)
+	rq.Equal(daemon.GCAction(0), daemon.GCReturnLive)
+	rq.Equal(daemon.GCAction(1), daemon.GCReturnDead)
+	rq.Equal(daemon.GCAction(2), daemon.GCDeleteDead)
+	rq.Equal(daemon.GCAction(3), daemon.GCDeleteSpecific)
 }
 
 func TestMinProtocolVersion(t *testing.T) {
-	assert.Equal(t, uint64(0x0117), daemon.MinProtocolVersion)
+	require.Equal(t, uint64(0x0117), daemon.MinProtocolVersion)
 }
 
 func TestProtoVersion(t *testing.T) {
-	assert.Equal(t, uint64(0x0125), daemon.ProtoVersion(1, 37))
-	assert.Equal(t, uint64(0x010c), daemon.ProtoVersion(1, 12))
-	assert.Equal(t, uint64(0x0115), daemon.ProtoVersion(1, 21))
+	rq := require.New(t)
+	rq.Equal(uint64(0x0125), daemon.ProtoVersion(1, 37))
+	rq.Equal(uint64(0x010c), daemon.ProtoVersion(1, 12))
+	rq.Equal(uint64(0x0115), daemon.ProtoVersion(1, 21))
 }
 
 func TestProtoVersionConstants(t *testing.T) {
-	assert.Equal(t, uint64(0x010c), uint64(daemon.ProtoVersionOverrides))
-	assert.Equal(t, uint64(0x0110), uint64(daemon.ProtoVersionPathInfoMeta))
-	assert.Equal(t, uint64(0x011b), uint64(daemon.ProtoVersionSubstituteOk))
-	assert.Equal(t, uint64(0x011c), uint64(daemon.ProtoVersionBuiltOutputs))
-	assert.Equal(t, uint64(0x011d), uint64(daemon.ProtoVersionBuildTimes))
-	assert.Equal(t, uint64(0x011e), uint64(daemon.ProtoVersionQueryDerivationOutputMap))
-	assert.Equal(t, uint64(0x011f), uint64(daemon.ProtoVersionRealisationJSON))
-	assert.Equal(t, uint64(0x0120), uint64(daemon.ProtoVersionAddMultipleToStore))
-	assert.Equal(t, uint64(0x0122), uint64(daemon.ProtoVersionBuildPathsWithResults))
-	assert.Equal(t, uint64(0x0125), uint64(daemon.ProtoVersionCPUTimes))
+	rq := require.New(t)
+	rq.Equal(uint64(0x010c), uint64(daemon.ProtoVersionOverrides))
+	rq.Equal(uint64(0x0110), uint64(daemon.ProtoVersionPathInfoMeta))
+	rq.Equal(uint64(0x011b), uint64(daemon.ProtoVersionSubstituteOk))
+	rq.Equal(uint64(0x011c), uint64(daemon.ProtoVersionBuiltOutputs))
+	rq.Equal(uint64(0x011d), uint64(daemon.ProtoVersionBuildTimes))
+	rq.Equal(uint64(0x011e), uint64(daemon.ProtoVersionQueryDerivationOutputMap))
+	rq.Equal(uint64(0x011f), uint64(daemon.ProtoVersionRealisationJSON))
+	rq.Equal(uint64(0x0120), uint64(daemon.ProtoVersionAddMultipleToStore))
+	rq.Equal(uint64(0x0122), uint64(daemon.ProtoVersionBuildPathsWithResults))
+	rq.Equal(uint64(0x0125), uint64(daemon.ProtoVersionCPUTimes))
 }

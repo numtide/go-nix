@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFramedReaderSingleFrame(t *testing.T) {
@@ -19,8 +19,8 @@ func TestFramedReaderSingleFrame(t *testing.T) {
 
 	fr := daemon.NewFramedReader(&buf)
 	data, err := io.ReadAll(fr)
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("hello"), data)
+	require.NoError(t, err)
+	require.Equal(t, []byte("hello"), data)
 }
 
 func TestFramedReaderMultipleFrames(t *testing.T) {
@@ -34,8 +34,8 @@ func TestFramedReaderMultipleFrames(t *testing.T) {
 
 	fr := daemon.NewFramedReader(&buf)
 	data, err := io.ReadAll(fr)
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("abcde"), data)
+	require.NoError(t, err)
+	require.Equal(t, []byte("abcde"), data)
 }
 
 func TestFramedReaderEmptyStream(t *testing.T) {
@@ -45,26 +45,28 @@ func TestFramedReaderEmptyStream(t *testing.T) {
 
 	fr := daemon.NewFramedReader(&buf)
 	data, err := io.ReadAll(fr)
-	assert.NoError(t, err)
-	assert.Empty(t, data)
+	require.NoError(t, err)
+	require.Empty(t, data)
 }
 
 func TestFramedWriterRoundTrip(t *testing.T) {
+	rq := require.New(t)
+
 	payload := []byte("hello, this is a test of framed writing with some data")
 
 	var buf bytes.Buffer
 
 	fw := daemon.NewFramedWriter(&buf)
 	_, err := fw.Write(payload)
-	assert.NoError(t, err)
+	rq.NoError(err)
 	err = fw.Close()
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	// Read it back
 	fr := daemon.NewFramedReader(&buf)
 	data, err := io.ReadAll(fr)
-	assert.NoError(t, err)
-	assert.Equal(t, payload, data)
+	rq.NoError(err)
+	rq.Equal(payload, data)
 }
 
 func TestFramedWriterEmpty(t *testing.T) {
@@ -72,10 +74,10 @@ func TestFramedWriterEmpty(t *testing.T) {
 
 	fw := daemon.NewFramedWriter(&buf)
 	err := fw.Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Should just be a terminator frame (8 zero bytes)
-	assert.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0}, buf.Bytes())
+	require.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0}, buf.Bytes())
 }
 
 func TestFramedReaderAlignedFrame(t *testing.T) {
@@ -88,11 +90,13 @@ func TestFramedReaderAlignedFrame(t *testing.T) {
 
 	fr := daemon.NewFramedReader(&buf)
 	data, err := io.ReadAll(fr)
-	assert.NoError(t, err)
-	assert.Equal(t, []byte{1, 2, 3, 4, 5, 6, 7, 8}, data)
+	require.NoError(t, err)
+	require.Equal(t, []byte{1, 2, 3, 4, 5, 6, 7, 8}, data)
 }
 
 func TestFramedWriterNoPadding(t *testing.T) {
+	rq := require.New(t)
+
 	// Verify that the writer does NOT add padding after frame data.
 	// Write exactly 5 bytes ("hello"), expect:
 	//   [5,0,0,0,0,0,0,0] frame header
@@ -102,14 +106,14 @@ func TestFramedWriterNoPadding(t *testing.T) {
 
 	fw := daemon.NewFramedWriter(&buf)
 	_, err := fw.Write([]byte("hello"))
-	assert.NoError(t, err)
+	rq.NoError(err)
 	err = fw.Close()
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	expected := []byte{
 		5, 0, 0, 0, 0, 0, 0, 0, // frame length = 5
 		'h', 'e', 'l', 'l', 'o', // frame data (no padding)
 		0, 0, 0, 0, 0, 0, 0, 0, // terminator
 	}
-	assert.Equal(t, expected, buf.Bytes())
+	rq.Equal(expected, buf.Bytes())
 }

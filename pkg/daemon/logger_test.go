@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Test helpers for building wire data.
@@ -34,11 +34,13 @@ func TestProcessStderrLast(t *testing.T) {
 
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Len(t, logs, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 0)
 }
 
 func TestProcessStderrNext(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogNext))
@@ -47,15 +49,17 @@ func TestProcessStderrNext(t *testing.T) {
 
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Len(t, logs, 1)
+	rq.NoError(err)
+	rq.Len(logs, 1)
 
 	msg := <-logs
-	assert.Equal(t, daemon.LogNext, msg.Type)
-	assert.Equal(t, "building /nix/store/xxx", msg.Text)
+	rq.Equal(daemon.LogNext, msg.Type)
+	rq.Equal("building /nix/store/xxx", msg.Text)
 }
 
 func TestProcessStderrError(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogError))
@@ -69,16 +73,18 @@ func TestProcessStderrError(t *testing.T) {
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 
-	assert.Error(t, err)
+	rq.Error(err)
 
 	var de *daemon.Error
 
-	assert.ErrorAs(t, err, &de)
-	assert.Equal(t, "path not found", de.Message)
-	assert.Equal(t, "SomeError", de.Name)
+	rq.ErrorAs(err, &de)
+	rq.Equal("path not found", de.Message)
+	rq.Equal("SomeError", de.Name)
 }
 
 func TestProcessStderrStartStopActivity(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 	// StartActivity
 	writeTestUint64(&buf, uint64(daemon.LogStartActivity))
@@ -98,21 +104,23 @@ func TestProcessStderrStartStopActivity(t *testing.T) {
 
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Len(t, logs, 2)
+	rq.NoError(err)
+	rq.Len(logs, 2)
 
 	msg1 := <-logs
-	assert.Equal(t, daemon.LogStartActivity, msg1.Type)
-	assert.Equal(t, uint64(42), msg1.Activity.ID)
-	assert.Equal(t, "building foo", msg1.Activity.Text)
-	assert.Equal(t, daemon.ActBuilds, msg1.Activity.Type)
+	rq.Equal(daemon.LogStartActivity, msg1.Type)
+	rq.Equal(uint64(42), msg1.Activity.ID)
+	rq.Equal("building foo", msg1.Activity.Text)
+	rq.Equal(daemon.ActBuilds, msg1.Activity.Type)
 
 	msg2 := <-logs
-	assert.Equal(t, daemon.LogStopActivity, msg2.Type)
-	assert.Equal(t, uint64(42), msg2.ActivityID)
+	rq.Equal(daemon.LogStopActivity, msg2.Type)
+	rq.Equal(uint64(42), msg2.ActivityID)
 }
 
 func TestProcessStderrResult(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogResult))
@@ -125,16 +133,16 @@ func TestProcessStderrResult(t *testing.T) {
 
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Len(t, logs, 1)
+	rq.NoError(err)
+	rq.Len(logs, 1)
 
 	msg := <-logs
-	assert.Equal(t, daemon.LogResult, msg.Type)
-	assert.Equal(t, uint64(7), msg.Result.ID)
-	assert.Equal(t, daemon.ResBuildLogLine, msg.Result.Type)
-	assert.Len(t, msg.Result.Fields, 1)
-	assert.False(t, msg.Result.Fields[0].IsInt)
-	assert.Equal(t, "compiling main.c", msg.Result.Fields[0].String)
+	rq.Equal(daemon.LogResult, msg.Type)
+	rq.Equal(uint64(7), msg.Result.ID)
+	rq.Equal(daemon.ResBuildLogLine, msg.Result.Type)
+	rq.Len(msg.Result.Fields, 1)
+	rq.False(msg.Result.Fields[0].IsInt)
+	rq.Equal("compiling main.c", msg.Result.Fields[0].String)
 }
 
 func TestProcessStderrReadWrite(t *testing.T) {
@@ -152,11 +160,13 @@ func TestProcessStderrReadWrite(t *testing.T) {
 
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Len(t, logs, 0) // Read/Write messages are silently consumed
+	require.NoError(t, err)
+	require.Len(t, logs, 0) // Read/Write messages are silently consumed
 }
 
 func TestProcessStderrUnknownType(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, 0xDEADBEEF)
@@ -164,14 +174,16 @@ func TestProcessStderrUnknownType(t *testing.T) {
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 
-	assert.Error(t, err)
+	rq.Error(err)
 
 	var pe *daemon.ProtocolError
 
-	assert.ErrorAs(t, err, &pe)
+	rq.ErrorAs(err, &pe)
 }
 
 func TestProcessStderrErrorWithTraces(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogError))
@@ -191,20 +203,22 @@ func TestProcessStderrErrorWithTraces(t *testing.T) {
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
 
-	assert.Error(t, err)
+	rq.Error(err)
 
 	var de *daemon.Error
 
-	assert.ErrorAs(t, err, &de)
-	assert.Equal(t, "undefined variable", de.Message)
-	assert.Equal(t, "EvalError", de.Name)
-	assert.Len(t, de.Traces, 2)
-	assert.Equal(t, "while evaluating", de.Traces[0].Message)
-	assert.Equal(t, uint64(1), de.Traces[0].HavePos)
-	assert.Equal(t, "in file default.nix", de.Traces[1].Message)
+	rq.ErrorAs(err, &de)
+	rq.Equal("undefined variable", de.Message)
+	rq.Equal("EvalError", de.Name)
+	rq.Len(de.Traces, 2)
+	rq.Equal("while evaluating", de.Traces[0].Message)
+	rq.Equal(uint64(1), de.Traces[0].HavePos)
+	rq.Equal("in file default.nix", de.Traces[1].Message)
 }
 
 func TestProcessStderrLegacyError(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogError))
@@ -214,18 +228,20 @@ func TestProcessStderrLegacyError(t *testing.T) {
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtoVersion(1, 25))
 
-	assert.Error(t, err)
+	rq.Error(err)
 
 	var de *daemon.Error
 
-	assert.ErrorAs(t, err, &de)
-	assert.Equal(t, "path '/nix/store/abc' is not valid", de.Message)
-	assert.Equal(t, uint64(1), de.ExitStatus)
-	assert.Equal(t, "Error", de.Type)
-	assert.Empty(t, de.Traces)
+	rq.ErrorAs(err, &de)
+	rq.Equal("path '/nix/store/abc' is not valid", de.Message)
+	rq.Equal(uint64(1), de.ExitStatus)
+	rq.Equal("Error", de.Type)
+	rq.Empty(de.Traces)
 }
 
 func TestProcessStderrActivityWithFields(t *testing.T) {
+	rq := require.New(t)
+
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogStartActivity))
@@ -246,18 +262,18 @@ func TestProcessStderrActivityWithFields(t *testing.T) {
 
 	logs := make(chan daemon.LogMessage, 10)
 	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
-	assert.NoError(t, err)
-	assert.Len(t, logs, 1)
+	rq.NoError(err)
+	rq.Len(logs, 1)
 
 	msg := <-logs
-	assert.Equal(t, daemon.LogStartActivity, msg.Type)
-	assert.Equal(t, uint64(99), msg.Activity.ID)
-	assert.Equal(t, daemon.ActFileTransfer, msg.Activity.Type)
-	assert.Len(t, msg.Activity.Fields, 2)
-	assert.False(t, msg.Activity.Fields[0].IsInt)
-	assert.Equal(t, "https://example.com/file.tar.gz", msg.Activity.Fields[0].String)
-	assert.True(t, msg.Activity.Fields[1].IsInt)
-	assert.Equal(t, uint64(1048576), msg.Activity.Fields[1].Int)
+	rq.Equal(daemon.LogStartActivity, msg.Type)
+	rq.Equal(uint64(99), msg.Activity.ID)
+	rq.Equal(daemon.ActFileTransfer, msg.Activity.Type)
+	rq.Len(msg.Activity.Fields, 2)
+	rq.False(msg.Activity.Fields[0].IsInt)
+	rq.Equal("https://example.com/file.tar.gz", msg.Activity.Fields[0].String)
+	rq.True(msg.Activity.Fields[1].IsInt)
+	rq.Equal(uint64(1048576), msg.Activity.Fields[1].Int)
 }
 
 func TestLogChannelSinkDropCounter(t *testing.T) {
@@ -270,6 +286,6 @@ func TestLogChannelSinkDropCounter(t *testing.T) {
 	sink.Send(daemon.LogMessage{Type: daemon.LogNext, Text: "first"})
 	sink.Send(daemon.LogMessage{Type: daemon.LogNext, Text: "second"})
 
-	assert.Equal(t, uint64(1), dropped.Load())
-	assert.Len(t, ch, 1)
+	require.Equal(t, uint64(1), dropped.Load())
+	require.Len(t, ch, 1)
 }

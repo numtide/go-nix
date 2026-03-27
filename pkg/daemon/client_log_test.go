@@ -10,10 +10,12 @@ import (
 
 	"github.com/nix-community/go-nix/pkg/daemon"
 	"github.com/nix-community/go-nix/pkg/wire"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClientLogForwarding(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	logs := make(chan daemon.LogMessage, 10)
@@ -46,27 +48,29 @@ func TestClientLogForwarding(t *testing.T) {
 	})
 
 	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	defer client.Close()
 
 	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.True(t, valid)
+	rq.NoError(err)
+	rq.True(valid)
 
 	// Verify log messages
-	assert.Len(t, logs, 2)
+	rq.Len(logs, 2)
 
 	msg1 := <-logs
-	assert.Equal(t, daemon.LogNext, msg1.Type)
-	assert.Equal(t, "building...", msg1.Text)
+	rq.Equal(daemon.LogNext, msg1.Type)
+	rq.Equal("building...", msg1.Text)
 
 	msg2 := <-logs
-	assert.Equal(t, daemon.LogNext, msg2.Type)
-	assert.Equal(t, "done", msg2.Text)
+	rq.Equal(daemon.LogNext, msg2.Type)
+	rq.Equal("done", msg2.Text)
 }
 
 func TestClientLogStartStopActivity(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	logs := make(chan daemon.LogMessage, 10)
@@ -110,27 +114,29 @@ func TestClientLogStartStopActivity(t *testing.T) {
 	})
 
 	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	defer client.Close()
 
 	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.True(t, valid)
+	rq.NoError(err)
+	rq.True(valid)
 
-	assert.Len(t, logs, 2)
+	rq.Len(logs, 2)
 	msg1 := <-logs
-	assert.Equal(t, daemon.LogStartActivity, msg1.Type)
-	assert.Equal(t, uint64(42), msg1.Activity.ID)
-	assert.Equal(t, daemon.ActBuild, msg1.Activity.Type)
-	assert.Equal(t, "building /nix/store/abc-test", msg1.Activity.Text)
+	rq.Equal(daemon.LogStartActivity, msg1.Type)
+	rq.Equal(uint64(42), msg1.Activity.ID)
+	rq.Equal(daemon.ActBuild, msg1.Activity.Type)
+	rq.Equal("building /nix/store/abc-test", msg1.Activity.Text)
 
 	msg2 := <-logs
-	assert.Equal(t, daemon.LogStopActivity, msg2.Type)
-	assert.Equal(t, uint64(42), msg2.ActivityID)
+	rq.Equal(daemon.LogStopActivity, msg2.Type)
+	rq.Equal(uint64(42), msg2.ActivityID)
 }
 
 func TestClientLogChannelFull(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	logs := make(chan daemon.LogMessage, 1)
@@ -162,15 +168,15 @@ func TestClientLogChannelFull(t *testing.T) {
 	})
 
 	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannelWithDropCounter(logs, &dropped))
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	defer client.Close()
 
 	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.True(t, valid)
+	rq.NoError(err)
+	rq.True(valid)
 
 	// Channel has capacity 1, so only 1 message fits, 4 were dropped
-	assert.Equal(t, uint64(4), dropped.Load())
-	assert.Len(t, logs, 1)
+	rq.Equal(uint64(4), dropped.Load())
+	rq.Len(logs, 1)
 }

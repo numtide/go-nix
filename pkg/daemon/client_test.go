@@ -3,7 +3,6 @@ package daemon_test
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"io"
 	"net"
 	"os"
@@ -14,7 +13,7 @@ import (
 
 	"github.com/nix-community/go-nix/pkg/daemon"
 	"github.com/nix-community/go-nix/pkg/wire"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClientConnectWrongMagic(t *testing.T) {
@@ -23,7 +22,7 @@ func TestClientConnectWrongMagic(t *testing.T) {
 	listenCfg := net.ListenConfig{}
 
 	ln, err := listenCfg.Listen(t.Context(), "unix", sock)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	defer ln.Close()
 
@@ -42,7 +41,7 @@ func TestClientConnectWrongMagic(t *testing.T) {
 	}()
 
 	_, err = daemon.Connect(t.Context(), sock)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	// Clean up the socket file to avoid TempDir cleanup warnings on some
 	// platforms where the listener does not unlink automatically.
@@ -50,56 +49,62 @@ func TestClientConnectWrongMagic(t *testing.T) {
 }
 
 func TestClientConnect(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	defer client.Close()
 
-	assert.Equal(t, daemon.ProtocolVersion, client.Info().Version)
-	assert.Equal(t, "nix (Nix) 2.24.0", client.Info().DaemonNixVersion)
+	rq.Equal(daemon.ProtocolVersion, client.Info().Version)
+	rq.Equal("nix (Nix) 2.24.0", client.Info().DaemonNixVersion)
 }
 
 func TestConnectInvalidPath(t *testing.T) {
 	_, err := daemon.Connect(t.Context(), "/nonexistent/daemon.sock")
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestClientNilContext(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	defer client.Close()
 
 	var ctx context.Context
 
 	_, err = client.IsValidPath(ctx, "/nix/store/abc-test")
-	assert.ErrorIs(t, err, daemon.ErrNilContext)
+	require.ErrorIs(t, err, daemon.ErrNilContext)
 }
 
 func TestClientClosed(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	assert.NoError(t, client.Close())
+	rq.NoError(client.Close())
 
 	_, err = client.IsValidPath(context.Background(), "/nix/store/abc-test")
-	assert.ErrorIs(t, err, daemon.ErrClosed)
+	rq.ErrorIs(err, daemon.ErrClosed)
 }
 
 func TestClientCloseIdempotent(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
-	assert.NoError(t, client.Close())
-	assert.NoError(t, client.Close())
+	rq.NoError(client.Close())
+	rq.NoError(client.Close())
 }
 
 func TestClientWithLogChannel(t *testing.T) {
@@ -108,28 +113,30 @@ func TestClientWithLogChannel(t *testing.T) {
 	logs := make(chan daemon.LogMessage, 10)
 
 	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	defer client.Close()
 
-	assert.NotNil(t, client.Logs())
+	require.NotNil(t, client.Logs())
 }
 
 func TestClientLogsNilByDefault(t *testing.T) {
 	mock := newMockDaemon(t)
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	defer client.Close()
 
-	assert.Nil(t, client.Logs())
+	require.Nil(t, client.Logs())
 }
 
 // TestClientSequentialOperations exercises multiple different operations on
 // the same mock connection to verify the client properly releases the mutex
 // and resets the connection state between operations.
 func TestClientSequentialOperations(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	expectedInfo := &daemon.PathInfo{
@@ -160,40 +167,40 @@ func TestClientSequentialOperations(t *testing.T) {
 	)
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	defer client.Close()
 
 	// Op 1: IsValidPath -> true
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.True(t, valid, "first IsValidPath should return true")
+	rq.NoError(err)
+	rq.True(valid, "first IsValidPath should return true")
 
 	// Op 2: QueryPathInfo -> found with expected info
 	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err)
-	assert.NotNil(t, info)
-	assert.Equal(t, expectedInfo.StorePath, info.StorePath)
-	assert.Equal(t, expectedInfo.Deriver, info.Deriver)
-	assert.Equal(t, expectedInfo.NarHash, info.NarHash)
-	assert.Equal(t, expectedInfo.References, info.References)
-	assert.Equal(t, expectedInfo.RegistrationTime, info.RegistrationTime)
-	assert.Equal(t, expectedInfo.NarSize, info.NarSize)
-	assert.Equal(t, expectedInfo.Ultimate, info.Ultimate)
-	assert.Equal(t, expectedInfo.Sigs, info.Sigs)
-	assert.Equal(t, expectedInfo.CA, info.CA)
+	rq.NoError(err)
+	rq.NotNil(info)
+	rq.Equal(expectedInfo.StorePath, info.StorePath)
+	rq.Equal(expectedInfo.Deriver, info.Deriver)
+	rq.Equal(expectedInfo.NarHash, info.NarHash)
+	rq.Equal(expectedInfo.References, info.References)
+	rq.Equal(expectedInfo.RegistrationTime, info.RegistrationTime)
+	rq.Equal(expectedInfo.NarSize, info.NarSize)
+	rq.Equal(expectedInfo.Ultimate, info.Ultimate)
+	rq.Equal(expectedInfo.Sigs, info.Sigs)
+	rq.Equal(expectedInfo.CA, info.CA)
 
 	// Op 3: IsValidPath -> false
 	valid, err = client.IsValidPath(context.Background(), "/nix/store/nonexistent")
-	assert.NoError(t, err)
-	assert.False(t, valid, "second IsValidPath should return false")
+	rq.NoError(err)
+	rq.False(valid, "second IsValidPath should return false")
 
 	// Op 4: QueryAllValidPaths -> list of paths
 	paths, err := client.QueryAllValidPaths(context.Background())
-	assert.NoError(t, err)
+	rq.NoError(err)
 	sort.Strings(paths)
 	sort.Strings(expectedPaths)
-	assert.Equal(t, expectedPaths, paths)
+	rq.Equal(expectedPaths, paths)
 }
 
 // TestClientOperationAfterError verifies that the connection remains usable
@@ -203,6 +210,8 @@ func TestClientSequentialOperations(t *testing.T) {
 // terminates the stderr loop (no trailing LogLast), the next operation
 // starts cleanly from the new op code.
 func TestClientOperationAfterError(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	daemonErr := &daemon.Error{
@@ -222,25 +231,27 @@ func TestClientOperationAfterError(t *testing.T) {
 	)
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	defer client.Close()
 
 	// First call: should fail with daemon error
 	_, err = client.IsValidPath(context.Background(), "/nix/store/bad-path")
-	assert.Error(t, err, "first IsValidPath should return an error")
+	rq.Error(err, "first IsValidPath should return an error")
 
 	var gotErr *daemon.Error
-	assert.True(t, errors.As(err, &gotErr), "error should be a *daemon.Error")
-	assert.Equal(t, "path '/nix/store/bad-path' is not valid", gotErr.Message)
+	rq.ErrorAs(err, &gotErr, "error should be a *daemon.Error")
+	rq.Equal("path '/nix/store/bad-path' is not valid", gotErr.Message)
 
 	// Second call: should succeed, proving the connection is not corrupted
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/good-path")
-	assert.NoError(t, err, "second IsValidPath should succeed after prior error")
-	assert.True(t, valid, "second IsValidPath should return true")
+	rq.NoError(err, "second IsValidPath should succeed after prior error")
+	rq.True(valid, "second IsValidPath should return true")
 }
 
 func TestClientDaemonErrorWithTraces(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	expectedErr := &daemon.Error{
@@ -259,28 +270,30 @@ func TestClientDaemonErrorWithTraces(t *testing.T) {
 	}, expectedErr))
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	defer client.Close()
 
 	_, err = client.IsValidPath(context.Background(), "/nix/store/abc-test")
-	assert.Error(t, err)
+	rq.Error(err)
 
 	var daemonErr *daemon.Error
-	assert.True(t, errors.As(err, &daemonErr))
-	assert.Equal(t, "Error", daemonErr.Type)
-	assert.Equal(t, "evaluation failed", daemonErr.Message)
-	assert.Equal(t, "EvalError", daemonErr.Name)
-	assert.Len(t, daemonErr.Traces, 2)
-	assert.Equal(t, "while evaluating the attribute 'buildInputs'", daemonErr.Traces[0].Message)
-	assert.Equal(t, "while calling the 'derivationStrict' builtin", daemonErr.Traces[1].Message)
-	assert.Equal(t, uint64(0), daemonErr.Traces[0].HavePos)
-	assert.Equal(t, uint64(0), daemonErr.Traces[1].HavePos)
+	rq.ErrorAs(err, &daemonErr)
+	rq.Equal("Error", daemonErr.Type)
+	rq.Equal("evaluation failed", daemonErr.Message)
+	rq.Equal("EvalError", daemonErr.Name)
+	rq.Len(daemonErr.Traces, 2)
+	rq.Equal("while evaluating the attribute 'buildInputs'", daemonErr.Traces[0].Message)
+	rq.Equal("while calling the 'derivationStrict' builtin", daemonErr.Traces[1].Message)
+	rq.Equal(uint64(0), daemonErr.Traces[0].HavePos)
+	rq.Equal(uint64(0), daemonErr.Traces[1].HavePos)
 }
 
 // TestClientContextCancellation verifies that cancelling a context unblocks
 // a pending operation and that the client remains usable for subsequent ops.
 func TestClientContextCancellation(t *testing.T) {
+	rq := require.New(t)
+
 	mock := newMockDaemon(t)
 
 	mock.onAccept(func(conn net.Conn) error {
@@ -300,7 +313,7 @@ func TestClientContextCancellation(t *testing.T) {
 	})
 
 	client, err := daemon.Connect(t.Context(), mock.path)
-	assert.NoError(t, err)
+	rq.NoError(err)
 
 	defer client.Close()
 
@@ -314,11 +327,11 @@ func TestClientContextCancellation(t *testing.T) {
 	_, err = client.IsValidPath(ctx, "/nix/store/abc-test")
 	elapsed := time.Since(start)
 
-	assert.Error(t, err, "cancelled operation should return an error")
-	assert.Less(t, elapsed, 2*time.Second, "cancelled operation should unblock promptly")
+	rq.Error(err, "cancelled operation should return an error")
+	rq.Less(elapsed, 2*time.Second, "cancelled operation should unblock promptly")
 
 	// The client should still be usable for a subsequent operation.
 	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
-	assert.NoError(t, err, "subsequent operation should succeed after cancellation")
-	assert.True(t, valid)
+	rq.NoError(err, "subsequent operation should succeed after cancellation")
+	rq.True(valid)
 }
