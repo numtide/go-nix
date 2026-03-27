@@ -2,7 +2,6 @@ package daemon_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"io"
 	"net"
@@ -42,7 +41,7 @@ func TestClientAddToStore(t *testing.T) {
 	defer client.Close()
 
 	info, err := client.AddToStore(
-		context.Background(),
+		t.Context(),
 		"hello-2.12.1",
 		"fixed:r:sha256",
 		[]string{},
@@ -74,7 +73,7 @@ func TestAddToStoreUnsupportedVersion(t *testing.T) {
 	defer client.Close()
 
 	_, err = client.AddToStore(
-		context.Background(),
+		t.Context(),
 		"hello",
 		"fixed:r:sha256",
 		nil,
@@ -88,30 +87,30 @@ func TestAddToStoreUnsupportedVersion(t *testing.T) {
 func TestAddToStoreNilSource(t *testing.T) {
 	client := &daemon.Client{}
 
-	_, err := client.AddToStore(context.Background(), "hello", "fixed:r:sha256", nil, false, nil)
+	_, err := client.AddToStore(t.Context(), "hello", "fixed:r:sha256", nil, false, nil)
 	require.ErrorIs(t, err, daemon.ErrNilReader)
 }
 
 func TestCollectGarbageNilOptions(t *testing.T) {
 	client := &daemon.Client{}
-	_, err := client.CollectGarbage(context.Background(), nil)
+	_, err := client.CollectGarbage(t.Context(), nil)
 	require.ErrorIs(t, err, daemon.ErrNilOptions)
 }
 
 func TestAddToStoreNarNilArgs(t *testing.T) {
 	client := &daemon.Client{}
 
-	err := client.AddToStoreNar(context.Background(), nil, nil, false, false)
+	err := client.AddToStoreNar(t.Context(), nil, nil, false, false)
 	require.ErrorIs(t, err, daemon.ErrNilPathInfo)
 
-	err = client.AddToStoreNar(context.Background(), &daemon.PathInfo{}, nil, false, false)
+	err = client.AddToStoreNar(t.Context(), &daemon.PathInfo{}, nil, false, false)
 	require.ErrorIs(t, err, daemon.ErrNilReader)
 }
 
 func TestAddBuildLogNilReader(t *testing.T) {
 	client := &daemon.Client{}
 
-	err := client.AddBuildLog(context.Background(), "/nix/store/abc.drv", nil)
+	err := client.AddBuildLog(t.Context(), "/nix/store/abc.drv", nil)
 	require.ErrorIs(t, err, daemon.ErrNilReader)
 }
 
@@ -143,7 +142,7 @@ func TestClientAddTempRoot(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddTempRoot(context.Background(), "/nix/store/abc-test")
+	err = client.AddTempRoot(t.Context(), "/nix/store/abc-test")
 	require.NoError(t, err)
 }
 
@@ -175,7 +174,7 @@ func TestClientAddIndirectRoot(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddIndirectRoot(context.Background(), "/home/user/result")
+	err = client.AddIndirectRoot(t.Context(), "/home/user/result")
 	require.NoError(t, err)
 }
 
@@ -210,7 +209,7 @@ func TestClientAddPermRoot(t *testing.T) {
 
 	defer client.Close()
 
-	resultPath, err := client.AddPermRoot(context.Background(), "/nix/store/abc-test", "/home/user/result")
+	resultPath, err := client.AddPermRoot(t.Context(), "/nix/store/abc-test", "/home/user/result")
 	rq.NoError(err)
 	rq.Equal("/nix/var/nix/gcroots/auto/abc", resultPath)
 }
@@ -251,7 +250,7 @@ func TestClientAddSignatures(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddSignatures(context.Background(), "/nix/store/abc-test", []string{"sig1", "sig2"})
+	err = client.AddSignatures(t.Context(), "/nix/store/abc-test", []string{"sig1", "sig2"})
 	require.NoError(t, err)
 }
 
@@ -279,7 +278,7 @@ func TestClientRegisterDrvOutput(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.RegisterDrvOutput(context.Background(), &daemon.Realisation{
+	err = client.RegisterDrvOutput(t.Context(), &daemon.Realisation{
 		ID:      "sha256:abc!out",
 		OutPath: "/nix/store/abc-out",
 	})
@@ -343,7 +342,7 @@ func TestClientAddToStoreNar(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddToStoreNar(context.Background(), info, bytes.NewReader(narData), false, true)
+	err = client.AddToStoreNar(t.Context(), info, bytes.NewReader(narData), false, true)
 	require.NoError(t, err)
 }
 
@@ -384,7 +383,7 @@ func TestClientAddBuildLog(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddBuildLog(context.Background(), "/nix/store/00000000000000000000000000000000-test.drv", strings.NewReader(logContent))
+	err = client.AddBuildLog(t.Context(), "/nix/store/00000000000000000000000000000000-test.drv", strings.NewReader(logContent))
 	require.NoError(t, err)
 }
 
@@ -396,7 +395,7 @@ func TestClientAddBuildLogInvalidPath(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddBuildLog(context.Background(), "/tmp/not-a-store-path", strings.NewReader("log"))
+	err = client.AddBuildLog(t.Context(), "/tmp/not-a-store-path", strings.NewReader("log"))
 	require.Error(t, err)
 }
 
@@ -508,7 +507,7 @@ func TestClientAddMultipleToStore(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddMultipleToStore(context.Background(), items, true, false)
+	err = client.AddMultipleToStore(t.Context(), items, true, false)
 	require.NoError(t, err)
 }
 
@@ -554,7 +553,7 @@ func TestClientAddMultipleToStoreEmpty(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddMultipleToStore(context.Background(), nil, false, false)
+	err = client.AddMultipleToStore(t.Context(), nil, false, false)
 	require.NoError(t, err)
 }
 
@@ -583,7 +582,7 @@ func TestClientSetOptions(t *testing.T) {
 		},
 	}
 
-	err = client.SetOptions(context.Background(), settings)
+	err = client.SetOptions(t.Context(), settings)
 	require.NoError(t, err)
 }
 
@@ -615,7 +614,7 @@ func TestClientCollectGarbage(t *testing.T) {
 		MaxFreed:       0,
 	}
 
-	result, err := client.CollectGarbage(context.Background(), options)
+	result, err := client.CollectGarbage(t.Context(), options)
 	rq.NoError(err)
 	rq.Equal(expected.Paths, result.Paths)
 	rq.Equal(expected.BytesFreed, result.BytesFreed)
@@ -634,7 +633,7 @@ func TestClientVerifyStore(t *testing.T) {
 
 	defer client.Close()
 
-	errorsFound, err := client.VerifyStore(context.Background(), true, false)
+	errorsFound, err := client.VerifyStore(t.Context(), true, false)
 	rq.NoError(err)
 	rq.True(errorsFound)
 }
@@ -649,7 +648,7 @@ func TestClientOptimiseStore(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.OptimiseStore(context.Background())
+	err = client.OptimiseStore(t.Context())
 	require.NoError(t, err)
 }
 
@@ -666,7 +665,7 @@ func TestAddBuildLogUnsupportedVersion(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddBuildLog(context.Background(), "/nix/store/abc-test.drv", strings.NewReader("log"))
+	err = client.AddBuildLog(t.Context(), "/nix/store/abc-test.drv", strings.NewReader("log"))
 	rq.Error(err)
 	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
@@ -682,7 +681,7 @@ func TestAddMultipleToStoreUnsupportedVersion(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddMultipleToStore(context.Background(), nil, false, false)
+	err = client.AddMultipleToStore(t.Context(), nil, false, false)
 	rq.Error(err)
 	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
@@ -698,7 +697,7 @@ func TestAddPermRootUnsupportedVersion(t *testing.T) {
 
 	defer client.Close()
 
-	_, err = client.AddPermRoot(context.Background(), "/nix/store/abc-test", "/home/user/result")
+	_, err = client.AddPermRoot(t.Context(), "/nix/store/abc-test", "/home/user/result")
 	rq.Error(err)
 	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
@@ -714,7 +713,7 @@ func TestRegisterDrvOutputUnsupportedVersion(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.RegisterDrvOutput(context.Background(), &daemon.Realisation{
+	err = client.RegisterDrvOutput(t.Context(), &daemon.Realisation{
 		ID:      "sha256:abc!out",
 		OutPath: "/nix/store/abc-out",
 	})
@@ -757,6 +756,6 @@ func TestClientSetOptionsProto123(t *testing.T) {
 		},
 	}
 
-	err = client.SetOptions(context.Background(), settings)
+	err = client.SetOptions(t.Context(), settings)
 	rq.NoError(err)
 }

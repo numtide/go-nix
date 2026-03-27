@@ -91,7 +91,7 @@ func TestClientClosed(t *testing.T) {
 
 	rq.NoError(client.Close())
 
-	_, err = client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	_, err = client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	rq.ErrorIs(err, daemon.ErrClosed)
 }
 
@@ -148,12 +148,12 @@ func TestClientSequentialOperations(t *testing.T) {
 	defer client.Close()
 
 	// Op 1: IsValidPath -> true
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err)
 	rq.True(valid, "first IsValidPath should return true")
 
 	// Op 2: QueryPathInfo -> found with expected info
-	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
+	info, err := client.QueryPathInfo(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err)
 	rq.NotNil(info)
 	rq.Equal(expectedInfo.StorePath, info.StorePath)
@@ -167,12 +167,12 @@ func TestClientSequentialOperations(t *testing.T) {
 	rq.Equal(expectedInfo.CA, info.CA)
 
 	// Op 3: IsValidPath -> false
-	valid, err = client.IsValidPath(context.Background(), "/nix/store/nonexistent")
+	valid, err = client.IsValidPath(t.Context(), "/nix/store/nonexistent")
 	rq.NoError(err)
 	rq.False(valid, "second IsValidPath should return false")
 
 	// Op 4: QueryAllValidPaths -> list of paths
-	paths, err := client.QueryAllValidPaths(context.Background())
+	paths, err := client.QueryAllValidPaths(t.Context())
 	rq.NoError(err)
 	sort.Strings(paths)
 	sort.Strings(expectedPaths)
@@ -212,7 +212,7 @@ func TestClientOperationAfterError(t *testing.T) {
 	defer client.Close()
 
 	// First call: should fail with daemon error
-	_, err = client.IsValidPath(context.Background(), "/nix/store/bad-path")
+	_, err = client.IsValidPath(t.Context(), "/nix/store/bad-path")
 	rq.Error(err, "first IsValidPath should return an error")
 
 	var gotErr *daemon.Error
@@ -220,7 +220,7 @@ func TestClientOperationAfterError(t *testing.T) {
 	rq.Equal("path '/nix/store/bad-path' is not valid", gotErr.Message)
 
 	// Second call: should succeed, proving the connection is not corrupted
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/good-path")
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/good-path")
 	rq.NoError(err, "second IsValidPath should succeed after prior error")
 	rq.True(valid, "second IsValidPath should return true")
 }
@@ -250,7 +250,7 @@ func TestClientDaemonErrorWithTraces(t *testing.T) {
 
 	defer client.Close()
 
-	_, err = client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	_, err = client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	rq.Error(err)
 
 	var daemonErr *daemon.Error
@@ -307,7 +307,7 @@ func TestClientContextCancellation(t *testing.T) {
 	rq.Less(elapsed, 2*time.Second, "cancelled operation should unblock promptly")
 
 	// The client should still be usable for a subsequent operation.
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err, "subsequent operation should succeed after cancellation")
 	rq.True(valid)
 }

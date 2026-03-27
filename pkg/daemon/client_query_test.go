@@ -1,7 +1,6 @@
 package daemon_test
 
 import (
-	"context"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -28,7 +27,7 @@ func TestClientIsValidPath(t *testing.T) {
 		}
 	})
 
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err)
 	rq.True(valid)
 }
@@ -48,7 +47,7 @@ func TestClientIsValidPathFalse(t *testing.T) {
 		}
 	})
 
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/nonexistent")
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/nonexistent")
 	rq.NoError(err)
 	rq.False(valid)
 }
@@ -83,7 +82,7 @@ func TestClientQueryPathInfo(t *testing.T) {
 		}
 	})
 
-	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
+	info, err := client.QueryPathInfo(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err)
 	rq.NotNil(info)
 	rq.Equal(expected.StorePath, info.StorePath)
@@ -114,7 +113,7 @@ func TestClientQueryPathInfoNotFound(t *testing.T) {
 		}
 	})
 
-	info, err := client.QueryPathInfo(context.Background(), "/nix/store/nonexistent")
+	info, err := client.QueryPathInfo(t.Context(), "/nix/store/nonexistent")
 	rq.ErrorIs(err, daemon.ErrNotFound)
 	rq.Nil(info)
 }
@@ -159,7 +158,7 @@ func TestClientNarFromPath(t *testing.T) {
 		}
 	})
 
-	rc, err := client.NarFromPath(context.Background(), "/nix/store/abc-test", nil)
+	rc, err := client.NarFromPath(t.Context(), "/nix/store/abc-test", nil)
 	rq.NoError(err)
 
 	// The returned data is the complete NAR including wire formatting.
@@ -206,7 +205,7 @@ func TestClientFindRoots(t *testing.T) {
 		}
 	})
 
-	roots, err := client.FindRoots(context.Background())
+	roots, err := client.FindRoots(t.Context())
 	rq.NoError(err)
 	rq.Equal(map[string]string{"/proc/1/root": "/nix/store/abc-test"}, roots)
 }
@@ -232,7 +231,7 @@ func TestClientQueryAllValidPaths(t *testing.T) {
 		}
 	})
 
-	paths, err := client.QueryAllValidPaths(context.Background())
+	paths, err := client.QueryAllValidPaths(t.Context())
 	rq.NoError(err)
 	rq.Equal(expected, paths)
 }
@@ -263,7 +262,7 @@ func TestClientQueryValidPaths(t *testing.T) {
 		}
 	})
 
-	result, err := client.QueryValidPaths(context.Background(), queryPaths, true)
+	result, err := client.QueryValidPaths(t.Context(), queryPaths, true)
 	rq.NoError(err)
 	rq.Equal(validPaths, result)
 }
@@ -292,7 +291,7 @@ func TestClientQuerySubstitutablePaths(t *testing.T) {
 		}
 	})
 
-	result, err := client.QuerySubstitutablePaths(context.Background(), queryPaths)
+	result, err := client.QuerySubstitutablePaths(t.Context(), queryPaths)
 	rq.NoError(err)
 	rq.Equal(substitutable, result)
 }
@@ -327,7 +326,7 @@ func TestClientQuerySubstitutablePathInfos(t *testing.T) {
 		}
 	})
 
-	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
+	result, err := client.QuerySubstitutablePathInfos(t.Context(), map[string]string{
 		"/nix/store/aaa-foo": "",
 		"/nix/store/bbb-bar": "",
 		"/nix/store/ccc-baz": "",
@@ -361,7 +360,7 @@ func TestClientQuerySubstitutablePathInfosEmpty(t *testing.T) {
 		}
 	})
 
-	result, err := client.QuerySubstitutablePathInfos(context.Background(), map[string]string{
+	result, err := client.QuerySubstitutablePathInfos(t.Context(), map[string]string{
 		"/nix/store/nonexistent": "",
 	})
 	rq.NoError(err)
@@ -388,7 +387,7 @@ func TestClientQueryReferrers(t *testing.T) {
 		}
 	})
 
-	result, err := client.QueryReferrers(context.Background(), "/nix/store/abc-test")
+	result, err := client.QueryReferrers(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err)
 	rq.Equal(referrers, result)
 }
@@ -413,7 +412,7 @@ func TestClientQueryValidDerivers(t *testing.T) {
 		}
 	})
 
-	result, err := client.QueryValidDerivers(context.Background(), "/nix/store/abc-test")
+	result, err := client.QueryValidDerivers(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err)
 	rq.Equal(derivers, result)
 }
@@ -439,7 +438,7 @@ func TestClientQueryDerivationOutputMap(t *testing.T) {
 		}
 	})
 
-	result, err := client.QueryDerivationOutputMap(context.Background(), "/nix/store/abc-test.drv")
+	result, err := client.QueryDerivationOutputMap(t.Context(), "/nix/store/abc-test.drv")
 	rq.NoError(err)
 	rq.Equal(outputs, result)
 }
@@ -467,7 +466,7 @@ func TestClientQueryMissing(t *testing.T) {
 		}
 	})
 
-	result, err := client.QueryMissing(context.Background(), []string{
+	result, err := client.QueryMissing(t.Context(), []string{
 		"/nix/store/aaa-needs-build.drv",
 		"/nix/store/bbb-from-cache",
 		"/nix/store/ccc-unknown",
@@ -497,7 +496,7 @@ func TestClientQueryPathFromHashPart(t *testing.T) {
 		}
 	})
 
-	result, err := client.QueryPathFromHashPart(context.Background(), "abc123")
+	result, err := client.QueryPathFromHashPart(t.Context(), "abc123")
 	rq.NoError(err)
 	rq.Equal(expectedPath, result)
 }
@@ -521,7 +520,7 @@ func TestClientQueryRealisation(t *testing.T) {
 		}
 	})
 
-	result, err := client.QueryRealisation(context.Background(), "sha256:abc!out")
+	result, err := client.QueryRealisation(t.Context(), "sha256:abc!out")
 	rq.NoError(err)
 	require.Len(t, result, 1)
 	rq.Equal("sha256:abc!out", result[0].ID)
@@ -544,7 +543,7 @@ func TestQueryDerivationOutputMapUnsupportedVersion(t *testing.T) {
 		}
 	})
 
-	_, err = client.QueryDerivationOutputMap(context.Background(), "/nix/store/abc.drv")
+	_, err = client.QueryDerivationOutputMap(t.Context(), "/nix/store/abc.drv")
 	rq.Error(err)
 	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
@@ -562,7 +561,7 @@ func TestQueryMissingUnsupportedVersion(t *testing.T) {
 		}
 	})
 
-	_, err = client.QueryMissing(context.Background(), []string{"/nix/store/abc.drv!out"})
+	_, err = client.QueryMissing(t.Context(), []string{"/nix/store/abc.drv!out"})
 	rq.Error(err)
 	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
@@ -580,7 +579,7 @@ func TestQueryRealisationUnsupportedVersion(t *testing.T) {
 		}
 	})
 
-	_, err = client.QueryRealisation(context.Background(), "sha256:abc!out")
+	_, err = client.QueryRealisation(t.Context(), "sha256:abc!out")
 	rq.Error(err)
 	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
@@ -658,7 +657,7 @@ func TestClientQueryPathInfoProto123(t *testing.T) {
 
 	rq.Equal(daemon.ProtoVersion(1, 23), client.Info().Version)
 
-	info, err := client.QueryPathInfo(context.Background(), "/nix/store/abc-test")
+	info, err := client.QueryPathInfo(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err)
 	rq.NotNil(t, info)
 	rq.Equal("/nix/store/abc-test", info.StorePath)
@@ -736,7 +735,7 @@ func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
 
 	rq.Equal(daemon.ProtoVersion(1, 23), client.Info().Version)
 
-	result, err := client.QueryValidPaths(context.Background(), queryPaths, true)
+	result, err := client.QueryValidPaths(t.Context(), queryPaths, true)
 	rq.NoError(err)
 	rq.Equal(validResult, result)
 }
@@ -767,7 +766,7 @@ func TestClientIsValidPathDaemonError(t *testing.T) {
 		}
 	})
 
-	_, err = client.IsValidPath(context.Background(), "/nix/store/xxx-invalid")
+	_, err = client.IsValidPath(t.Context(), "/nix/store/xxx-invalid")
 	rq.Error(err)
 
 	var daemonErr *daemon.Error
@@ -800,7 +799,7 @@ func TestClientQueryPathInfoDaemonError(t *testing.T) {
 		}
 	})
 
-	_, err = client.QueryPathInfo(context.Background(), "/nix/store/yyy-broken")
+	_, err = client.QueryPathInfo(t.Context(), "/nix/store/yyy-broken")
 	rq.Error(err)
 
 	var daemonErr *daemon.Error
