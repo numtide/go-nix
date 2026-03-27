@@ -445,7 +445,12 @@ func (c *Client) NarFromPath(
 	}
 
 	// drain stderr log messages until LogLast
-	if err = ProcessStderr(c.r, logFn, c.info.Version); err != nil {
+	fn := logFn
+	if fn == nil {
+		fn = c.Logger
+	}
+
+	if err = ProcessStderr(c.r, fn, c.info.Version); err != nil {
 		_ = unsetCancelDeadline()
 
 		return nil, err

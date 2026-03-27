@@ -193,6 +193,56 @@ func TestClientLogChannelFull(t *testing.T) {
 	rq.True(valid)
 }
 
+func TestClientLoggerAutoDrain(t *testing.T) {
+	rq := require.New(t)
+
+	mock := newMockDaemon(t)
+
+	mock.onAccept(func(conn net.Conn) error {
+		var buf [8]byte
+		// Read IsValidPath op and path
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
+
+		// Send LogNext messages
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
+		_, _ = conn.Write(buf[:])
+		writeWireStringTo(conn, "auto-drained message")
+
+		// Send LogLast
+		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
+		_, _ = conn.Write(buf[:])
+
+		// Send result: true
+		binary.LittleEndian.PutUint64(buf[:], 1)
+		_, _ = conn.Write(buf[:])
+
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
+	rq.NoError(err)
+
+	defer client.Close()
+
+	// Set a logger on the client.
+	var msgs []daemon.LogMessage
+
+	client.Logger = func(msg daemon.LogMessage) {
+		msgs = append(msgs, msg)
+	}
+
+	// Call IsValidPath which auto-drains logs via Read.
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
+	rq.NoError(err)
+	rq.True(valid)
+
+	// The logger should have received the auto-drained message.
+	rq.Len(msgs, 1)
+	rq.Equal(daemon.LogNext, msgs[0].Type)
+	rq.Equal("auto-drained message", msgs[0].Text)
+}
+
 func TestClientReadLogsDrained(t *testing.T) {
 	rq := require.New(t)
 

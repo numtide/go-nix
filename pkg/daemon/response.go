@@ -25,7 +25,8 @@ type OpResponse struct {
 	version             uint64
 	closed              bool
 	logsDrained         bool
-	unsetCancelDeadline func() error // context.AfterFunc stop function
+	logger              func(LogMessage) // receives auto-drained log messages
+	unsetCancelDeadline func() error     // context.AfterFunc stop function
 }
 
 // ReadLogs reads log messages from the daemon, calling fn for each message.
@@ -125,7 +126,7 @@ func (resp *OpResponse) Read(p []byte) (int, error) {
 	if !resp.logsDrained {
 		resp.logsDrained = true
 
-		if err := resp.readLogs(nil); err != nil {
+		if err := resp.readLogs(resp.logger); err != nil {
 			return 0, err
 		}
 	}

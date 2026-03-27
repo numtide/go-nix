@@ -27,6 +27,11 @@ type Client struct {
 
 	info   *HandshakeInfo
 	closed bool
+
+	// Logger, if set, receives daemon log messages that would otherwise be
+	// discarded during automatic log draining (e.g. when OpResponse.Read is
+	// called without a prior ReadLogs). Explicit ReadLogs calls are unaffected.
+	Logger func(LogMessage)
 }
 
 // Connect dials the Nix daemon Unix socket and performs the handshake.
@@ -169,6 +174,7 @@ func (c *Client) Execute(
 		r:                   c.r,
 		conn:                c.conn,
 		version:             c.info.Version,
+		logger:              c.Logger,
 		unsetCancelDeadline: unsetCancelDeadline,
 	}, nil
 }
