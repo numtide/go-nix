@@ -3,7 +3,6 @@ package daemon_test
 import (
 	"bytes"
 	"encoding/binary"
-	"sync/atomic"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
@@ -27,15 +26,24 @@ func writeTestString(buf *bytes.Buffer, s string) {
 	}
 }
 
+// collect is a test helper that returns a callback and a slice to collect log messages.
+func collect() (func(daemon.LogMessage), *[]daemon.LogMessage) {
+	var msgs []daemon.LogMessage
+
+	return func(msg daemon.LogMessage) {
+		msgs = append(msgs, msg)
+	}, &msgs
+}
+
 func TestProcessStderrLast(t *testing.T) {
 	var buf bytes.Buffer
 
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	fn, msgs := collect()
+	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
 	require.NoError(t, err)
-	require.Len(t, logs, 0)
+	require.Empty(t, *msgs)
 }
 
 func TestProcessStderrNext(t *testing.T) {
@@ -47,14 +55,12 @@ func TestProcessStderrNext(t *testing.T) {
 	writeTestString(&buf, "building /nix/store/xxx")
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	fn, msgs := collect()
+	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
 	rq.NoError(err)
-	rq.Len(logs, 1)
-
-	msg := <-logs
-	rq.Equal(daemon.LogNext, msg.Type)
-	rq.Equal("building /nix/store/xxx", msg.Text)
+	rq.Len(*msgs, 1)
+	rq.Equal(daemon.LogNext, (*msgs)[0].Type)
+	rq.Equal("building /nix/store/xxx", (*msgs)[0].Text)
 }
 
 func TestProcessStderrError(t *testing.T) {
@@ -70,8 +76,7 @@ func TestProcessStderrError(t *testing.T) {
 	writeTestUint64(&buf, 0)                // havePos
 	writeTestUint64(&buf, 0)                // nrTraces
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
 
 	rq.Error(err)
 
@@ -102,20 +107,18 @@ func TestProcessStderrStartStopActivity(t *testing.T) {
 	// Last
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	fn, msgs := collect()
+	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
 	rq.NoError(err)
-	rq.Len(logs, 2)
+	rq.Len(*msgs, 2)
 
-	msg1 := <-logs
-	rq.Equal(daemon.LogStartActivity, msg1.Type)
-	rq.Equal(uint64(42), msg1.Activity.ID)
-	rq.Equal("building foo", msg1.Activity.Text)
-	rq.Equal(daemon.ActBuilds, msg1.Activity.Type)
+	rq.Equal(daemon.LogStartActivity, (*msgs)[0].Type)
+	rq.Equal(uint64(42), (*msgs)[0].Activity.ID)
+	rq.Equal("building foo", (*msgs)[0].Activity.Text)
+	rq.Equal(daemon.ActBuilds, (*msgs)[0].Activity.Type)
 
-	msg2 := <-logs
-	rq.Equal(daemon.LogStopActivity, msg2.Type)
-	rq.Equal(uint64(42), msg2.ActivityID)
+	rq.Equal(daemon.LogStopActivity, (*msgs)[1].Type)
+	rq.Equal(uint64(42), (*msgs)[1].ActivityID)
 }
 
 func TestProcessStderrResult(t *testing.T) {
@@ -131,18 +134,17 @@ func TestProcessStderrResult(t *testing.T) {
 	writeTestString(&buf, "compiling main.c")
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	fn, msgs := collect()
+	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
 	rq.NoError(err)
-	rq.Len(logs, 1)
+	rq.Len(*msgs, 1)
 
-	msg := <-logs
-	rq.Equal(daemon.LogResult, msg.Type)
-	rq.Equal(uint64(7), msg.Result.ID)
-	rq.Equal(daemon.ResBuildLogLine, msg.Result.Type)
-	rq.Len(msg.Result.Fields, 1)
-	rq.False(msg.Result.Fields[0].IsInt)
-	rq.Equal("compiling main.c", msg.Result.Fields[0].String)
+	rq.Equal(daemon.LogResult, (*msgs)[0].Type)
+	rq.Equal(uint64(7), (*msgs)[0].Result.ID)
+	rq.Equal(daemon.ResBuildLogLine, (*msgs)[0].Result.Type)
+	rq.Len((*msgs)[0].Result.Fields, 1)
+	rq.False((*msgs)[0].Result.Fields[0].IsInt)
+	rq.Equal("compiling main.c", (*msgs)[0].Result.Fields[0].String)
 }
 
 func TestProcessStderrReadWrite(t *testing.T) {
@@ -158,10 +160,10 @@ func TestProcessStderrReadWrite(t *testing.T) {
 	// Last
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	fn, msgs := collect()
+	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
 	require.NoError(t, err)
-	require.Len(t, logs, 0) // Read/Write messages are silently consumed
+	require.Empty(t, *msgs) // Read/Write messages are silently consumed
 }
 
 func TestProcessStderrUnknownType(t *testing.T) {
@@ -171,8 +173,7 @@ func TestProcessStderrUnknownType(t *testing.T) {
 
 	writeTestUint64(&buf, 0xDEADBEEF)
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
 
 	rq.Error(err)
 
@@ -200,8 +201,7 @@ func TestProcessStderrErrorWithTraces(t *testing.T) {
 	writeTestUint64(&buf, 0)                     // traceHavePos
 	writeTestString(&buf, "in file default.nix") // traceMsg
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
 
 	rq.Error(err)
 
@@ -225,8 +225,7 @@ func TestProcessStderrLegacyError(t *testing.T) {
 	writeTestString(&buf, "path '/nix/store/abc' is not valid") // message
 	writeTestUint64(&buf, 1)                                    // exitStatus
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtoVersion(1, 25))
+	err := daemon.ProcessStderr(&buf, nil, daemon.ProtoVersion(1, 25))
 
 	rq.Error(err)
 
@@ -260,32 +259,29 @@ func TestProcessStderrActivityWithFields(t *testing.T) {
 
 	writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	logs := make(chan daemon.LogMessage, 10)
-	err := daemon.ProcessStderr(&buf, logs, daemon.ProtocolVersion)
+	fn, msgs := collect()
+	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
 	rq.NoError(err)
-	rq.Len(logs, 1)
+	rq.Len(*msgs, 1)
 
-	msg := <-logs
-	rq.Equal(daemon.LogStartActivity, msg.Type)
-	rq.Equal(uint64(99), msg.Activity.ID)
-	rq.Equal(daemon.ActFileTransfer, msg.Activity.Type)
-	rq.Len(msg.Activity.Fields, 2)
-	rq.False(msg.Activity.Fields[0].IsInt)
-	rq.Equal("https://example.com/file.tar.gz", msg.Activity.Fields[0].String)
-	rq.True(msg.Activity.Fields[1].IsInt)
-	rq.Equal(uint64(1048576), msg.Activity.Fields[1].Int)
+	rq.Equal(daemon.LogStartActivity, (*msgs)[0].Type)
+	rq.Equal(uint64(99), (*msgs)[0].Activity.ID)
+	rq.Equal(daemon.ActFileTransfer, (*msgs)[0].Activity.Type)
+	rq.Len((*msgs)[0].Activity.Fields, 2)
+	rq.False((*msgs)[0].Activity.Fields[0].IsInt)
+	rq.Equal("https://example.com/file.tar.gz", (*msgs)[0].Activity.Fields[0].String)
+	rq.True((*msgs)[0].Activity.Fields[1].IsInt)
+	rq.Equal(uint64(1048576), (*msgs)[0].Activity.Fields[1].Int)
 }
 
-func TestLogChannelSinkDropCounter(t *testing.T) {
-	ch := make(chan daemon.LogMessage, 1)
+func TestProcessStderrNilCallback(t *testing.T) {
+	var buf bytes.Buffer
 
-	var dropped atomic.Uint64
+	writeTestUint64(&buf, uint64(daemon.LogNext))
+	writeTestString(&buf, "should be discarded")
+	writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	sink := daemon.NewLogChannelSink(ch, &dropped)
-
-	sink.Send(daemon.LogMessage{Type: daemon.LogNext, Text: "first"})
-	sink.Send(daemon.LogMessage{Type: daemon.LogNext, Text: "second"})
-
-	require.Equal(t, uint64(1), dropped.Load())
-	require.Len(t, ch, 1)
+	// nil callback should not panic.
+	err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
+	require.NoError(t, err)
 }

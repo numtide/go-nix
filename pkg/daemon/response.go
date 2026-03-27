@@ -1,51 +1,150 @@
 package daemon
 
 import (
+	"fmt"
 	"io"
 	"net"
-	"sync"
-	"sync/atomic"
+
+	"github.com/nix-community/go-nix/pkg/wire"
 )
 
 // OpResponse wraps the response phase of a daemon operation. It implements
-// io.ReadCloser over the connection's reader and releases the connection
-// mutex when closed. Callers must call Close when done reading, even if
-// they did not read any data.
+// io.ReadCloser over the connection's reader and deregisters the context
+// cancellation callback when closed.
 //
-// Close is safe to call concurrently with Read. An in-flight Read may
-// return the underlying connection error rather than ErrClosed; subsequent
-// calls to Read will return ErrClosed.
+// Before reading response data, the caller may call ReadLogs to receive log
+// messages from the daemon. If Read is called before ReadLogs, any pending
+// log messages are drained and discarded automatically.
+//
+// Callers must call Close when done reading, even if they did not read any data.
+//
+// OpResponse is not safe for concurrent use.
 type OpResponse struct {
-	r      io.Reader
-	conn   net.Conn
-	mu     *sync.Mutex
-	once   sync.Once
-	closed atomic.Bool
-	cancel func() bool // context.AfterFunc stop function
+	r                   io.Reader
+	conn                net.Conn
+	version             uint64
+	closed              bool
+	logsDrained         bool
+	unsetCancelDeadline func() error // context.AfterFunc stop function
 }
 
-// Read reads response data from the daemon connection.
+// ReadLogs reads log messages from the daemon, calling fn for each message.
+// It blocks until all log messages have been consumed (LogLast received).
+// Returns ErrLogsDrained if called after logs have already been read.
+// Returns a *Error if the daemon reports an error via LogError.
+func (resp *OpResponse) ReadLogs(fn func(LogMessage)) error {
+	if resp.logsDrained {
+		return ErrLogsDrained
+	}
+
+	resp.logsDrained = true
+
+	return resp.readLogs(fn)
+}
+
+// readLogs reads and dispatches log messages from the daemon's stderr channel.
+func (resp *OpResponse) readLogs(fn func(LogMessage)) error {
+	for {
+		raw, err := wire.ReadUint64(resp.r)
+		if err != nil {
+			return &ProtocolError{Op: "read stderr message type", Err: err}
+		}
+
+		msgType := LogMessageType(raw)
+
+		switch msgType {
+		case LogLast:
+			return nil
+
+		case LogError:
+			return readError(resp.r, resp.version)
+
+		case LogNext:
+			text, err := wire.ReadString(resp.r, MaxStringSize)
+			if err != nil {
+				return &ProtocolError{Op: "read LogNext text", Err: err}
+			}
+
+			if fn != nil {
+				fn(LogMessage{Type: LogNext, Text: text})
+			}
+
+		case LogStartActivity:
+			act, err := readActivity(resp.r)
+			if err != nil {
+				return err
+			}
+
+			if fn != nil {
+				fn(LogMessage{Type: LogStartActivity, Activity: act})
+			}
+
+		case LogStopActivity:
+			id, err := wire.ReadUint64(resp.r)
+			if err != nil {
+				return &ProtocolError{Op: "read LogStopActivity id", Err: err}
+			}
+
+			if fn != nil {
+				fn(LogMessage{Type: LogStopActivity, ActivityID: id})
+			}
+
+		case LogResult:
+			result, err := readActivityResult(resp.r)
+			if err != nil {
+				return err
+			}
+
+			if fn != nil {
+				fn(LogMessage{Type: LogResult, Result: result})
+			}
+
+		case LogRead, LogWrite:
+			// data transfer notifications: read the count and discard.
+			if _, err := wire.ReadUint64(resp.r); err != nil {
+				return &ProtocolError{Op: "read LogRead/LogWrite count", Err: err}
+			}
+
+		default:
+			return &ProtocolError{
+				Op:  "process stderr",
+				Err: fmt.Errorf("unknown log message type: 0x%x", raw),
+			}
+		}
+	}
+}
+
+// Read reads response data from the daemon connection. If log messages have
+// not yet been drained, they are discarded before reading response data.
 // Returns ErrClosed if the response has been closed.
 func (resp *OpResponse) Read(p []byte) (int, error) {
-	if resp.closed.Load() {
+	if resp.closed {
 		return 0, ErrClosed
+	}
+
+	if !resp.logsDrained {
+		resp.logsDrained = true
+
+		if err := resp.readLogs(nil); err != nil {
+			return 0, err
+		}
 	}
 
 	return resp.r.Read(p)
 }
 
-// Close releases the connection mutex. It is idempotent and safe to call
-// multiple times. After Close, Read returns ErrClosed.
+// Close deregisters the context cancellation callback and resets the
+// connection deadline. It is idempotent. After Close, Read returns ErrClosed.
 func (resp *OpResponse) Close() error {
-	resp.closed.Store(true)
-	resp.once.Do(func() {
-		if resp.cancel != nil {
-			resp.cancel()
-		}
+	if resp.closed {
+		return nil
+	}
 
-		resp.conn.SetDeadline(noDeadline) //nolint:errcheck,gosec // best-effort deadline reset
-		resp.mu.Unlock()
-	})
+	resp.closed = true
+
+	if err := resp.unsetCancelDeadline(); err != nil {
+		return fmt.Errorf("failed to cancel: %w", err)
+	}
 
 	return nil
 }

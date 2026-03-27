@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -13,157 +15,139 @@ import (
 // IsValidPath checks whether the given store path is valid (exists in the
 // store).
 func (c *Client) IsValidPath(ctx context.Context, path string) (bool, error) {
-	var valid bool
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, path); err != nil {
+		return false, &ProtocolError{Op: "IsValidPath write request", Err: err}
+	}
 
-	err := c.doOp(ctx, OpIsValidPath,
-		func(w io.Writer) error {
-			return wire.WriteString(w, path)
-		},
-		func(r io.Reader) error {
-			v, err := wire.ReadBool(r)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpIsValidPath, &buf)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Close()
 
-			valid = v
+	valid, err := wire.ReadBool(resp)
+	if err != nil {
+		return false, &ProtocolError{Op: "IsValidPath read response", Err: err}
+	}
 
-			return nil
-		},
-	)
-
-	return valid, err
+	return valid, nil
 }
 
-// QueryPathInfo retrieves the metadata for the given store path. If the path
-// is not found in the store, the result is nil with no error.
+// QueryPathInfo retrieves the metadata for the given store path. Returns
+// ErrNotFound if the path does not exist in the store.
 func (c *Client) QueryPathInfo(ctx context.Context, path string) (*PathInfo, error) {
-	var info *PathInfo
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, path); err != nil {
+		return nil, &ProtocolError{Op: "QueryPathInfo write request", Err: err}
+	}
 
-	err := c.doOp(ctx, OpQueryPathInfo,
-		func(w io.Writer) error {
-			return wire.WriteString(w, path)
-		},
-		func(r io.Reader) error {
-			found, err := wire.ReadBool(r)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQueryPathInfo, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			if !found {
-				return nil
-			}
+	found, err := wire.ReadBool(resp)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryPathInfo read response", Err: err}
+	}
 
-			info, err = ReadPathInfo(r, path, c.info.Version)
+	if !found {
+		return nil, ErrNotFound
+	}
 
-			return err
-		},
-	)
-
-	return info, err
+	return ReadPathInfo(resp, path, c.info.Version)
 }
 
 // QueryPathFromHashPart looks up a store path by its hash part. If nothing
 // is found, the result is an empty string with no error.
 func (c *Client) QueryPathFromHashPart(ctx context.Context, hashPart string) (string, error) {
-	var storePath string
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, hashPart); err != nil {
+		return "", &ProtocolError{Op: "QueryPathFromHashPart write request", Err: err}
+	}
 
-	err := c.doOp(ctx, OpQueryPathFromHashPart,
-		func(w io.Writer) error {
-			return wire.WriteString(w, hashPart)
-		},
-		func(r io.Reader) error {
-			s, err := wire.ReadString(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQueryPathFromHashPart, &buf)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Close()
 
-			storePath = s
+	storePath, err := wire.ReadString(resp, MaxStringSize)
+	if err != nil {
+		return "", &ProtocolError{Op: "QueryPathFromHashPart read response", Err: err}
+	}
 
-			return nil
-		},
-	)
-
-	return storePath, err
+	return storePath, nil
 }
 
 // QueryAllValidPaths returns all valid store paths known to the daemon.
 func (c *Client) QueryAllValidPaths(ctx context.Context) ([]string, error) {
-	var paths []string
+	resp, err := c.Execute(ctx, OpQueryAllValidPaths, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-	err := c.doOp(ctx, OpQueryAllValidPaths,
-		nil,
-		func(r io.Reader) error {
-			ss, err := wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	paths, err := wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryAllValidPaths read response", Err: err}
+	}
 
-			paths = ss
-
-			return nil
-		},
-	)
-
-	return paths, err
+	return paths, nil
 }
 
 // QueryValidPaths returns the subset of the given paths that are valid. If
 // substituteOk is true, the daemon may attempt to substitute missing paths.
 func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substituteOk bool) ([]string, error) {
-	var valid []string
+	var buf bytes.Buffer
 
-	err := c.doOp(ctx, OpQueryValidPaths,
-		func(w io.Writer) error {
-			if err := wire.WriteStrings(w, paths); err != nil {
-				return err
-			}
+	if err := wire.WriteStrings(&buf, paths); err != nil {
+		return nil, &ProtocolError{Op: "QueryValidPaths write request", Err: err}
+	}
 
-			// Protocol >= 1.27: substituteOk flag.
-			if c.info.Version >= ProtoVersionSubstituteOk {
-				if err := wire.WriteBool(w, substituteOk); err != nil {
-					return err
-				}
-			}
+	// protocol >= 1.27: substituteOk flag.
+	if c.info.Version >= ProtoVersionSubstituteOk {
+		if err := wire.WriteBool(&buf, substituteOk); err != nil {
+			return nil, &ProtocolError{Op: "QueryValidPaths write request", Err: err}
+		}
+	}
 
-			return nil
-		},
-		func(r io.Reader) error {
-			ss, err := wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQueryValidPaths, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			valid = ss
+	valid, err := wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryValidPaths read response", Err: err}
+	}
 
-			return nil
-		},
-	)
-
-	return valid, err
+	return valid, nil
 }
 
 // QuerySubstitutablePaths returns the subset of the given paths that can be
 // substituted from a binary cache or other substitute source.
 func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([]string, error) {
-	var substitutable []string
+	var buf bytes.Buffer
+	if err := wire.WriteStrings(&buf, paths); err != nil {
+		return nil, &ProtocolError{Op: "QuerySubstitutablePaths write request", Err: err}
+	}
 
-	err := c.doOp(ctx, OpQuerySubstitutablePaths,
-		func(w io.Writer) error {
-			return wire.WriteStrings(w, paths)
-		},
-		func(r io.Reader) error {
-			ss, err := wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQuerySubstitutablePaths, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			substitutable = ss
+	substitutable, err := wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QuerySubstitutablePaths read response", Err: err}
+	}
 
-			return nil
-		},
-	)
-
-	return substitutable, err
+	return substitutable, nil
 }
 
 // QuerySubstitutablePathInfos returns substitution metadata (deriver,
@@ -173,122 +157,115 @@ func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([
 func (c *Client) QuerySubstitutablePathInfos(
 	ctx context.Context, paths map[string]string,
 ) (map[string]*SubstitutablePathInfo, error) {
-	var result map[string]*SubstitutablePathInfo
+	var buf bytes.Buffer
 
-	err := c.doOp(ctx, OpQuerySubstitutablePathInfos,
-		func(w io.Writer) error {
-			// Protocol >= 1.22 (always true for us): send StorePathCAMap.
-			if err := wire.WriteUint64(w, uint64(len(paths))); err != nil {
-				return err
-			}
+	// protocol >= 1.22 (always true for us): send StorePathCAMap.
+	if err := wire.WriteUint64(&buf, uint64(len(paths))); err != nil {
+		return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos write request", Err: err}
+	}
 
-			for storePath, ca := range paths {
-				if err := wire.WriteString(w, storePath); err != nil {
-					return err
-				}
+	for storePath, ca := range paths {
+		if err := wire.WriteString(&buf, storePath); err != nil {
+			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos write request", Err: err}
+		}
 
-				if err := wire.WriteString(w, ca); err != nil {
-					return err
-				}
-			}
+		if err := wire.WriteString(&buf, ca); err != nil {
+			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos write request", Err: err}
+		}
+	}
 
-			return nil
-		},
-		func(r io.Reader) error {
-			count, err := wire.ReadUint64(r)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQuerySubstitutablePathInfos, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			result = make(map[string]*SubstitutablePathInfo, count)
+	count, err := wire.ReadUint64(resp)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
+	}
 
-			for range count {
-				storePath, err := wire.ReadString(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+	result := make(map[string]*SubstitutablePathInfo, count)
 
-				deriver, err := wire.ReadString(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+	for range count {
+		storePath, err := wire.ReadString(resp, MaxStringSize)
+		if err != nil {
+			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
+		}
 
-				references, err := wire.ReadStrings(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+		deriver, err := wire.ReadString(resp, MaxStringSize)
+		if err != nil {
+			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
+		}
 
-				downloadSize, err := wire.ReadUint64(r)
-				if err != nil {
-					return err
-				}
+		references, err := wire.ReadStrings(resp, MaxStringSize)
+		if err != nil {
+			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
+		}
 
-				narSize, err := wire.ReadUint64(r)
-				if err != nil {
-					return err
-				}
+		downloadSize, err := wire.ReadUint64(resp)
+		if err != nil {
+			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
+		}
 
-				result[storePath] = &SubstitutablePathInfo{
-					Deriver:      deriver,
-					References:   references,
-					DownloadSize: downloadSize,
-					NarSize:      narSize,
-				}
-			}
+		narSize, err := wire.ReadUint64(resp)
+		if err != nil {
+			return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
+		}
 
-			return nil
-		},
-	)
+		result[storePath] = &SubstitutablePathInfo{
+			Deriver:      deriver,
+			References:   references,
+			DownloadSize: downloadSize,
+			NarSize:      narSize,
+		}
+	}
 
-	return result, err
+	return result, nil
 }
 
 // QueryValidDerivers returns the derivations known to have produced the given
 // store path.
 func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string, error) {
-	var derivers []string
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, path); err != nil {
+		return nil, &ProtocolError{Op: "QueryValidDerivers write request", Err: err}
+	}
 
-	err := c.doOp(ctx, OpQueryValidDerivers,
-		func(w io.Writer) error {
-			return wire.WriteString(w, path)
-		},
-		func(r io.Reader) error {
-			ss, err := wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQueryValidDerivers, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			derivers = ss
+	derivers, err := wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryValidDerivers read response", Err: err}
+	}
 
-			return nil
-		},
-	)
-
-	return derivers, err
+	return derivers, nil
 }
 
 // QueryReferrers returns the set of store paths that reference (depend on)
 // the given path.
 func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, error) {
-	var referrers []string
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, path); err != nil {
+		return nil, &ProtocolError{Op: "QueryReferrers write request", Err: err}
+	}
 
-	err := c.doOp(ctx, OpQueryReferrers,
-		func(w io.Writer) error {
-			return wire.WriteString(w, path)
-		},
-		func(r io.Reader) error {
-			ss, err := wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQueryReferrers, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			referrers = ss
+	referrers, err := wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryReferrers read response", Err: err}
+	}
 
-			return nil
-		},
-	)
-
-	return referrers, err
+	return referrers, nil
 }
 
 // QueryDerivationOutputMap returns a map from output names to store paths
@@ -298,25 +275,23 @@ func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (
 		return nil, err
 	}
 
-	var outputs map[string]string
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, drvPath); err != nil {
+		return nil, &ProtocolError{Op: "QueryDerivationOutputMap write request", Err: err}
+	}
 
-	err := c.doOp(ctx, OpQueryDerivationOutputMap,
-		func(w io.Writer) error {
-			return wire.WriteString(w, drvPath)
-		},
-		func(r io.Reader) error {
-			m, err := wire.ReadStringMap(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQueryDerivationOutputMap, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			outputs = m
+	outputs, err := wire.ReadStringMap(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryDerivationOutputMap read response", Err: err}
+	}
 
-			return nil
-		},
-	)
-
-	return outputs, err
+	return outputs, nil
 }
 
 // QueryMissing determines which of the given paths need to be built,
@@ -327,42 +302,45 @@ func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo
 		return nil, err
 	}
 
+	var buf bytes.Buffer
+	if err := wire.WriteStrings(&buf, paths); err != nil {
+		return nil, &ProtocolError{Op: "QueryMissing write request", Err: err}
+	}
+
+	resp, err := c.Execute(ctx, OpQueryMissing, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
+
 	var info MissingInfo
 
-	err := c.doOp(ctx, OpQueryMissing,
-		func(w io.Writer) error {
-			return wire.WriteStrings(w, paths)
-		},
-		func(r io.Reader) error {
-			var err error
+	info.WillBuild, err = wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryMissing read response", Err: err}
+	}
 
-			info.WillBuild, err = wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	info.WillSubstitute, err = wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryMissing read response", Err: err}
+	}
 
-			info.WillSubstitute, err = wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	info.Unknown, err = wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryMissing read response", Err: err}
+	}
 
-			info.Unknown, err = wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	info.DownloadSize, err = wire.ReadUint64(resp)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryMissing read response", Err: err}
+	}
 
-			info.DownloadSize, err = wire.ReadUint64(r)
-			if err != nil {
-				return err
-			}
+	info.NarSize, err = wire.ReadUint64(resp)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryMissing read response", Err: err}
+	}
 
-			info.NarSize, err = wire.ReadUint64(r)
-
-			return err
-		},
-	)
-
-	return &info, err
+	return &info, nil
 }
 
 // QueryRealisation looks up content-addressed realisations for the given
@@ -372,109 +350,118 @@ func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]Reali
 		return nil, err
 	}
 
-	var realisations []Realisation
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, outputID); err != nil {
+		return nil, &ProtocolError{Op: "QueryRealisation write request", Err: err}
+	}
 
-	err := c.doOp(ctx, OpQueryRealisation,
-		func(w io.Writer) error {
-			return wire.WriteString(w, outputID)
-		},
-		func(r io.Reader) error {
-			ss, err := wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	resp, err := c.Execute(ctx, OpQueryRealisation, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			realisations = make([]Realisation, len(ss))
+	ss, err := wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "QueryRealisation read response", Err: err}
+	}
 
-			for i, s := range ss {
-				if err := json.Unmarshal([]byte(s), &realisations[i]); err != nil {
-					return &ProtocolError{Op: "QueryRealisation parse JSON", Err: err}
-				}
-			}
+	realisations := make([]Realisation, len(ss))
 
-			return nil
-		},
-	)
+	for i, s := range ss {
+		if err := json.Unmarshal([]byte(s), &realisations[i]); err != nil {
+			return nil, &ProtocolError{Op: "QueryRealisation parse JSON", Err: err}
+		}
+	}
 
-	return realisations, err
+	return realisations, nil
 }
 
 // FindRoots returns the set of GC roots known to the daemon. The map keys
 // are the root link paths and the values are the store paths they point to.
 func (c *Client) FindRoots(ctx context.Context) (map[string]string, error) {
-	var roots map[string]string
-
-	err := c.doOp(ctx, OpFindRoots,
-		nil,
-		func(r io.Reader) error {
-			m, err := wire.ReadStringMap(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
-
-			roots = m
-
-			return nil
-		},
-	)
-
-	return roots, err
-}
-
-// NarFromPath returns the NAR serialisation of the given store path as a
-// streaming reader. The returned io.ReadCloser holds the connection lock;
-// the caller must read the complete NAR and call Close to release it.
-func (c *Client) NarFromPath(
-	ctx context.Context, path string,
-) (io.ReadCloser, error) {
-	if err := c.checkCtx(ctx); err != nil {
-		return nil, err
-	}
-
-	cancel, err := c.lockForCtx(ctx)
+	resp, err := c.Execute(ctx, OpFindRoots, nil)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Close()
 
-	// Write operation code.
-	if err := wire.WriteUint64(c.w, uint64(OpNarFromPath)); err != nil {
-		c.release(cancel)
+	roots, err := wire.ReadStringMap(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "FindRoots read response", Err: err}
+	}
+
+	return roots, nil
+}
+
+// NarFromPath returns the NAR serialisation of the given store path as a
+// streaming reader. The caller must read the complete NAR and call Close
+// before starting another operation.
+//
+// If logFn is non-nil, daemon log messages are passed to it before the NAR
+// data is returned. If nil, log messages are discarded.
+func (c *Client) NarFromPath(
+	ctx context.Context, path string, logFn func(LogMessage),
+) (r io.ReadCloser, err error) {
+	var unsetCancelDeadline func() error
+
+	// set a cancel deadline on the connection in the event the context is cancelled
+	// it helps free up any i/o in progress on the connection
+	if unsetCancelDeadline, err = c.setCancelDeadline(ctx); err != nil {
+		return nil, fmt.Errorf("failed to set cancel deadline: %w", err)
+	}
+
+	// ensure the cancel deadline is removed in the event an error is thrown in this method
+	defer func() {
+		if err == nil {
+			// nothing to do
+			return
+		}
+
+		if unsetErr := unsetCancelDeadline(); unsetErr != nil {
+			err = errors.Join(err, unsetErr)
+		}
+	}()
+
+	// write operation code
+	if err = wire.WriteUint64(c.w, uint64(OpNarFromPath)); err != nil {
+		_ = unsetCancelDeadline()
 
 		return nil, &ProtocolError{Op: "NarFromPath write op", Err: err}
 	}
 
-	// Write request payload.
-	if err := wire.WriteString(c.w, path); err != nil {
-		c.release(cancel)
+	// write request payload
+	if err = wire.WriteString(c.w, path); err != nil {
+		_ = unsetCancelDeadline()
 
 		return nil, &ProtocolError{Op: "NarFromPath write request", Err: err}
 	}
 
-	// Flush buffered writer.
-	if err := c.w.Flush(); err != nil {
-		c.release(cancel)
+	// flush buffered writer
+	if err = c.w.Flush(); err != nil {
+		_ = unsetCancelDeadline()
 
 		return nil, &ProtocolError{Op: "NarFromPath flush", Err: err}
 	}
 
-	// Drain stderr log messages until LogLast.
-	if err := ProcessStderrWithSink(c.r, c.logSink, c.info.Version); err != nil {
-		c.release(cancel)
+	// drain stderr log messages until LogLast
+	if err = ProcessStderr(c.r, logFn, c.info.Version); err != nil {
+		_ = unsetCancelDeadline()
 
 		return nil, err
 	}
 
-	// The daemon sends raw NAR data (self-delimiting format). Use io.Pipe
-	// with io.TeeReader so that everything the NAR reader consumes from the
-	// connection is also written to the pipe for the caller to read.
+	// The daemon sends raw NAR data (self-delimiting format).
+	// Use io.Pipe with io.TeeReader so that everything the NAR reader consumes from the connection is also written to
+	// the pipe for the caller to read.
 	pr, pw := io.Pipe()
 	tee := io.TeeReader(c.r, pw)
 
 	go func() {
-		err := drainNAR(tee)
+		err = drainNAR(tee)
 
-		c.release(cancel)
-		pw.CloseWithError(err)
+		_ = unsetCancelDeadline()
+		_ = pw.CloseWithError(err)
 	}()
 
 	return pr, nil
@@ -489,8 +476,10 @@ func drainNAR(r io.Reader) error {
 	}
 	defer nr.Close()
 
+	var hdr *nar.Header
+
 	for {
-		hdr, err := nr.Next()
+		hdr, err = nr.Next()
 		if err == io.EOF {
 			return nil
 		}
@@ -501,7 +490,7 @@ func drainNAR(r io.Reader) error {
 
 		// Drain file content so the reader advances past this entry.
 		if hdr.Type == nar.TypeRegular && hdr.Size > 0 {
-			if _, err := io.Copy(io.Discard, nr); err != nil {
+			if _, err = io.Copy(io.Discard, nr); err != nil {
 				return fmt.Errorf("reading NAR content: %w", err)
 			}
 		}

@@ -43,7 +43,7 @@ func TestClientConnectWrongMagic(t *testing.T) {
 	_, err = daemon.Connect(t.Context(), sock)
 	require.Error(t, err)
 
-	// Clean up the socket file to avoid TempDir cleanup warnings on some
+	// Clean up the socket file to avoid TempDir resetDeadlineOnCancel warnings on some
 	// platforms where the listener does not unlink automatically.
 	_ = os.Remove(sock)
 }
@@ -107,33 +107,9 @@ func TestClientCloseIdempotent(t *testing.T) {
 	rq.NoError(client.Close())
 }
 
-func TestClientWithLogChannel(t *testing.T) {
-	mock := newMockDaemon(t)
-
-	logs := make(chan daemon.LogMessage, 10)
-
-	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
-	require.NoError(t, err)
-
-	defer client.Close()
-
-	require.NotNil(t, client.Logs())
-}
-
-func TestClientLogsNilByDefault(t *testing.T) {
-	mock := newMockDaemon(t)
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
-
-	defer client.Close()
-
-	require.Nil(t, client.Logs())
-}
-
 // TestClientSequentialOperations exercises multiple different operations on
-// the same mock connection to verify the client properly releases the mutex
-// and resets the connection state between operations.
+// the same mock connection to verify the client properly resets the
+// connection state between operations.
 func TestClientSequentialOperations(t *testing.T) {
 	rq := require.New(t)
 
@@ -206,9 +182,9 @@ func TestClientSequentialOperations(t *testing.T) {
 // TestClientOperationAfterError verifies that the connection remains usable
 // after the daemon returns an error for one operation. The client's doOp
 // calls ProcessStderrWithSink which returns the error on LogError, then
-// release(cancel) unlocks the mutex and resets the deadline. Since LogError
-// terminates the stderr loop (no trailing LogLast), the next operation
-// starts cleanly from the new op code.
+// resetDeadlineOnCancel(cancel) resets the deadline. Since LogError terminates the stderr
+// loop (no trailing LogLast), the next operation starts cleanly from the
+// new op code.
 func TestClientOperationAfterError(t *testing.T) {
 	rq := require.New(t)
 
@@ -304,8 +280,8 @@ func TestClientContextCancellation(t *testing.T) {
 		_, _ = io.ReadFull(conn, buf[:]) // op code
 		_, _ = wire.ReadString(conn, 64*1024)
 
-		// Wait for the client to observe the cancellation and release
-		// the mutex, then drain any leftover bytes from the cancelled op.
+		// Wait for the client to observe the cancellation and clean up,
+		// then drain any leftover bytes from the cancelled op.
 		time.Sleep(50 * time.Millisecond)
 
 		// Second op: respond normally to prove the client recovered.

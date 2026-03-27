@@ -27,6 +27,12 @@ var (
 	// ErrNilRealisation is returned when a nil realisation is provided.
 	ErrNilRealisation = errors.New("nil realisation")
 
+	// ErrNotFound is returned when a store path is not found.
+	ErrNotFound = errors.New("store path not found")
+
+	// ErrLogsDrained is returned when ReadLogs is called after logs have already been read.
+	ErrLogsDrained = errors.New("logs already drained")
+
 	// ErrUnsupportedOperation is returned when an operation is not supported by the negotiated protocol version.
 	ErrUnsupportedOperation = errors.New("unsupported operation for negotiated protocol version")
 )

@@ -25,7 +25,7 @@ import (
 // startTestDaemon starts an isolated nix daemon subprocess and returns a
 // connected client. The daemon uses a temporary store under t.TempDir().
 // The daemon process is killed and cleaned up when the test finishes.
-func startTestDaemon(t *testing.T, opts ...daemon.ConnectOption) *daemon.Client {
+func startTestDaemon(t *testing.T) *daemon.Client {
 	t.Helper()
 
 	nixBin, err := exec.LookPath("nix")
@@ -65,7 +65,7 @@ func startTestDaemon(t *testing.T, opts ...daemon.ConnectOption) *daemon.Client 
 		cmdStdin.Close()
 	}()
 
-	client, err := daemon.NewClientFromConn(clientConn, opts...)
+	client, err := daemon.NewClientFromConn(clientConn)
 	require.NoError(t, err, "handshake with nix daemon failed")
 
 	t.Cleanup(func() {
@@ -146,17 +146,6 @@ func TestIntegrationSetOptions(t *testing.T) {
 
 	settings := daemon.DefaultClientSettings()
 	err := client.SetOptions(context.Background(), settings)
-	assert.NoError(t, err)
-}
-
-func TestIntegrationLogChannel(t *testing.T) {
-	logs := make(chan daemon.LogMessage, 100)
-	client := startTestDaemon(t, daemon.WithLogChannel(logs))
-
-	assert.NotNil(t, client.Logs())
-
-	// Run an operation that may produce log messages.
-	_, err := client.QueryAllValidPaths(context.Background())
 	assert.NoError(t, err)
 }
 
@@ -323,7 +312,7 @@ func TestIntegrationNarFromPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, info)
 
-	rc, err := client.NarFromPath(context.Background(), path)
+	rc, err := client.NarFromPath(context.Background(), path, nil)
 	assert.NoError(t, err)
 	require.NotNil(t, rc)
 
@@ -442,7 +431,7 @@ func TestIntegrationSequentialOperations(t *testing.T) {
 	require.NotNil(t, info)
 
 	// Operation 4: NarFromPath + read + close
-	rc, err := client.NarFromPath(ctx, path)
+	rc, err := client.NarFromPath(ctx, path, nil)
 	require.NoError(t, err)
 	_, err = io.ReadAll(rc)
 	require.NoError(t, err)
@@ -511,7 +500,7 @@ func TestIntegrationAddToStoreNarRoundTrip(t *testing.T) {
 	t.Logf("AddToStoreNar round-trip: path=%s narSize=%d", gotInfo.StorePath, gotInfo.NarSize)
 
 	// 6. Verify via NarFromPath: the retrieved NAR should match what we sent.
-	rc, err := client.NarFromPath(ctx, storePath)
+	rc, err := client.NarFromPath(ctx, storePath, nil)
 	require.NoError(t, err)
 	gotNar, err := io.ReadAll(rc)
 	require.NoError(t, err)
@@ -671,7 +660,7 @@ func TestIntegrationAddToStore(t *testing.T) {
 	assert.True(t, valid)
 
 	// Verify round-trip: retrieve the NAR and compare.
-	rc, err := client.NarFromPath(ctx, info.StorePath)
+	rc, err := client.NarFromPath(ctx, info.StorePath, nil)
 	require.NoError(t, err)
 	gotNar, err := io.ReadAll(rc)
 	require.NoError(t, err)

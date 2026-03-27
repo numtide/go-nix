@@ -1,11 +1,11 @@
 package daemon_test
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
-	"sync/atomic"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
@@ -17,8 +17,6 @@ func TestClientLogForwarding(t *testing.T) {
 	rq := require.New(t)
 
 	mock := newMockDaemon(t)
-
-	logs := make(chan daemon.LogMessage, 10)
 
 	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
@@ -47,33 +45,44 @@ func TestClientLogForwarding(t *testing.T) {
 		return nil
 	})
 
-	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
+	client, err := daemon.Connect(t.Context(), mock.path)
 	rq.NoError(err)
 
 	defer client.Close()
 
-	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
+	// Use Execute directly to get OpResponse with log access.
+	var reqBuf bytes.Buffer
+	rq.NoError(wire.WriteString(&reqBuf, "/nix/store/abc-test"))
+
+	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, &reqBuf)
+	rq.NoError(err)
+
+	defer resp.Close()
+
+	// Read logs explicitly.
+	var msgs []daemon.LogMessage
+
+	err = resp.ReadLogs(func(msg daemon.LogMessage) {
+		msgs = append(msgs, msg)
+	})
+	rq.NoError(err)
+
+	rq.Len(msgs, 2)
+	rq.Equal(daemon.LogNext, msgs[0].Type)
+	rq.Equal("building...", msgs[0].Text)
+	rq.Equal(daemon.LogNext, msgs[1].Type)
+	rq.Equal("done", msgs[1].Text)
+
+	// Read response.
+	valid, err := wire.ReadBool(resp)
 	rq.NoError(err)
 	rq.True(valid)
-
-	// Verify log messages
-	rq.Len(logs, 2)
-
-	msg1 := <-logs
-	rq.Equal(daemon.LogNext, msg1.Type)
-	rq.Equal("building...", msg1.Text)
-
-	msg2 := <-logs
-	rq.Equal(daemon.LogNext, msg2.Type)
-	rq.Equal("done", msg2.Text)
 }
 
 func TestClientLogStartStopActivity(t *testing.T) {
 	rq := require.New(t)
 
 	mock := newMockDaemon(t)
-
-	logs := make(chan daemon.LogMessage, 10)
 
 	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
@@ -113,35 +122,41 @@ func TestClientLogStartStopActivity(t *testing.T) {
 		return nil
 	})
 
-	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
+	client, err := daemon.Connect(t.Context(), mock.path)
 	rq.NoError(err)
 
 	defer client.Close()
 
-	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
+	var reqBuf bytes.Buffer
+	rq.NoError(wire.WriteString(&reqBuf, "/nix/store/abc-test"))
+
+	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, &reqBuf)
 	rq.NoError(err)
-	rq.True(valid)
 
-	rq.Len(logs, 2)
-	msg1 := <-logs
-	rq.Equal(daemon.LogStartActivity, msg1.Type)
-	rq.Equal(uint64(42), msg1.Activity.ID)
-	rq.Equal(daemon.ActBuild, msg1.Activity.Type)
-	rq.Equal("building /nix/store/abc-test", msg1.Activity.Text)
+	defer resp.Close()
 
-	msg2 := <-logs
-	rq.Equal(daemon.LogStopActivity, msg2.Type)
-	rq.Equal(uint64(42), msg2.ActivityID)
+	var msgs []daemon.LogMessage
+
+	err = resp.ReadLogs(func(msg daemon.LogMessage) {
+		msgs = append(msgs, msg)
+	})
+	rq.NoError(err)
+
+	rq.Len(msgs, 2)
+
+	rq.Equal(daemon.LogStartActivity, msgs[0].Type)
+	rq.Equal(uint64(42), msgs[0].Activity.ID)
+	rq.Equal(daemon.ActBuild, msgs[0].Activity.Type)
+	rq.Equal("building /nix/store/abc-test", msgs[0].Activity.Text)
+
+	rq.Equal(daemon.LogStopActivity, msgs[1].Type)
+	rq.Equal(uint64(42), msgs[1].ActivityID)
 }
 
 func TestClientLogChannelFull(t *testing.T) {
 	rq := require.New(t)
 
 	mock := newMockDaemon(t)
-
-	logs := make(chan daemon.LogMessage, 1)
-
-	var dropped atomic.Uint64
 
 	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
@@ -167,16 +182,42 @@ func TestClientLogChannelFull(t *testing.T) {
 		return nil
 	})
 
-	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannelWithDropCounter(logs, &dropped))
+	client, err := daemon.Connect(t.Context(), mock.path)
 	rq.NoError(err)
 
 	defer client.Close()
 
+	// Call IsValidPath which auto-drains logs.
 	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	rq.NoError(err)
 	rq.True(valid)
+}
 
-	// Channel has capacity 1, so only 1 message fits, 4 were dropped
-	rq.Equal(uint64(4), dropped.Load())
-	rq.Len(logs, 1)
+func TestClientReadLogsDrained(t *testing.T) {
+	rq := require.New(t)
+
+	mock := newMockDaemon(t)
+
+	mock.onAccept(respondIsValidPath(true))
+
+	client, err := daemon.Connect(t.Context(), mock.path)
+	rq.NoError(err)
+
+	defer client.Close()
+
+	var reqBuf bytes.Buffer
+	rq.NoError(wire.WriteString(&reqBuf, "/nix/store/abc-test"))
+
+	resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, &reqBuf)
+	rq.NoError(err)
+
+	defer resp.Close()
+
+	// First ReadLogs succeeds.
+	err = resp.ReadLogs(func(daemon.LogMessage) {})
+	rq.NoError(err)
+
+	// Second ReadLogs returns ErrLogsDrained.
+	err = resp.ReadLogs(func(daemon.LogMessage) {})
+	rq.ErrorIs(err, daemon.ErrLogsDrained)
 }

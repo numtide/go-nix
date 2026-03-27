@@ -1,8 +1,8 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
-	"io"
 
 	"github.com/nix-community/go-nix/pkg/wire"
 )
@@ -10,18 +10,23 @@ import (
 // BuildPaths asks the daemon to build the given set of derivation paths or
 // store paths. mode controls rebuild behaviour.
 func (c *Client) BuildPaths(ctx context.Context, paths []string, mode BuildMode) error {
-	return c.doOp(ctx, OpBuildPaths,
-		func(w io.Writer) error {
-			if err := wire.WriteStrings(w, paths); err != nil {
-				return err
-			}
+	var buf bytes.Buffer
 
-			return wire.WriteUint64(w, uint64(mode))
-		},
-		func(r io.Reader) error {
-			return readAck(r)
-		},
-	)
+	if err := wire.WriteStrings(&buf, paths); err != nil {
+		return &ProtocolError{Op: "BuildPaths write request", Err: err}
+	}
+
+	if err := wire.WriteUint64(&buf, uint64(mode)); err != nil {
+		return &ProtocolError{Op: "BuildPaths write request", Err: err}
+	}
+
+	resp, err := c.Execute(ctx, OpBuildPaths, &buf)
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+
+	return readAck(resp)
 }
 
 // BuildPathsWithResults is like BuildPaths but returns a BuildResult for each
@@ -31,57 +36,62 @@ func (c *Client) BuildPathsWithResults(ctx context.Context, paths []string, mode
 		return nil, err
 	}
 
-	var results []BuildResult
+	var buf bytes.Buffer
 
-	err := c.doOp(ctx, OpBuildPathsWithResults,
-		func(w io.Writer) error {
-			if err := wire.WriteStrings(w, paths); err != nil {
-				return err
-			}
+	if err := wire.WriteStrings(&buf, paths); err != nil {
+		return nil, &ProtocolError{Op: "BuildPathsWithResults write request", Err: err}
+	}
 
-			return wire.WriteUint64(w, uint64(mode))
-		},
-		func(r io.Reader) error {
-			count, err := wire.ReadUint64(r)
-			if err != nil {
-				return err
-			}
+	if err := wire.WriteUint64(&buf, uint64(mode)); err != nil {
+		return nil, &ProtocolError{Op: "BuildPathsWithResults write request", Err: err}
+	}
 
-			results = make([]BuildResult, count)
+	resp, err := c.Execute(ctx, OpBuildPathsWithResults, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			for i := range count {
-				// Each entry is a DerivedPath string (ignored) followed by a BuildResult.
-				_, err := wire.ReadString(r, MaxStringSize)
-				if err != nil {
-					return err
-				}
+	count, err := wire.ReadUint64(resp)
+	if err != nil {
+		return nil, &ProtocolError{Op: "BuildPathsWithResults read response", Err: err}
+	}
 
-				br, err := ReadBuildResult(r, c.info.Version)
-				if err != nil {
-					return err
-				}
+	results := make([]BuildResult, count)
 
-				results[i] = *br
-			}
+	for i := range count {
+		// each entry is a DerivedPath string (ignored) followed by a BuildResult.
+		_, err := wire.ReadString(resp, MaxStringSize)
+		if err != nil {
+			return nil, &ProtocolError{Op: "BuildPathsWithResults read response", Err: err}
+		}
 
-			return nil
-		},
-	)
+		br, err := ReadBuildResult(resp, c.info.Version)
+		if err != nil {
+			return nil, &ProtocolError{Op: "BuildPathsWithResults read response", Err: err}
+		}
 
-	return results, err
+		results[i] = *br
+	}
+
+	return results, nil
 }
 
 // EnsurePath ensures that the given store path is valid by building or
 // substituting it if necessary.
 func (c *Client) EnsurePath(ctx context.Context, path string) error {
-	return c.doOp(ctx, OpEnsurePath,
-		func(w io.Writer) error {
-			return wire.WriteString(w, path)
-		},
-		func(r io.Reader) error {
-			return readAck(r)
-		},
-	)
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, path); err != nil {
+		return &ProtocolError{Op: "EnsurePath write request", Err: err}
+	}
+
+	resp, err := c.Execute(ctx, OpEnsurePath, &buf)
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+
+	return readAck(resp)
 }
 
 // BuildDerivation builds a derivation given its store path and definition.
@@ -94,31 +104,25 @@ func (c *Client) BuildDerivation(
 		return nil, ErrNilDerivation
 	}
 
-	var result *BuildResult
+	var buf bytes.Buffer
 
-	err := c.doOp(ctx, OpBuildDerivation,
-		func(w io.Writer) error {
-			if err := wire.WriteString(w, drvPath); err != nil {
-				return err
-			}
+	if err := wire.WriteString(&buf, drvPath); err != nil {
+		return nil, &ProtocolError{Op: "BuildDerivation write request", Err: err}
+	}
 
-			if err := WriteBasicDerivation(w, drv); err != nil {
-				return err
-			}
+	if err := WriteBasicDerivation(&buf, drv); err != nil {
+		return nil, &ProtocolError{Op: "BuildDerivation write request", Err: err}
+	}
 
-			return wire.WriteUint64(w, uint64(mode))
-		},
-		func(r io.Reader) error {
-			br, err := ReadBuildResult(r, c.info.Version)
-			if err != nil {
-				return err
-			}
+	if err := wire.WriteUint64(&buf, uint64(mode)); err != nil {
+		return nil, &ProtocolError{Op: "BuildDerivation write request", Err: err}
+	}
 
-			result = br
+	resp, err := c.Execute(ctx, OpBuildDerivation, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
 
-			return nil
-		},
-	)
-
-	return result, err
+	return ReadBuildResult(resp, c.info.Version)
 }

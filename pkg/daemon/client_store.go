@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -40,67 +41,31 @@ func (c *Client) AddToStore(
 		return nil, err
 	}
 
-	ow, err := c.DoStreaming(ctx, OpAddToStore)
-	if err != nil {
-		return nil, err
-	}
+	var hdr bytes.Buffer
 
-	// Write name.
-	if err := wire.WriteString(ow, name); err != nil {
-		ow.Abort()
-
+	if err := wire.WriteString(&hdr, name); err != nil {
 		return nil, &ProtocolError{Op: "AddToStore write name", Err: err}
 	}
 
-	// Write content-address method with hash algorithm.
-	if err := wire.WriteString(ow, caMethodWithAlgo); err != nil {
-		ow.Abort()
-
+	if err := wire.WriteString(&hdr, caMethodWithAlgo); err != nil {
 		return nil, &ProtocolError{Op: "AddToStore write caMethodWithAlgo", Err: err}
 	}
 
-	// Write references.
-	if err := wire.WriteStrings(ow, references); err != nil {
-		ow.Abort()
-
+	if err := wire.WriteStrings(&hdr, references); err != nil {
 		return nil, &ProtocolError{Op: "AddToStore write references", Err: err}
 	}
 
-	// Write repair flag.
-	if err := wire.WriteBool(ow, repair); err != nil {
-		ow.Abort()
-
+	if err := wire.WriteBool(&hdr, repair); err != nil {
 		return nil, &ProtocolError{Op: "AddToStore write repair", Err: err}
 	}
 
-	// Flush before streaming.
-	if err := ow.Flush(); err != nil {
-		ow.Abort()
-
-		return nil, &ProtocolError{Op: "AddToStore flush", Err: err}
-	}
-
-	// Stream dump data as framed.
-	fw := ow.NewFramedWriter()
-	if _, err := io.Copy(fw, source); err != nil {
-		ow.Abort()
-
-		return nil, &ProtocolError{Op: "AddToStore stream data", Err: err}
-	}
-
-	if err := fw.Close(); err != nil {
-		ow.Abort()
-
-		return nil, &ProtocolError{Op: "AddToStore close framed writer", Err: err}
-	}
-
-	resp, err := ow.CloseRequest()
+	resp, err := c.Execute(ctx, OpAddToStore, io.MultiReader(&hdr, NewFramingReader(source)))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Close()
 
-	// Read response: ValidPathInfo = storePath + UnkeyedValidPathInfo.
+	// read response: ValidPathInfo = storePath + UnkeyedValidPathInfo.
 	storePath, err := wire.ReadString(resp, MaxStringSize)
 	if err != nil {
 		return nil, &ProtocolError{Op: "AddToStore read storePath", Err: err}
@@ -113,27 +78,35 @@ func (c *Client) AddToStore(
 // roots prevent the garbage collector from deleting the path for the duration
 // of the daemon session.
 func (c *Client) AddTempRoot(ctx context.Context, path string) error {
-	return c.doOp(ctx, OpAddTempRoot,
-		func(w io.Writer) error {
-			return wire.WriteString(w, path)
-		},
-		func(r io.Reader) error {
-			return readAck(r)
-		},
-	)
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, path); err != nil {
+		return &ProtocolError{Op: "AddTempRoot write request", Err: err}
+	}
+
+	resp, err := c.Execute(ctx, OpAddTempRoot, &buf)
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+
+	return readAck(resp)
 }
 
 // AddIndirectRoot adds an indirect GC root. The path should be a symlink
 // outside the store that points to a store path.
 func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
-	return c.doOp(ctx, OpAddIndirectRoot,
-		func(w io.Writer) error {
-			return wire.WriteString(w, path)
-		},
-		func(r io.Reader) error {
-			return readAck(r)
-		},
-	)
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, path); err != nil {
+		return &ProtocolError{Op: "AddIndirectRoot write request", Err: err}
+	}
+
+	resp, err := c.Execute(ctx, OpAddIndirectRoot, &buf)
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+
+	return readAck(resp)
 }
 
 // AddPermRoot adds a permanent GC root linking gcRoot to storePath. Returns
@@ -143,45 +116,49 @@ func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot strin
 		return "", err
 	}
 
-	var resultPath string
+	var buf bytes.Buffer
 
-	err := c.doOp(ctx, OpAddPermRoot,
-		func(w io.Writer) error {
-			if err := wire.WriteString(w, storePath); err != nil {
-				return err
-			}
+	if err := wire.WriteString(&buf, storePath); err != nil {
+		return "", &ProtocolError{Op: "AddPermRoot write request", Err: err}
+	}
 
-			return wire.WriteString(w, gcRoot)
-		},
-		func(r io.Reader) error {
-			s, err := wire.ReadString(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
+	if err := wire.WriteString(&buf, gcRoot); err != nil {
+		return "", &ProtocolError{Op: "AddPermRoot write request", Err: err}
+	}
 
-			resultPath = s
+	resp, err := c.Execute(ctx, OpAddPermRoot, &buf)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Close()
 
-			return nil
-		},
-	)
+	resultPath, err := wire.ReadString(resp, MaxStringSize)
+	if err != nil {
+		return "", &ProtocolError{Op: "AddPermRoot read response", Err: err}
+	}
 
-	return resultPath, err
+	return resultPath, nil
 }
 
 // AddSignatures attaches the given signatures to a store path.
 func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) error {
-	return c.doOp(ctx, OpAddSignatures,
-		func(w io.Writer) error {
-			if err := wire.WriteString(w, path); err != nil {
-				return err
-			}
+	var buf bytes.Buffer
 
-			return wire.WriteStrings(w, sigs)
-		},
-		func(r io.Reader) error {
-			return readAck(r)
-		},
-	)
+	if err := wire.WriteString(&buf, path); err != nil {
+		return &ProtocolError{Op: "AddSignatures write request", Err: err}
+	}
+
+	if err := wire.WriteStrings(&buf, sigs); err != nil {
+		return &ProtocolError{Op: "AddSignatures write request", Err: err}
+	}
+
+	resp, err := c.Execute(ctx, OpAddSignatures, &buf)
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+
+	return readAck(resp)
 }
 
 // RegisterDrvOutput registers a content-addressed realisation for a
@@ -195,17 +172,22 @@ func (c *Client) RegisterDrvOutput(ctx context.Context, realisation *Realisation
 		return err
 	}
 
-	return c.doOp(ctx, OpRegisterDrvOutput,
-		func(w io.Writer) error {
-			data, err := json.Marshal(realisation)
-			if err != nil {
-				return &ProtocolError{Op: "RegisterDrvOutput marshal JSON", Err: err}
-			}
+	data, err := json.Marshal(realisation)
+	if err != nil {
+		return &ProtocolError{Op: "RegisterDrvOutput marshal JSON", Err: err}
+	}
 
-			return wire.WriteString(w, string(data))
-		},
-		nil,
-	)
+	var buf bytes.Buffer
+	if err := wire.WriteString(&buf, string(data)); err != nil {
+		return &ProtocolError{Op: "RegisterDrvOutput write request", Err: err}
+	}
+
+	resp, err := c.Execute(ctx, OpRegisterDrvOutput, &buf)
+	if err != nil {
+		return err
+	}
+
+	return resp.Close()
 }
 
 // AddToStoreNar imports a NAR into the store. The info parameter describes
@@ -223,53 +205,21 @@ func (c *Client) AddToStoreNar(
 		return ErrNilReader
 	}
 
-	ow, err := c.DoStreaming(ctx, OpAddToStoreNar)
-	if err != nil {
-		return err
-	}
+	var hdr bytes.Buffer
 
-	// Write PathInfo.
-	if err := WritePathInfo(ow, info, c.info.Version); err != nil {
-		ow.Abort()
-
+	if err := WritePathInfo(&hdr, info, c.info.Version); err != nil {
 		return &ProtocolError{Op: "AddToStoreNar write path info", Err: err}
 	}
 
-	// Write repair and dontCheckSigs flags.
-	if err := wire.WriteBool(ow, repair); err != nil {
-		ow.Abort()
-
+	if err := wire.WriteBool(&hdr, repair); err != nil {
 		return &ProtocolError{Op: "AddToStoreNar write repair", Err: err}
 	}
 
-	if err := wire.WriteBool(ow, dontCheckSigs); err != nil {
-		ow.Abort()
-
+	if err := wire.WriteBool(&hdr, dontCheckSigs); err != nil {
 		return &ProtocolError{Op: "AddToStoreNar write dontCheckSigs", Err: err}
 	}
 
-	// Flush before streaming.
-	if err := ow.Flush(); err != nil {
-		ow.Abort()
-
-		return &ProtocolError{Op: "AddToStoreNar flush", Err: err}
-	}
-
-	// Stream NAR data as framed.
-	fw := ow.NewFramedWriter()
-	if _, err := io.Copy(fw, source); err != nil {
-		ow.Abort()
-
-		return &ProtocolError{Op: "AddToStoreNar stream data", Err: err}
-	}
-
-	if err := fw.Close(); err != nil {
-		ow.Abort()
-
-		return &ProtocolError{Op: "AddToStoreNar close framed writer", Err: err}
-	}
-
-	resp, err := ow.CloseRequest()
+	resp, err := c.Execute(ctx, OpAddToStoreNar, io.MultiReader(&hdr, NewFramingReader(source)))
 	if err != nil {
 		return err
 	}
@@ -288,47 +238,18 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 		return err
 	}
 
-	ow, err := c.DoStreaming(ctx, OpAddBuildLog)
-	if err != nil {
-		return err
-	}
-
-	// Parse and validate the store path, then send as BaseStorePath (basename only).
+	// parse and validate the store path, then send as BaseStorePath (basename only).
 	sp, err := storepath.FromAbsolutePath(drvPath)
 	if err != nil {
-		ow.Abort()
-
 		return &ProtocolError{Op: "AddBuildLog validate drvPath", Err: err}
 	}
 
-	if err := wire.WriteString(ow, sp.String()); err != nil {
-		ow.Abort()
-
+	var hdr bytes.Buffer
+	if err := wire.WriteString(&hdr, sp.String()); err != nil {
 		return &ProtocolError{Op: "AddBuildLog write drvPath", Err: err}
 	}
 
-	// Flush before streaming.
-	if err := ow.Flush(); err != nil {
-		ow.Abort()
-
-		return &ProtocolError{Op: "AddBuildLog flush", Err: err}
-	}
-
-	// Stream log data as framed.
-	fw := ow.NewFramedWriter()
-	if _, err := io.Copy(fw, log); err != nil {
-		ow.Abort()
-
-		return &ProtocolError{Op: "AddBuildLog stream data", Err: err}
-	}
-
-	if err := fw.Close(); err != nil {
-		ow.Abort()
-
-		return &ProtocolError{Op: "AddBuildLog close framed writer", Err: err}
-	}
-
-	resp, err := ow.CloseRequest()
+	resp, err := c.Execute(ctx, OpAddBuildLog, io.MultiReader(&hdr, NewFramingReader(log)))
 	if err != nil {
 		return err
 	}
@@ -343,108 +264,112 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 		return nil, ErrNilOptions
 	}
 
+	var buf bytes.Buffer
+
+	if err := wire.WriteUint64(&buf, uint64(options.Action)); err != nil {
+		return nil, &ProtocolError{Op: "CollectGarbage write request", Err: err}
+	}
+
+	if err := wire.WriteStrings(&buf, options.PathsToDelete); err != nil {
+		return nil, &ProtocolError{Op: "CollectGarbage write request", Err: err}
+	}
+
+	if err := wire.WriteBool(&buf, options.IgnoreLiveness); err != nil {
+		return nil, &ProtocolError{Op: "CollectGarbage write request", Err: err}
+	}
+
+	if err := wire.WriteUint64(&buf, options.MaxFreed); err != nil {
+		return nil, &ProtocolError{Op: "CollectGarbage write request", Err: err}
+	}
+
+	// deprecated fields, always zero.
+	for range numDeprecatedGCFields {
+		if err := wire.WriteUint64(&buf, 0); err != nil {
+			return nil, &ProtocolError{Op: "CollectGarbage write request", Err: err}
+		}
+	}
+
+	resp, err := c.Execute(ctx, OpCollectGarbage, &buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
+
 	var result GCResult
 
-	err := c.doOp(ctx, OpCollectGarbage,
-		func(w io.Writer) error {
-			if err := wire.WriteUint64(w, uint64(options.Action)); err != nil {
-				return err
-			}
+	result.Paths, err = wire.ReadStrings(resp, MaxStringSize)
+	if err != nil {
+		return nil, &ProtocolError{Op: "CollectGarbage read response", Err: err}
+	}
 
-			if err := wire.WriteStrings(w, options.PathsToDelete); err != nil {
-				return err
-			}
+	result.BytesFreed, err = wire.ReadUint64(resp)
+	if err != nil {
+		return nil, &ProtocolError{Op: "CollectGarbage read response", Err: err}
+	}
 
-			if err := wire.WriteBool(w, options.IgnoreLiveness); err != nil {
-				return err
-			}
+	// deprecated field, ignored.
+	_, err = wire.ReadUint64(resp)
+	if err != nil {
+		return nil, &ProtocolError{Op: "CollectGarbage read response", Err: err}
+	}
 
-			if err := wire.WriteUint64(w, options.MaxFreed); err != nil {
-				return err
-			}
-
-			// Deprecated fields, always zero.
-			for range numDeprecatedGCFields {
-				if err := wire.WriteUint64(w, 0); err != nil {
-					return err
-				}
-			}
-
-			return nil
-		},
-		func(r io.Reader) error {
-			paths, err := wire.ReadStrings(r, MaxStringSize)
-			if err != nil {
-				return err
-			}
-
-			result.Paths = paths
-
-			bytesFreed, err := wire.ReadUint64(r)
-			if err != nil {
-				return err
-			}
-
-			result.BytesFreed = bytesFreed
-
-			// Deprecated field, ignored.
-			_, err = wire.ReadUint64(r)
-
-			return err
-		},
-	)
-
-	return &result, err
+	return &result, nil
 }
 
 // OptimiseStore asks the daemon to optimise the Nix store by hard-linking
 // identical files.
 func (c *Client) OptimiseStore(ctx context.Context) error {
-	return c.doOp(ctx, OpOptimiseStore, nil,
-		func(r io.Reader) error {
-			return readAck(r)
-		},
-	)
+	resp, err := c.Execute(ctx, OpOptimiseStore, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+
+	return readAck(resp)
 }
 
 // VerifyStore checks the consistency of the Nix store. If checkContents is
 // true, the contents of each path are verified against their hash. If repair
 // is true, inconsistencies are repaired. Returns true if errors were found.
 func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair bool) (bool, error) {
-	var errorsFound bool
+	var buf bytes.Buffer
 
-	err := c.doOp(ctx, OpVerifyStore,
-		func(w io.Writer) error {
-			if err := wire.WriteBool(w, checkContents); err != nil {
-				return err
-			}
+	if err := wire.WriteBool(&buf, checkContents); err != nil {
+		return false, &ProtocolError{Op: "VerifyStore write request", Err: err}
+	}
 
-			return wire.WriteBool(w, repair)
-		},
-		func(r io.Reader) error {
-			v, err := wire.ReadBool(r)
-			if err != nil {
-				return err
-			}
+	if err := wire.WriteBool(&buf, repair); err != nil {
+		return false, &ProtocolError{Op: "VerifyStore write request", Err: err}
+	}
 
-			errorsFound = v
+	resp, err := c.Execute(ctx, OpVerifyStore, &buf)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Close()
 
-			return nil
-		},
-	)
+	errorsFound, err := wire.ReadBool(resp)
+	if err != nil {
+		return false, &ProtocolError{Op: "VerifyStore read response", Err: err}
+	}
 
-	return errorsFound, err
+	return errorsFound, nil
 }
 
 // SetOptions sends the client build settings to the daemon. This should
 // typically be called once after connecting.
 func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error {
-	return c.doOp(ctx, OpSetOptions,
-		func(w io.Writer) error {
-			return WriteClientSettings(w, settings, c.info.Version)
-		},
-		nil,
-	)
+	var buf bytes.Buffer
+	if err := WriteClientSettings(&buf, settings, c.info.Version); err != nil {
+		return &ProtocolError{Op: "SetOptions write request", Err: err}
+	}
+
+	resp, err := c.Execute(ctx, OpSetOptions, &buf)
+	if err != nil {
+		return err
+	}
+
+	return resp.Close()
 }
 
 // AddMultipleToStore imports multiple store paths into the store in a single
@@ -479,64 +404,38 @@ func (c *Client) AddMultipleToStore(
 		}
 	}
 
-	ow, err := c.DoStreaming(ctx, OpAddMultipleToStore)
-	if err != nil {
-		return err
-	}
+	// structured header (outside framed stream).
+	var hdr bytes.Buffer
 
-	// Write repair and dontCheckSigs flags (outside framed stream).
-	if err := wire.WriteBool(ow, repair); err != nil {
-		ow.Abort()
-
+	if err := wire.WriteBool(&hdr, repair); err != nil {
 		return &ProtocolError{Op: "AddMultipleToStore write repair", Err: err}
 	}
 
-	if err := wire.WriteBool(ow, dontCheckSigs); err != nil {
-		ow.Abort()
-
+	if err := wire.WriteBool(&hdr, dontCheckSigs); err != nil {
 		return &ProtocolError{Op: "AddMultipleToStore write dontCheckSigs", Err: err}
 	}
 
-	// Flush before entering framed mode.
-	if err := ow.Flush(); err != nil {
-		ow.Abort()
+	// build the framed content: count + interleaved PathInfo and NAR data.
+	framedParts := make([]io.Reader, 0, 1+2*len(items))
 
-		return &ProtocolError{Op: "AddMultipleToStore flush", Err: err}
-	}
-
-	// Create a single FramedWriter that wraps all item data.
-	fw := ow.NewFramedWriter()
-
-	// Write count inside the framed stream.
-	if err := wire.WriteUint64(fw, uint64(len(items))); err != nil {
-		ow.Abort()
-
+	var countBuf bytes.Buffer
+	if err := wire.WriteUint64(&countBuf, uint64(len(items))); err != nil {
 		return &ProtocolError{Op: "AddMultipleToStore write count", Err: err}
 	}
 
-	// Write each item: PathInfo + NAR data, all inside the framed stream.
-	for i := range len(items) {
-		if err := WritePathInfo(fw, &items[i].Info, c.info.Version); err != nil {
-			ow.Abort()
+	framedParts = append(framedParts, &countBuf)
 
+	for i := range len(items) {
+		var piBuf bytes.Buffer
+		if err := WritePathInfo(&piBuf, &items[i].Info, c.info.Version); err != nil {
 			return &ProtocolError{Op: "AddMultipleToStore write path info", Err: err}
 		}
 
-		if _, err := io.Copy(fw, items[i].Source); err != nil {
-			ow.Abort()
-
-			return &ProtocolError{Op: "AddMultipleToStore stream NAR", Err: err}
-		}
+		framedParts = append(framedParts, &piBuf, items[i].Source)
 	}
 
-	// Close the framed writer (sends zero-length terminator).
-	if err := fw.Close(); err != nil {
-		ow.Abort()
-
-		return &ProtocolError{Op: "AddMultipleToStore close framed writer", Err: err}
-	}
-
-	resp, err := ow.CloseRequest()
+	resp, err := c.Execute(ctx, OpAddMultipleToStore,
+		io.MultiReader(&hdr, NewFramingReader(io.MultiReader(framedParts...))))
 	if err != nil {
 		return err
 	}

@@ -3,10 +3,10 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/nix-community/go-nix/pkg/wire"
@@ -16,49 +16,21 @@ import (
 var noDeadline time.Time //nolint:gochecknoglobals
 
 // Client connects to a Nix daemon and provides methods to interact with it.
+//
+// Client is not safe for concurrent use. Callers must serialize operations
+// externally if the client is shared across goroutines.
 type Client struct {
-	conn    net.Conn
-	r       io.Reader     // bufio.NewReader(conn)
-	w       *bufio.Writer // bufio.NewWriter(conn)
-	info    *HandshakeInfo
-	logs    chan LogMessage
-	logSink LogSink
-	mu      sync.Mutex // serializes operations
+	conn net.Conn
 
-	closed    atomic.Bool
-	closeOnce sync.Once
-}
+	r io.Reader     // bufio.NewReader(conn)
+	w *bufio.Writer // bufio.NewWriter(conn)
 
-// ConnectOption configures the client.
-type ConnectOption func(*Client)
-
-// WithLogChannel sets the channel that will receive log messages from the
-// daemon. If not set, log messages are silently discarded.
-func WithLogChannel(ch chan LogMessage) ConnectOption {
-	return func(c *Client) {
-		c.logs = ch
-		c.logSink = NewLogChannelSink(ch, nil)
-	}
-}
-
-// WithLogChannelWithDropCounter sets the channel for log messages and
-// increments dropped on each log message dropped due to a full channel.
-func WithLogChannelWithDropCounter(ch chan LogMessage, dropped *atomic.Uint64) ConnectOption {
-	return func(c *Client) {
-		c.logs = ch
-		c.logSink = NewLogChannelSink(ch, dropped)
-	}
-}
-
-// WithLogSink sets a custom sink for log messages.
-func WithLogSink(sink LogSink) ConnectOption {
-	return func(c *Client) {
-		c.logSink = sink
-	}
+	info   *HandshakeInfo
+	closed bool
 }
 
 // Connect dials the Nix daemon Unix socket and performs the handshake.
-func Connect(ctx context.Context, path string, opts ...ConnectOption) (*Client, error) {
+func Connect(ctx context.Context, path string) (*Client, error) {
 	var d net.Dialer
 
 	conn, err := d.DialContext(ctx, "unix", path)
@@ -66,30 +38,34 @@ func Connect(ctx context.Context, path string, opts ...ConnectOption) (*Client, 
 		return nil, &ProtocolError{Op: "connect", Err: err}
 	}
 
-	return newClient(conn, opts...)
+	client := &Client{
+		conn: conn,
+		r:    bufio.NewReader(conn),
+		w:    bufio.NewWriter(conn),
+	}
+
+	info, err := handshakeWithBufIO(client.r, client.w)
+	if err != nil {
+		return nil, err
+	}
+
+	client.info = info
+
+	return client, nil
 }
 
-// Close closes the connection to the daemon.
+// Close closes the connection to the daemon. It is idempotent.
 func (c *Client) Close() error {
-	if c.closed.Load() {
+	if c.closed {
 		return nil
 	}
 
-	var err error
+	c.closed = true
 
-	c.closeOnce.Do(func() {
-		c.closed.Store(true)
-		c.conn.SetDeadline(time.Now()) //nolint:errcheck,gosec // unblock any in-flight I/O
-		err = c.conn.Close()
-	})
+	// unblock any in-flight I/O
+	_ = c.conn.SetDeadline(time.Now())
 
-	return err
-}
-
-// Logs returns a read-only channel of log messages from the daemon. Returns
-// nil if no log channel was configured via WithLogChannel.
-func (c *Client) Logs() <-chan LogMessage {
-	return c.logs
+	return c.conn.Close()
 }
 
 // Info returns the handshake information from the daemon.
@@ -97,38 +73,44 @@ func (c *Client) Info() *HandshakeInfo {
 	return c.info
 }
 
-// lockForCtx acquires the mutex and registers a context cancellation callback
-// that sets a deadline on the connection to break blocked I/O. Returns a
-// cancel function that must be called to deregister the callback and reset the
-// deadline. If the client is closed, returns ErrClosed without locking.
-func (c *Client) lockForCtx(ctx context.Context) (func() bool, error) {
-	c.mu.Lock()
-
-	if c.closed.Load() {
-		c.mu.Unlock()
-
-		return nil, ErrClosed
-	}
-
-	return context.AfterFunc(ctx, func() {
-		c.conn.SetDeadline(time.Now()) //nolint:errcheck,gosec // break blocked I/O
-	}), nil
-}
-
-func (c *Client) checkCtx(ctx context.Context) error {
+// setCancelDeadline validates the context and client state, then registers a context
+// cancellation callback that sets a deadline on the connection to break
+// blocked I/O. Returns a stop function that must be called to deregister
+// the callback and reset the deadline.
+func (c *Client) setCancelDeadline(ctx context.Context) (func() error, error) {
 	if ctx == nil {
-		return ErrNilContext
+		return nil, ErrNilContext
 	}
 
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
-	if c.closed.Load() {
-		return ErrClosed
+	if c.closed {
+		return nil, ErrClosed
 	}
 
-	return nil
+	stop := context.AfterFunc(ctx, func() {
+		// break blocked I/O if the context is cancelled
+		_ = c.conn.SetDeadline(time.Now())
+	})
+
+	cancel := func() error {
+		// remove the AfterFunc callback
+		if stop() {
+			// the callback didn't fire, nothing for us to do
+			return nil
+		}
+
+		// the callback did fire, so we need to reset the deadline on the connection
+		if err := c.conn.SetDeadline(noDeadline); err != nil {
+			return fmt.Errorf("failed to reset deadline: %w", err)
+		}
+
+		return nil
+	}
+
+	return cancel, nil
 }
 
 // requireVersion returns an UnsupportedOperationError if the negotiated
@@ -141,177 +123,52 @@ func (c *Client) requireVersion(op Operation, minVersion uint64) error {
 	return nil
 }
 
-// release deregisters a context cancellation callback and resets the
-// connection deadline. Used on error paths in Do/DoStreaming.
-func (c *Client) release(cancel func() bool) {
-	cancel()
-	c.conn.SetDeadline(noDeadline) //nolint:errcheck,gosec // best-effort reset
-	c.mu.Unlock()
-}
+// Execute executes a simple (non-streaming) operation. It writes the operation
+// code, copies req to the wire (if non-nil), flushes, drains stderr, and
+// returns an OpResponse for reading the reply. The caller must call
+// OpResponse.Close when done, before starting another operation.
+func (c *Client) Execute(
+	ctx context.Context, op Operation, args io.Reader,
+) (resp *OpResponse, err error) {
+	var unsetCancelDeadline func() error
 
-// Do executes a simple (non-streaming) operation. It locks the connection,
-// writes the operation code, copies req to the wire (if non-nil), flushes,
-// drains stderr, and returns an OpResponse for reading the reply. The caller
-// must call OpResponse.Close when done.
-func (c *Client) Do(
-	ctx context.Context, op Operation, req io.Reader,
-) (*OpResponse, error) {
-	if err := c.checkCtx(ctx); err != nil {
-		return nil, err
+	// set a cancel deadline on the connection in the event the context is cancelled
+	// it helps free up any i/o in progress on the connection
+	if unsetCancelDeadline, err = c.setCancelDeadline(ctx); err != nil {
+		return nil, fmt.Errorf("failed to set cancel deadline: %w", err)
 	}
 
-	cancel, err := c.lockForCtx(ctx)
-	if err != nil {
-		return nil, err
-	}
+	// ensure the cancel deadline is removed in the event an error is thrown in this method
+	defer func() {
+		if err == nil {
+			// nothing to do
+			return
+		}
 
-	if err := wire.WriteUint64(c.w, uint64(op)); err != nil {
-		c.release(cancel)
+		if unsetErr := unsetCancelDeadline(); unsetErr != nil {
+			err = errors.Join(err, unsetErr)
+		}
+	}()
 
+	// write the op code
+	if err = wire.WriteUint64(c.w, uint64(op)); err != nil {
 		return nil, &ProtocolError{Op: op.String() + " write op", Err: err}
 	}
 
-	if req != nil {
-		if _, err := io.Copy(c.w, req); err != nil {
-			c.release(cancel)
-
+	if args != nil {
+		if _, err = io.Copy(c.w, args); err != nil {
 			return nil, &ProtocolError{Op: op.String() + " write request", Err: err}
 		}
 	}
 
-	if err := c.w.Flush(); err != nil {
-		c.release(cancel)
-
+	if err = c.w.Flush(); err != nil {
 		return nil, &ProtocolError{Op: op.String() + " flush", Err: err}
 	}
 
-	if err := ProcessStderrWithSink(c.r, c.logSink, c.info.Version); err != nil {
-		c.release(cancel)
-
-		return nil, err
-	}
-
 	return &OpResponse{
-		r:      c.r,
-		conn:   c.conn,
-		mu:     &c.mu,
-		cancel: cancel,
+		r:                   c.r,
+		conn:                c.conn,
+		version:             c.info.Version,
+		unsetCancelDeadline: unsetCancelDeadline,
 	}, nil
-}
-
-// DoStreaming starts a streaming operation. It locks the connection, writes
-// the operation code, and returns an OpWriter for multi-phase request
-// writing. The caller must eventually call OpWriter.CloseRequest or
-// OpWriter.Abort.
-func (c *Client) DoStreaming(
-	ctx context.Context, op Operation,
-) (*OpWriter, error) {
-	if err := c.checkCtx(ctx); err != nil {
-		return nil, err
-	}
-
-	cancel, err := c.lockForCtx(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := wire.WriteUint64(c.w, uint64(op)); err != nil {
-		c.release(cancel)
-
-		return nil, &ProtocolError{Op: op.String() + " write op", Err: err}
-	}
-
-	return &OpWriter{
-		w:       c.w,
-		r:       c.r,
-		conn:    c.conn,
-		mu:      &c.mu,
-		logSink: c.logSink,
-		op:      op,
-		version: c.info.Version,
-		cancel:  cancel,
-	}, nil
-}
-
-// doOp is the internal operation dispatcher. It serializes operations on
-// the connection by holding the mutex for the entire request-response cycle.
-//
-// Sequence:
-//  1. Lock mutex
-//  2. Write operation code (uint64)
-//  3. Call writeReq(c.w) if non-nil
-//  4. Flush the buffered writer
-//  5. Call ProcessStderrWithSink to drain log messages until LogLast
-//  6. Call readResp(c.r) if non-nil
-//  7. Unlock mutex
-//  8. Return any error
-func (c *Client) doOp(
-	ctx context.Context,
-	op Operation,
-	writeReq func(w io.Writer) error,
-	readResp func(r io.Reader) error,
-) error {
-	if err := c.checkCtx(ctx); err != nil {
-		return err
-	}
-
-	cancel, err := c.lockForCtx(ctx)
-	if err != nil {
-		return err
-	}
-	defer c.release(cancel)
-
-	// Write operation code.
-	if err := wire.WriteUint64(c.w, uint64(op)); err != nil {
-		return &ProtocolError{Op: op.String() + " write op", Err: err}
-	}
-
-	// Write request payload.
-	if writeReq != nil {
-		if err := writeReq(c.w); err != nil {
-			return &ProtocolError{Op: op.String() + " write request", Err: err}
-		}
-	}
-
-	// Flush buffered writer.
-	if err := c.w.Flush(); err != nil {
-		return &ProtocolError{Op: op.String() + " flush", Err: err}
-	}
-
-	// Drain stderr log messages until LogLast.
-	if err := ProcessStderrWithSink(c.r, c.logSink, c.info.Version); err != nil {
-		return err
-	}
-
-	// Read response payload.
-	if readResp != nil {
-		if err := readResp(c.r); err != nil {
-			return &ProtocolError{Op: op.String() + " read response", Err: err}
-		}
-	}
-
-	return nil
-}
-
-// newClient creates a Client from an existing connection, applies options,
-// and performs the handshake.
-func newClient(conn net.Conn, opts ...ConnectOption) (*Client, error) {
-	c := &Client{
-		conn: conn,
-		r:    bufio.NewReader(conn),
-		w:    bufio.NewWriter(conn),
-	}
-
-	for _, opt := range opts {
-		opt(c)
-	}
-
-	info, err := handshakeWithBufIO(c.r, c.w)
-	if err != nil {
-		return nil, err
-	}
-
-	c.info = info
-
-	return c, nil
 }

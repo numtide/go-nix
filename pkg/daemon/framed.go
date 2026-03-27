@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 
@@ -174,4 +175,118 @@ func (fw *FramedWriter) flush() error {
 	fw.buf = fw.buf[:0]
 
 	return nil
+}
+
+// FramingReader is the read-side dual of FramedWriter. It reads from a source
+// io.Reader and produces framed wire output: repeated [length(uint64)][data]
+// chunks (up to 32KB each), terminated by a [0(uint64)] frame.
+//
+// This allows callers to compose framed data as an io.Reader for use with
+// io.Copy or io.MultiReader, without needing a FramedWriter + io.Pipe.
+//
+// FramingReader is not safe for concurrent use.
+type FramingReader struct {
+	src     io.Reader
+	buf     [defaultFrameSize]byte // source read buffer
+	header  [8]byte                // frame length header (reused for terminator)
+	state   framingState
+	pos     int // position within current segment (header or data)
+	dataLen int // valid bytes in buf for the current frame
+	srcDone bool
+}
+
+type framingState int
+
+const (
+	framingReady      framingState = iota // need to read from source
+	framingHeader                         // yielding header bytes
+	framingData                           // yielding data bytes
+	framingTerminator                     // yielding zero-length terminator
+	framingDone                           // finished
+)
+
+// NewFramingReader creates a FramingReader that reads from src and produces
+// framed wire output.
+func NewFramingReader(src io.Reader) *FramingReader {
+	return &FramingReader{
+		src:   src,
+		state: framingReady,
+	}
+}
+
+// Read implements io.Reader. Each call yields a portion of the framed wire
+// output: frame headers, frame data, or the zero-length terminator.
+func (fr *FramingReader) Read(p []byte) (int, error) {
+	for {
+		switch fr.state {
+		case framingDone:
+			return 0, io.EOF
+
+		case framingHeader:
+			n := copy(p, fr.header[fr.pos:])
+			fr.pos += n
+
+			if fr.pos == len(fr.header) {
+				fr.state = framingData
+				fr.pos = 0
+			}
+
+			return n, nil
+
+		case framingData:
+			n := copy(p, fr.buf[fr.pos:fr.dataLen])
+			fr.pos += n
+
+			if fr.pos == fr.dataLen {
+				fr.state = framingReady
+			}
+
+			return n, nil
+
+		case framingTerminator:
+			n := copy(p, fr.header[fr.pos:])
+			fr.pos += n
+
+			if fr.pos == len(fr.header) {
+				fr.state = framingDone
+			}
+
+			return n, nil
+
+		case framingReady:
+			if fr.srcDone {
+				binary.LittleEndian.PutUint64(fr.header[:], 0)
+				fr.state = framingTerminator
+				fr.pos = 0
+
+				continue
+			}
+
+			n, err := fr.src.Read(fr.buf[:])
+			if err != nil && err != io.EOF {
+				return 0, err
+			}
+
+			if err == io.EOF {
+				fr.srcDone = true
+			}
+
+			if n > 0 {
+				binary.LittleEndian.PutUint64(fr.header[:], uint64(n))
+				fr.dataLen = n
+				fr.state = framingHeader
+				fr.pos = 0
+
+				continue
+			}
+
+			// Source returned EOF with no data.
+			if fr.srcDone {
+				continue
+			}
+
+			// n == 0 with no error: nothing available yet.
+			return 0, nil
+		}
+	}
 }

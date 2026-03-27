@@ -115,7 +115,7 @@ func TestClientQueryPathInfoNotFound(t *testing.T) {
 	})
 
 	info, err := client.QueryPathInfo(context.Background(), "/nix/store/nonexistent")
-	rq.NoError(err)
+	rq.ErrorIs(err, daemon.ErrNotFound)
 	rq.Nil(info)
 }
 
@@ -159,7 +159,7 @@ func TestClientNarFromPath(t *testing.T) {
 		}
 	})
 
-	rc, err := client.NarFromPath(context.Background(), "/nix/store/abc-test")
+	rc, err := client.NarFromPath(context.Background(), "/nix/store/abc-test", nil)
 	rq.NoError(err)
 
 	// The returned data is the complete NAR including wire formatting.
