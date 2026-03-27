@@ -1,10 +1,10 @@
 package daemon_test
 
 import (
-	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"sync/atomic"
 	"testing"
 
@@ -14,44 +14,43 @@ import (
 )
 
 func TestClientLogForwarding(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	logs := make(chan daemon.LogMessage, 10)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 		// Read op
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 		// Read path
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Send LogNext messages
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
-		_, _ = mock.conn.Write(buf[:])
-		writeWireStringTo(mock.conn, "building...")
+		_, _ = conn.Write(buf[:])
+		writeWireStringTo(conn, "building...")
 
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
-		_, _ = mock.conn.Write(buf[:])
-		writeWireStringTo(mock.conn, "done")
+		_, _ = conn.Write(buf[:])
+		writeWireStringTo(conn, "done")
 
 		// Send LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send result: true
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn, daemon.WithLogChannel(logs))
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
 	assert.NoError(t, err)
 
 	defer client.Close()
 
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	assert.NoError(t, err)
 	assert.True(t, valid)
 
@@ -68,55 +67,54 @@ func TestClientLogForwarding(t *testing.T) {
 }
 
 func TestClientLogStartStopActivity(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	logs := make(chan daemon.LogMessage, 10)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 		// Read IsValidPath op and path
-		_, _ = io.ReadFull(mock.conn, buf[:])
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Send LogStartActivity
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogStartActivity))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 42) // id
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 3) // level (Info)
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 105) // type (ActBuild)
-		_, _ = mock.conn.Write(buf[:])
-		writeWireStringTo(mock.conn, "building /nix/store/abc-test")
+		_, _ = conn.Write(buf[:])
+		writeWireStringTo(conn, "building /nix/store/abc-test")
 		binary.LittleEndian.PutUint64(buf[:], 0) // nrFields
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 0) // parent
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send LogStopActivity
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogStopActivity))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 42) // id
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send result
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn, daemon.WithLogChannel(logs))
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
 	assert.NoError(t, err)
 
 	defer client.Close()
 
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	assert.NoError(t, err)
 	assert.True(t, valid)
 
@@ -133,43 +131,42 @@ func TestClientLogStartStopActivity(t *testing.T) {
 }
 
 func TestClientLogChannelFull(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	logs := make(chan daemon.LogMessage, 1)
 
 	var dropped atomic.Uint64
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 		// Read IsValidPath op and path
-		_, _ = io.ReadFull(mock.conn, buf[:])
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Send 5 LogNext messages
 		for i := range 5 {
 			binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogNext))
-			_, _ = mock.conn.Write(buf[:])
-			writeWireStringTo(mock.conn, fmt.Sprintf("msg %d", i))
+			_, _ = conn.Write(buf[:])
+			writeWireStringTo(conn, fmt.Sprintf("msg %d", i))
 		}
 
 		// Send LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send result
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn, daemon.WithLogChannelWithDropCounter(logs, &dropped))
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannelWithDropCounter(logs, &dropped))
 	assert.NoError(t, err)
 
 	defer client.Close()
 
-	valid, err := client.IsValidPath(context.Background(), "/nix/store/abc-test")
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
 	assert.NoError(t, err)
 	assert.True(t, valid)
 

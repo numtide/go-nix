@@ -24,9 +24,6 @@ var (
 	// ErrNilReader is returned when a required reader is nil.
 	ErrNilReader = errors.New("nil reader")
 
-	// ErrNilConn is returned when a nil connection is provided.
-	ErrNilConn = errors.New("nil connection")
-
 	// ErrNilRealisation is returned when a nil realisation is provided.
 	ErrNilRealisation = errors.New("nil realisation")
 

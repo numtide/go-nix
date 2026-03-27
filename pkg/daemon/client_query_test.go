@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
@@ -14,15 +15,10 @@ import (
 )
 
 func TestClientIsValidPath(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
+	mock.onAccept(respondIsValidPath(true))
 
-	go func() {
-		mock.handshake()
-		mock.respondIsValidPath(true)
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -33,15 +29,10 @@ func TestClientIsValidPath(t *testing.T) {
 }
 
 func TestClientIsValidPathFalse(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
+	mock.onAccept(respondIsValidPath(false))
 
-	go func() {
-		mock.handshake()
-		mock.respondIsValidPath(false)
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -52,8 +43,7 @@ func TestClientIsValidPathFalse(t *testing.T) {
 }
 
 func TestClientQueryPathInfo(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expected := &daemon.PathInfo{
 		StorePath:        "/nix/store/abc-test",
@@ -69,12 +59,9 @@ func TestClientQueryPathInfo(t *testing.T) {
 		CA: "",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryPathInfo(expected)
-	}()
+	mock.onAccept(respondQueryPathInfo(expected))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -94,15 +81,11 @@ func TestClientQueryPathInfo(t *testing.T) {
 }
 
 func TestClientQueryPathInfoNotFound(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryPathInfoNotFound()
-	}()
+	mock.onAccept(respondQueryPathInfoNotFound())
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -113,37 +96,36 @@ func TestClientQueryPathInfoNotFound(t *testing.T) {
 }
 
 func TestClientNarFromPath(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	fileContent := "fake-nar-content-for-testing"
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpNarFromPath), op)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		_, _ = wire.ReadString(conn, 64*1024) // path
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send a valid NAR (raw format, not length-prefixed).
-		writeWireStringTo(mock.conn, "nix-archive-1")
-		writeWireStringTo(mock.conn, "(")
-		writeWireStringTo(mock.conn, "type")
-		writeWireStringTo(mock.conn, "regular")
-		writeWireStringTo(mock.conn, "contents")
-		writeWireStringTo(mock.conn, fileContent)
-		writeWireStringTo(mock.conn, ")")
-	}()
+		writeWireStringTo(conn, "nix-archive-1")
+		writeWireStringTo(conn, "(")
+		writeWireStringTo(conn, "type")
+		writeWireStringTo(conn, "regular")
+		writeWireStringTo(conn, "contents")
+		writeWireStringTo(conn, fileContent)
+		writeWireStringTo(conn, ")")
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -163,28 +145,27 @@ func TestClientNarFromPath(t *testing.T) {
 }
 
 func TestClientFindRoots(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op code
+		_, _ = io.ReadFull(conn, buf[:]) // op code
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Map: count=1
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-		writeWireStringTo(mock.conn, "/proc/1/root")
-		writeWireStringTo(mock.conn, "/nix/store/abc-test")
-	}()
+		_, _ = conn.Write(buf[:])
+		writeWireStringTo(conn, "/proc/1/root")
+		writeWireStringTo(conn, "/nix/store/abc-test")
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -195,8 +176,7 @@ func TestClientFindRoots(t *testing.T) {
 }
 
 func TestClientQueryAllValidPaths(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expected := []string{
 		"/nix/store/aaa-foo",
@@ -204,12 +184,9 @@ func TestClientQueryAllValidPaths(t *testing.T) {
 		"/nix/store/ccc-baz",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryAllValidPaths(expected)
-	}()
+	mock.onAccept(respondQueryAllValidPaths(expected))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -220,8 +197,7 @@ func TestClientQueryAllValidPaths(t *testing.T) {
 }
 
 func TestClientQueryValidPaths(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	queryPaths := []string{
 		"/nix/store/aaa-foo",
@@ -234,12 +210,9 @@ func TestClientQueryValidPaths(t *testing.T) {
 		"/nix/store/bbb-bar",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryValidPaths(validPaths)
-	}()
+	mock.onAccept(respondQueryValidPaths(validPaths))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -250,8 +223,7 @@ func TestClientQueryValidPaths(t *testing.T) {
 }
 
 func TestClientQuerySubstitutablePaths(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	queryPaths := []string{
 		"/nix/store/aaa-foo",
@@ -262,12 +234,9 @@ func TestClientQuerySubstitutablePaths(t *testing.T) {
 		"/nix/store/aaa-foo",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQuerySubstitutablePaths(substitutable)
-	}()
+	mock.onAccept(respondQuerySubstitutablePaths(substitutable))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -278,8 +247,7 @@ func TestClientQuerySubstitutablePaths(t *testing.T) {
 }
 
 func TestClientQuerySubstitutablePathInfos(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expected := map[string]*daemon.SubstitutablePathInfo{
 		"/nix/store/aaa-foo": {
@@ -296,12 +264,9 @@ func TestClientQuerySubstitutablePathInfos(t *testing.T) {
 		},
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQuerySubstitutablePathInfos(expected)
-	}()
+	mock.onAccept(respondQuerySubstitutablePathInfos(expected))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -326,15 +291,11 @@ func TestClientQuerySubstitutablePathInfos(t *testing.T) {
 }
 
 func TestClientQuerySubstitutablePathInfosEmpty(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-		mock.respondQuerySubstitutablePathInfos(map[string]*daemon.SubstitutablePathInfo{})
-	}()
+	mock.onAccept(respondQuerySubstitutablePathInfos(map[string]*daemon.SubstitutablePathInfo{}))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -347,20 +308,16 @@ func TestClientQuerySubstitutablePathInfosEmpty(t *testing.T) {
 }
 
 func TestClientQueryReferrers(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	referrers := []string{
 		"/nix/store/xxx-depends-on-abc",
 		"/nix/store/yyy-also-depends",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryReferrers(referrers)
-	}()
+	mock.onAccept(respondQueryReferrers(referrers))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -371,20 +328,16 @@ func TestClientQueryReferrers(t *testing.T) {
 }
 
 func TestClientQueryValidDerivers(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	derivers := []string{
 		"/nix/store/abc-test.drv",
 		"/nix/store/def-test.drv",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryValidDerivers(derivers)
-	}()
+	mock.onAccept(respondQueryValidDerivers(derivers))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -395,8 +348,7 @@ func TestClientQueryValidDerivers(t *testing.T) {
 }
 
 func TestClientQueryDerivationOutputMap(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	outputs := map[string]string{
 		"out": "/nix/store/abc-test",
@@ -404,12 +356,9 @@ func TestClientQueryDerivationOutputMap(t *testing.T) {
 		"lib": "/nix/store/abc-test-lib",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryDerivationOutputMap(outputs)
-	}()
+	mock.onAccept(respondQueryDerivationOutputMap(outputs))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -420,8 +369,7 @@ func TestClientQueryDerivationOutputMap(t *testing.T) {
 }
 
 func TestClientQueryMissing(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expected := &daemon.MissingInfo{
 		WillBuild:      []string{"/nix/store/aaa-needs-build.drv"},
@@ -431,12 +379,9 @@ func TestClientQueryMissing(t *testing.T) {
 		NarSize:        2097152,
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryMissing(expected)
-	}()
+	mock.onAccept(respondQueryMissing(expected))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -455,17 +400,13 @@ func TestClientQueryMissing(t *testing.T) {
 }
 
 func TestClientQueryPathFromHashPart(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expectedPath := "/nix/store/abc123-test"
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryPathFromHashPart(expectedPath)
-	}()
+	mock.onAccept(respondQueryPathFromHashPart(expectedPath))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -476,19 +417,15 @@ func TestClientQueryPathFromHashPart(t *testing.T) {
 }
 
 func TestClientQueryRealisation(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	realisations := []string{
 		`{"id":"sha256:abc!out","outPath":"/nix/store/abc-out","signatures":["mykey:c2ln"],"dependentRealisations":{}}`,
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondQueryRealisation(realisations)
-	}()
+	mock.onAccept(respondQueryRealisation(realisations))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -504,14 +441,9 @@ func TestClientQueryRealisation(t *testing.T) {
 // Version-specific query tests
 
 func TestQueryDerivationOutputMapUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -522,14 +454,9 @@ func TestQueryDerivationOutputMapUnsupportedVersion(t *testing.T) {
 }
 
 func TestQueryMissingUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -540,14 +467,9 @@ func TestQueryMissingUnsupportedVersion(t *testing.T) {
 }
 
 func TestQueryRealisationUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -569,57 +491,56 @@ func TestQueryRealisationUnsupportedVersion(t *testing.T) {
 // through the client. This test instead verifies QueryPathInfo works correctly
 // at MinProtocolVersion with a lower-version mock daemon.
 func TestClientQueryPathInfoProto123(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
 		// Read op code
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpQueryPathInfo), op)
 
 		// Read path string
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Send LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send found = true
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send PathInfo fields
-		writeWireStringTo(mock.conn, "/nix/store/xyz-test.drv") // deriver
-		writeWireStringTo(mock.conn, "sha256:abc123")           // narHash
+		writeWireStringTo(conn, "/nix/store/xyz-test.drv") // deriver
+		writeWireStringTo(conn, "sha256:abc123")           // narHash
 
 		// references: count=1
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-		writeWireStringTo(mock.conn, "/nix/store/dep-one")
+		_, _ = conn.Write(buf[:])
+		writeWireStringTo(conn, "/nix/store/dep-one")
 
 		binary.LittleEndian.PutUint64(buf[:], 1700000000) // registrationTime
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		binary.LittleEndian.PutUint64(buf[:], 54321) // narSize
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Proto 1.23 >= 1.16, so we DO send ultimate/sigs/ca
 		binary.LittleEndian.PutUint64(buf[:], 0) // ultimate = false
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// sigs: count=0
 		binary.LittleEndian.PutUint64(buf[:], 0)
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
-		writeWireStringTo(mock.conn, "") // ca = ""
-	}()
+		writeWireStringTo(conn, "") // ca = ""
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -647,8 +568,7 @@ func TestClientQueryPathInfoProto123(t *testing.T) {
 // substituteOk field is NOT sent on the wire, so the mock must NOT try
 // to read it.
 func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
 
 	queryPaths := []string{
 		"/nix/store/aaa-foo",
@@ -659,41 +579,41 @@ func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
 		"/nix/store/aaa-foo",
 	}
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
 		// Read op code
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpQueryValidPaths), op)
 
 		// Read paths list: count + strings
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 		count := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(2), count)
 
 		for range count {
-			_, _ = wire.ReadString(mock.conn, 64*1024)
+			_, _ = wire.ReadString(conn, 64*1024)
 		}
 
 		// DO NOT read substituteOk — proto 1.21 < 1.27
 
 		// Send LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send result paths: count + strings
 		binary.LittleEndian.PutUint64(buf[:], uint64(len(validResult)))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		for _, p := range validResult {
-			writeWireStringTo(mock.conn, p)
+			writeWireStringTo(conn, p)
 		}
-	}()
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -708,8 +628,7 @@ func TestClientQueryValidPathsPreSubstituteOk(t *testing.T) {
 // Error tests for query operations
 
 func TestClientIsValidPathDaemonError(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expectedErr := &daemon.Error{
 		Type:    "Error",
@@ -718,14 +637,11 @@ func TestClientIsValidPathDaemonError(t *testing.T) {
 		Message: "path '/nix/store/xxx-invalid' is not valid",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondWithError(daemon.OpIsValidPath, func() {
-			_, _ = wire.ReadString(mock.conn, 64*1024) // path
-		}, expectedErr)
-	}()
+	mock.onAccept(respondWithError(daemon.OpIsValidPath, func(conn net.Conn) {
+		_, _ = wire.ReadString(conn, 64*1024) // path
+	}, expectedErr))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -740,8 +656,7 @@ func TestClientIsValidPathDaemonError(t *testing.T) {
 }
 
 func TestClientQueryPathInfoDaemonError(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expectedErr := &daemon.Error{
 		Type:    "Error",
@@ -750,14 +665,11 @@ func TestClientQueryPathInfoDaemonError(t *testing.T) {
 		Message: "path '/nix/store/yyy-broken' is corrupted",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondWithError(daemon.OpQueryPathInfo, func() {
-			_, _ = wire.ReadString(mock.conn, 64*1024) // path
-		}, expectedErr)
-	}()
+	mock.onAccept(respondWithError(daemon.OpQueryPathInfo, func(conn net.Conn) {
+		_, _ = wire.ReadString(conn, 64*1024) // path
+	}, expectedErr))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()

@@ -962,7 +962,6 @@ func TestIntegrationStructuredErrorBuildDerivation(t *testing.T) {
 		drv,
 		daemon.BuildModeNormal,
 	)
-
 	if err != nil {
 		// Some daemon configurations return a protocol-level error.
 		var de *daemon.Error

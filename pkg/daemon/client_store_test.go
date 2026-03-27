@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"net"
 	"strings"
 	"testing"
 
@@ -14,8 +15,7 @@ import (
 )
 
 func TestClientAddToStore(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	dumpData := []byte("fake-nar-content-for-testing")
 
@@ -31,12 +31,9 @@ func TestClientAddToStore(t *testing.T) {
 		CA:               "fixed:r:sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondAddToStore(expected)
-	}()
+	mock.onAccept(respondAddToStore(expected))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -63,14 +60,9 @@ func TestClientAddToStore(t *testing.T) {
 }
 
 func TestAddToStoreUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -118,30 +110,29 @@ func TestAddBuildLogNilReader(t *testing.T) {
 }
 
 func TestClientAddTempRoot(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddTempRoot), op)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		_, _ = wire.ReadString(conn, 64*1024) // path
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// uint64(1) acknowledgment
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -151,30 +142,29 @@ func TestClientAddTempRoot(t *testing.T) {
 }
 
 func TestClientAddIndirectRoot(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddIndirectRoot), op)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		_, _ = wire.ReadString(conn, 64*1024) // path
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// uint64(1) acknowledgment
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -184,30 +174,29 @@ func TestClientAddIndirectRoot(t *testing.T) {
 }
 
 func TestClientAddPermRoot(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddPermRoot), op)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // storePath
-		_, _ = wire.ReadString(mock.conn, 64*1024) // gcRoot
+		_, _ = wire.ReadString(conn, 64*1024) // storePath
+		_, _ = wire.ReadString(conn, 64*1024) // gcRoot
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Response: result path string
-		writeWireStringTo(mock.conn, "/nix/var/nix/gcroots/auto/abc")
-	}()
+		writeWireStringTo(conn, "/nix/var/nix/gcroots/auto/abc")
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -218,38 +207,37 @@ func TestClientAddPermRoot(t *testing.T) {
 }
 
 func TestClientAddSignatures(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddSignatures), op)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		_, _ = wire.ReadString(conn, 64*1024) // path
 
 		// Read sigs: count + strings
-		_, _ = io.ReadFull(mock.conn, buf[:]) // count
+		_, _ = io.ReadFull(conn, buf[:]) // count
 		count := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(2), count)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // sig 1
-		_, _ = wire.ReadString(mock.conn, 64*1024) // sig 2
+		_, _ = wire.ReadString(conn, 64*1024) // sig 1
+		_, _ = wire.ReadString(conn, 64*1024) // sig 2
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// uint64(1) acknowledgment
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -259,26 +247,25 @@ func TestClientAddSignatures(t *testing.T) {
 }
 
 func TestClientRegisterDrvOutput(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpRegisterDrvOutput), op)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // realisation
+		_, _ = wire.ReadString(conn, 64*1024) // realisation
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -291,8 +278,7 @@ func TestClientRegisterDrvOutput(t *testing.T) {
 }
 
 func TestClientAddToStoreNar(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	narData := []byte("fake-nar-content-for-testing")
 
@@ -305,45 +291,45 @@ func TestClientAddToStoreNar(t *testing.T) {
 		Sigs:       []string{},
 	}
 
-	go func() {
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		mock.handshake()
-
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddToStoreNar), op)
 
 		// Read PathInfo: storePath, deriver, narHash, refs, regTime, narSize, ultimate, sigs, ca
-		_, _ = wire.ReadString(mock.conn, 64*1024) // storePath
-		_, _ = wire.ReadString(mock.conn, 64*1024) // deriver
-		_, _ = wire.ReadString(mock.conn, 64*1024) // narHash
+		_, _ = wire.ReadString(conn, 64*1024) // storePath
+		_, _ = wire.ReadString(conn, 64*1024) // deriver
+		_, _ = wire.ReadString(conn, 64*1024) // narHash
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // refs count = 0
+		_, _ = io.ReadFull(conn, buf[:]) // refs count = 0
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // registrationTime
-		_, _ = io.ReadFull(mock.conn, buf[:]) // narSize
-		_, _ = io.ReadFull(mock.conn, buf[:]) // ultimate
+		_, _ = io.ReadFull(conn, buf[:]) // registrationTime
+		_, _ = io.ReadFull(conn, buf[:]) // narSize
+		_, _ = io.ReadFull(conn, buf[:]) // ultimate
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // sigs count = 0
+		_, _ = io.ReadFull(conn, buf[:]) // sigs count = 0
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // ca
+		_, _ = wire.ReadString(conn, 64*1024) // ca
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // repair
-		_, _ = io.ReadFull(mock.conn, buf[:]) // dontCheckSigs
+		_, _ = io.ReadFull(conn, buf[:]) // repair
+		_, _ = io.ReadFull(conn, buf[:]) // dontCheckSigs
 
 		// Read framed NAR data (no padding in framed protocol)
-		fr := daemon.NewFramedReader(mock.conn)
+		fr := daemon.NewFramedReader(conn)
 		received, err := io.ReadAll(fr)
 		assert.NoError(t, err)
 		assert.Equal(t, narData, received)
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -353,39 +339,38 @@ func TestClientAddToStoreNar(t *testing.T) {
 }
 
 func TestClientAddBuildLog(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	logContent := "building '/nix/store/00000000000000000000000000000000-test.drv'...\nok\n"
 
-	go func() {
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		mock.handshake()
-
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddBuildLog), op)
 
-		drvPath, _ := wire.ReadString(mock.conn, 64*1024) // drvPath (BaseStorePath)
+		drvPath, _ := wire.ReadString(conn, 64*1024) // drvPath (BaseStorePath)
 		assert.Equal(t, "00000000000000000000000000000000-test.drv", drvPath)
 
 		// Read framed log data (no padding in framed protocol)
-		fr := daemon.NewFramedReader(mock.conn)
+		fr := daemon.NewFramedReader(conn)
 		received, err := io.ReadAll(fr)
 		assert.NoError(t, err)
 		assert.Equal(t, logContent, string(received))
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// uint64(1) acknowledgment
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -395,14 +380,9 @@ func TestClientAddBuildLog(t *testing.T) {
 }
 
 func TestClientAddBuildLogInvalidPath(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -412,8 +392,7 @@ func TestClientAddBuildLogInvalidPath(t *testing.T) {
 }
 
 func TestClientAddMultipleToStore(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	narData1 := []byte("nar-content-one")
 	narData2 := []byte("nar-content-two")
@@ -443,23 +422,21 @@ func TestClientAddMultipleToStore(t *testing.T) {
 		},
 	}
 
-	go func() {
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		mock.handshake()
-
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // repair
+		_, _ = io.ReadFull(conn, buf[:]) // repair
 		assert.Equal(t, uint64(1), binary.LittleEndian.Uint64(buf[:]))
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // dontCheckSigs
+		_, _ = io.ReadFull(conn, buf[:]) // dontCheckSigs
 		assert.Equal(t, uint64(0), binary.LittleEndian.Uint64(buf[:]))
 
 		// Read all framed data into a buffer.
-		fr := daemon.NewFramedReader(mock.conn)
+		fr := daemon.NewFramedReader(conn)
 		framedData, err := io.ReadAll(fr)
 		assert.NoError(t, err)
 
@@ -512,10 +489,12 @@ func TestClientAddMultipleToStore(t *testing.T) {
 
 		// LogLast.
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -525,27 +504,24 @@ func TestClientAddMultipleToStore(t *testing.T) {
 }
 
 func TestClientAddMultipleToStoreEmpty(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		mock.handshake()
-
 		// Read op code.
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
 
 		// Read repair.
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 
 		// Read dontCheckSigs.
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 
 		// Read all framed data into a buffer.
-		fr := daemon.NewFramedReader(mock.conn)
+		fr := daemon.NewFramedReader(conn)
 		framedData, err := io.ReadAll(fr)
 		assert.NoError(t, err)
 
@@ -559,10 +535,12 @@ func TestClientAddMultipleToStoreEmpty(t *testing.T) {
 
 		// Send LogLast.
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -572,15 +550,11 @@ func TestClientAddMultipleToStoreEmpty(t *testing.T) {
 }
 
 func TestClientSetOptions(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-		mock.respondSetOptions()
-	}()
+	mock.onAccept(respondSetOptions())
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -605,8 +579,7 @@ func TestClientSetOptions(t *testing.T) {
 }
 
 func TestClientCollectGarbage(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expected := &daemon.GCResult{
 		Paths: []string{
@@ -616,12 +589,9 @@ func TestClientCollectGarbage(t *testing.T) {
 		BytesFreed: 5242880,
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondCollectGarbage(expected)
-	}()
+	mock.onAccept(respondCollectGarbage(expected))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -640,15 +610,11 @@ func TestClientCollectGarbage(t *testing.T) {
 }
 
 func TestClientVerifyStore(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-		mock.respondVerifyStore(true)
-	}()
+	mock.onAccept(respondVerifyStore(true))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -659,15 +625,11 @@ func TestClientVerifyStore(t *testing.T) {
 }
 
 func TestClientOptimiseStore(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-		mock.respondOptimiseStore()
-	}()
+	mock.onAccept(respondOptimiseStore())
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -679,14 +641,9 @@ func TestClientOptimiseStore(t *testing.T) {
 // Version-specific store tests
 
 func TestAddBuildLogUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -697,14 +654,9 @@ func TestAddBuildLogUnsupportedVersion(t *testing.T) {
 }
 
 func TestAddMultipleToStoreUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -715,14 +667,9 @@ func TestAddMultipleToStoreUnsupportedVersion(t *testing.T) {
 }
 
 func TestAddPermRootUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -733,14 +680,9 @@ func TestAddPermRootUnsupportedVersion(t *testing.T) {
 }
 
 func TestRegisterDrvOutputUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -758,15 +700,11 @@ func TestRegisterDrvOutputUnsupportedVersion(t *testing.T) {
 // settings that include an overrides map. This confirms that at
 // MinProtocolVersion, overrides ARE always sent on the wire.
 func TestClientSetOptionsProto123(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
 
-	go func() {
-		mock.handshake()
-		mock.respondSetOptions()
-	}()
+	mock.onAccept(respondSetOptions())
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()

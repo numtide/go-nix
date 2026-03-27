@@ -58,29 +58,12 @@ func WithLogSink(sink LogSink) ConnectOption {
 }
 
 // Connect dials the Nix daemon Unix socket and performs the handshake.
-func Connect(socketPath string, opts ...ConnectOption) (*Client, error) {
+func Connect(ctx context.Context, path string, opts ...ConnectOption) (*Client, error) {
 	var d net.Dialer
 
-	conn, err := d.DialContext(context.Background(), "unix", socketPath)
+	conn, err := d.DialContext(ctx, "unix", path)
 	if err != nil {
 		return nil, &ProtocolError{Op: "connect", Err: err}
-	}
-
-	client, err := newClient(conn, opts...)
-	if err != nil {
-		_ = conn.Close()
-
-		return nil, err
-	}
-
-	return client, nil
-}
-
-// NewClientFromConn creates a client from an existing net.Conn (useful for
-// testing with net.Pipe).
-func NewClientFromConn(conn net.Conn, opts ...ConnectOption) (*Client, error) {
-	if conn == nil {
-		return nil, ErrNilConn
 	}
 
 	return newClient(conn, opts...)

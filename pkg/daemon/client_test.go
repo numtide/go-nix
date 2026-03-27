@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"sort"
 	"testing"
 	"time"
@@ -16,31 +18,41 @@ import (
 )
 
 func TestClientConnectWrongMagic(t *testing.T) {
-	server, clientConn := net.Pipe()
-	defer server.Close()
-	defer clientConn.Close()
+	sock := filepath.Join(t.TempDir(), "daemon.sock")
+
+	listenCfg := net.ListenConfig{}
+
+	ln, err := listenCfg.Listen(t.Context(), "unix", sock)
+	assert.NoError(t, err)
+
+	defer ln.Close()
 
 	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
 		var buf [8]byte
 
-		_, _ = io.ReadFull(server, buf[:]) // read client magic
+		_, _ = io.ReadFull(conn, buf[:]) // read client magic
 		binary.LittleEndian.PutUint64(buf[:], 0xdeadbeef)
-		_, _ = server.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 	}()
 
-	_, err := daemon.NewClientFromConn(clientConn)
+	_, err = daemon.Connect(t.Context(), sock)
 	assert.Error(t, err)
+
+	// Clean up the socket file to avoid TempDir cleanup warnings on some
+	// platforms where the listener does not unlink automatically.
+	_ = os.Remove(sock)
 }
 
 func TestClientConnect(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -49,20 +61,15 @@ func TestClientConnect(t *testing.T) {
 	assert.Equal(t, "nix (Nix) 2.24.0", client.Info().DaemonNixVersion)
 }
 
-func TestNewClientFromConnNil(t *testing.T) {
-	_, err := daemon.NewClientFromConn(nil)
-	assert.ErrorIs(t, err, daemon.ErrNilConn)
+func TestConnectInvalidPath(t *testing.T) {
+	_, err := daemon.Connect(t.Context(), "/nonexistent/daemon.sock")
+	assert.Error(t, err)
 }
 
 func TestClientNilContext(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -74,14 +81,9 @@ func TestClientNilContext(t *testing.T) {
 }
 
 func TestClientClosed(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	assert.NoError(t, client.Close())
@@ -91,14 +93,9 @@ func TestClientClosed(t *testing.T) {
 }
 
 func TestClientCloseIdempotent(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	assert.NoError(t, client.Close())
@@ -106,16 +103,11 @@ func TestClientCloseIdempotent(t *testing.T) {
 }
 
 func TestClientWithLogChannel(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	logs := make(chan daemon.LogMessage, 10)
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn, daemon.WithLogChannel(logs))
+	client, err := daemon.Connect(t.Context(), mock.path, daemon.WithLogChannel(logs))
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -124,14 +116,9 @@ func TestClientWithLogChannel(t *testing.T) {
 }
 
 func TestClientLogsNilByDefault(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -143,8 +130,7 @@ func TestClientLogsNilByDefault(t *testing.T) {
 // the same mock connection to verify the client properly releases the mutex
 // and resets the connection state between operations.
 func TestClientSequentialOperations(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expectedInfo := &daemon.PathInfo{
 		StorePath:        "/nix/store/abc-test",
@@ -166,15 +152,14 @@ func TestClientSequentialOperations(t *testing.T) {
 		"/nix/store/ccc-third",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondIsValidPath(true)
-		mock.respondQueryPathInfo(expectedInfo)
-		mock.respondIsValidPath(false)
-		mock.respondQueryAllValidPaths(expectedPaths)
-	}()
+	mock.onAccept(
+		respondIsValidPath(true),
+		respondQueryPathInfo(expectedInfo),
+		respondIsValidPath(false),
+		respondQueryAllValidPaths(expectedPaths),
+	)
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -218,8 +203,7 @@ func TestClientSequentialOperations(t *testing.T) {
 // terminates the stderr loop (no trailing LogLast), the next operation
 // starts cleanly from the new op code.
 func TestClientOperationAfterError(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	daemonErr := &daemon.Error{
 		Type:    "Error",
@@ -228,19 +212,16 @@ func TestClientOperationAfterError(t *testing.T) {
 		Message: "path '/nix/store/bad-path' is not valid",
 	}
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(
 		// First operation: respond with error
-		mock.respondWithError(daemon.OpIsValidPath, func() {
-			_, _ = wire.ReadString(mock.conn, 64*1024) // drain path
-		}, daemonErr)
-
+		respondWithError(daemon.OpIsValidPath, func(conn net.Conn) {
+			_, _ = wire.ReadString(conn, 64*1024) // drain path
+		}, daemonErr),
 		// Second operation: respond successfully
-		mock.respondIsValidPath(true)
-	}()
+		respondIsValidPath(true),
+	)
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -260,8 +241,7 @@ func TestClientOperationAfterError(t *testing.T) {
 }
 
 func TestClientDaemonErrorWithTraces(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expectedErr := &daemon.Error{
 		Type:    "Error",
@@ -274,14 +254,11 @@ func TestClientDaemonErrorWithTraces(t *testing.T) {
 		},
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondWithError(daemon.OpIsValidPath, func() {
-			_, _ = wire.ReadString(mock.conn, 64*1024) // path
-		}, expectedErr)
-	}()
+	mock.onAccept(respondWithError(daemon.OpIsValidPath, func(conn net.Conn) {
+		_, _ = wire.ReadString(conn, 64*1024) // path
+	}, expectedErr))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
@@ -304,28 +281,25 @@ func TestClientDaemonErrorWithTraces(t *testing.T) {
 // TestClientContextCancellation verifies that cancelling a context unblocks
 // a pending operation and that the client remains usable for subsequent ops.
 func TestClientContextCancellation(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
-
-		mock.handshake()
 
 		// First op: read the op code and path, then stall — never send
 		// a response. The client's context cancellation should unblock it.
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op code
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:]) // op code
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Wait for the client to observe the cancellation and release
 		// the mutex, then drain any leftover bytes from the cancelled op.
 		time.Sleep(50 * time.Millisecond)
 
 		// Second op: respond normally to prove the client recovered.
-		mock.respondIsValidPath(true)
-	}()
+		return respondIsValidPath(true)(conn)
+	})
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()

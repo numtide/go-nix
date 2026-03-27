@@ -1,10 +1,10 @@
 package daemon_test
 
 import (
-	"context"
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
@@ -15,139 +15,136 @@ import (
 func TestBuildDerivationNil(t *testing.T) {
 	client := &daemon.Client{}
 
-	_, err := client.BuildDerivation(context.Background(), "/nix/store/abc.drv", nil, daemon.BuildModeNormal)
+	_, err := client.BuildDerivation(t.Context(), "/nix/store/abc.drv", nil, daemon.BuildModeNormal)
 	assert.ErrorIs(t, err, daemon.ErrNilDerivation)
 }
 
 func TestClientBuildPaths(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpBuildPaths), op)
 
 		// Read paths (count + strings)
-		_, _ = io.ReadFull(mock.conn, buf[:])      // count = 1
-		_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		_, _ = io.ReadFull(conn, buf[:])      // count = 1
+		_, _ = wire.ReadString(conn, 64*1024) // path
 
 		// Read build mode
-		_, _ = io.ReadFull(mock.conn, buf[:]) // mode
+		_, _ = io.ReadFull(conn, buf[:]) // mode
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Response: uint64(1)
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
 
-	err = client.BuildPaths(context.Background(), []string{"/nix/store/abc-test.drv"}, daemon.BuildModeNormal)
+	err = client.BuildPaths(t.Context(), []string{"/nix/store/abc-test.drv"}, daemon.BuildModeNormal)
 	assert.NoError(t, err)
 }
 
 func TestClientEnsurePath(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpEnsurePath), op)
 
-		_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		_, _ = wire.ReadString(conn, 64*1024) // path
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Response: uint64(1)
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
 
-	err = client.EnsurePath(context.Background(), "/nix/store/abc-test")
+	err = client.EnsurePath(t.Context(), "/nix/store/abc-test")
 	assert.NoError(t, err)
 }
 
 func TestClientBuildPathsWithResults(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpBuildPathsWithResults), op)
 
 		// Read paths (count + strings)
-		_, _ = io.ReadFull(mock.conn, buf[:])      // count = 1
-		_, _ = wire.ReadString(mock.conn, 64*1024) // path
+		_, _ = io.ReadFull(conn, buf[:])      // count = 1
+		_, _ = wire.ReadString(conn, 64*1024) // path
 
 		// Read build mode
-		_, _ = io.ReadFull(mock.conn, buf[:]) // mode
+		_, _ = io.ReadFull(conn, buf[:]) // mode
 
 		// LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Response: count of results = 1
 		binary.LittleEndian.PutUint64(buf[:], 1)
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// DerivedPath string (ignored by client)
-		writeWireStringTo(mock.conn, "/nix/store/abc-test.drv!out")
+		writeWireStringTo(conn, "/nix/store/abc-test.drv!out")
 
 		// BuildResult fields
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.BuildStatusBuilt)) // status
-		_, _ = mock.conn.Write(buf[:])
-		writeWireStringTo(mock.conn, "")         // errorMsg
+		_, _ = conn.Write(buf[:])
+		writeWireStringTo(conn, "")              // errorMsg
 		binary.LittleEndian.PutUint64(buf[:], 1) // timesBuilt
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 0) // isNonDeterministic
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 1700000000) // startTime
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 1700000060) // stopTime
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 0) // cpuUser: None
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 0) // cpuSystem: None
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 0) // builtOutputs count
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
 
 	results, err := client.BuildPathsWithResults(
-		context.Background(),
+		t.Context(),
 		[]string{"/nix/store/abc-test.drv!out"},
 		daemon.BuildModeNormal,
 	)
@@ -162,8 +159,7 @@ func TestClientBuildPathsWithResults(t *testing.T) {
 }
 
 func TestClientBuildDerivation(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	drv := &daemon.BasicDerivation{
 		Outputs: map[string]daemon.DerivationOutput{
@@ -176,88 +172,88 @@ func TestClientBuildDerivation(t *testing.T) {
 		Env:      map[string]string{"out": "/nix/store/abc-out"},
 	}
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
-		_, _ = io.ReadFull(mock.conn, buf[:]) // op
+		_, _ = io.ReadFull(conn, buf[:]) // op
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpBuildDerivation), op)
 
 		// Read drvPath
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read outputs count
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 		count := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(1), count)
 
 		// Read output: name, path, hashAlgo, hash
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read inputs count + paths
-		_, _ = io.ReadFull(mock.conn, buf[:])
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read platform, builder
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read args count + args
-		_, _ = io.ReadFull(mock.conn, buf[:])
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read env count + entries
-		_, _ = io.ReadFull(mock.conn, buf[:])
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read build mode
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 
 		// Send LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send BuildResult: status=Built(0), errorMsg="", timesBuilt=1,
 		// isNonDeterministic=false, startTime=100, stopTime=200, builtOutputs count=0
 		binary.LittleEndian.PutUint64(buf[:], 0) // Built
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
-		writeWireStringTo(mock.conn, "") // errorMsg
+		writeWireStringTo(conn, "") // errorMsg
 
 		binary.LittleEndian.PutUint64(buf[:], 1) // timesBuilt
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		binary.LittleEndian.PutUint64(buf[:], 0) // isNonDeterministic
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		binary.LittleEndian.PutUint64(buf[:], 100) // startTime
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		binary.LittleEndian.PutUint64(buf[:], 200) // stopTime
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		binary.LittleEndian.PutUint64(buf[:], 0) // cpuUser: None
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 		binary.LittleEndian.PutUint64(buf[:], 0) // cpuSystem: None
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		binary.LittleEndian.PutUint64(buf[:], 0) // builtOutputs count
-		_, _ = mock.conn.Write(buf[:])
-	}()
+		_, _ = conn.Write(buf[:])
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
 
-	result, err := client.BuildDerivation(context.Background(), "/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
+	result, err := client.BuildDerivation(t.Context(), "/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
 	assert.NoError(t, err)
 	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
 	assert.Equal(t, uint64(1), result.TimesBuilt)
@@ -268,19 +264,14 @@ func TestClientBuildDerivation(t *testing.T) {
 // Version-specific build tests
 
 func TestBuildPathsWithResultsUnsupportedVersion(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	go func() {
-		mock.handshake()
-	}()
-
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
 
-	_, err = client.BuildPathsWithResults(context.Background(), []string{"/nix/store/abc.drv!out"}, daemon.BuildModeNormal)
+	_, err = client.BuildPathsWithResults(t.Context(), []string{"/nix/store/abc.drv!out"}, daemon.BuildModeNormal)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, daemon.ErrUnsupportedOperation)
 }
@@ -290,8 +281,7 @@ func TestBuildPathsWithResultsUnsupportedVersion(t *testing.T) {
 // fields (proto < 1.29), CPU times (proto < 1.37), and builtOutputs
 // (proto < 1.28). The mock sends only status + errorMsg.
 func TestClientBuildDerivationProto127(t *testing.T) {
-	mock, clientConn := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-	defer mock.conn.Close()
+	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
 	drv := &daemon.BasicDerivation{
 		Outputs: map[string]daemon.DerivationOutput{
@@ -304,71 +294,71 @@ func TestClientBuildDerivationProto127(t *testing.T) {
 		Env:      map[string]string{"out": "/nix/store/abc-out"},
 	}
 
-	go func() {
-		mock.handshake()
-
+	mock.onAccept(func(conn net.Conn) error {
 		var buf [8]byte
 
 		// Read op code
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 		op := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(daemon.OpBuildDerivation), op)
 
 		// Read drvPath
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read outputs count
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 		count := binary.LittleEndian.Uint64(buf[:])
 		assert.Equal(t, uint64(1), count)
 
 		// Read output: name, path, hashAlgo, hash
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read inputs count + paths
-		_, _ = io.ReadFull(mock.conn, buf[:])
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read platform, builder
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read args count + args
-		_, _ = io.ReadFull(mock.conn, buf[:])
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read env count + entries
-		_, _ = io.ReadFull(mock.conn, buf[:])
-		_, _ = wire.ReadString(mock.conn, 64*1024)
-		_, _ = wire.ReadString(mock.conn, 64*1024)
+		_, _ = io.ReadFull(conn, buf[:])
+		_, _ = wire.ReadString(conn, 64*1024)
+		_, _ = wire.ReadString(conn, 64*1024)
 
 		// Read build mode
-		_, _ = io.ReadFull(mock.conn, buf[:])
+		_, _ = io.ReadFull(conn, buf[:])
 
 		// Send LogLast
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.LogLast))
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
 		// Send BuildResult for proto 1.27:
 		// Only status + errorMsg. No timing fields, no CPU times, no builtOutputs.
 		binary.LittleEndian.PutUint64(buf[:], uint64(daemon.BuildStatusBuilt)) // status
-		_, _ = mock.conn.Write(buf[:])
+		_, _ = conn.Write(buf[:])
 
-		writeWireStringTo(mock.conn, "") // errorMsg
-	}()
+		writeWireStringTo(conn, "") // errorMsg
 
-	client, err := daemon.NewClientFromConn(clientConn)
+		return nil
+	})
+
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
 
 	assert.Equal(t, daemon.ProtoVersion(1, 27), client.Info().Version)
 
-	result, err := client.BuildDerivation(context.Background(), "/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
+	result, err := client.BuildDerivation(t.Context(), "/nix/store/xyz-test.drv", drv, daemon.BuildModeNormal)
 	assert.NoError(t, err)
 	assert.Equal(t, daemon.BuildStatusBuilt, result.Status)
 	assert.Equal(t, "", result.ErrorMsg)
@@ -384,8 +374,7 @@ func TestClientBuildDerivationProto127(t *testing.T) {
 // Error tests for build operations
 
 func TestClientBuildPathsDaemonError(t *testing.T) {
-	mock, clientConn := newMockDaemon(t)
-	defer mock.conn.Close()
+	mock := newMockDaemon(t)
 
 	expectedErr := &daemon.Error{
 		Type:    "Error",
@@ -394,28 +383,25 @@ func TestClientBuildPathsDaemonError(t *testing.T) {
 		Message: "build of '/nix/store/zzz-fail.drv' failed",
 	}
 
-	go func() {
-		mock.handshake()
-		mock.respondWithError(daemon.OpBuildPaths, func() {
-			var buf [8]byte
-			// Read count + path strings
-			_, _ = io.ReadFull(mock.conn, buf[:]) // count
+	mock.onAccept(respondWithError(daemon.OpBuildPaths, func(conn net.Conn) {
+		var buf [8]byte
+		// Read count + path strings
+		_, _ = io.ReadFull(conn, buf[:]) // count
 
-			count := binary.LittleEndian.Uint64(buf[:])
-			for range count {
-				_, _ = wire.ReadString(mock.conn, 64*1024)
-			}
-			// Read build mode
-			_, _ = io.ReadFull(mock.conn, buf[:])
-		}, expectedErr)
-	}()
+		count := binary.LittleEndian.Uint64(buf[:])
+		for range count {
+			_, _ = wire.ReadString(conn, 64*1024)
+		}
+		// Read build mode
+		_, _ = io.ReadFull(conn, buf[:])
+	}, expectedErr))
 
-	client, err := daemon.NewClientFromConn(clientConn)
+	client, err := daemon.Connect(t.Context(), mock.path)
 	assert.NoError(t, err)
 
 	defer client.Close()
 
-	err = client.BuildPaths(context.Background(), []string{"/nix/store/zzz-fail.drv"}, daemon.BuildModeNormal)
+	err = client.BuildPaths(t.Context(), []string{"/nix/store/zzz-fail.drv"}, daemon.BuildModeNormal)
 	assert.Error(t, err)
 
 	var daemonErr *daemon.Error
