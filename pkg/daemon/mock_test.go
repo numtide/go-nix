@@ -253,7 +253,7 @@ func respondSetOptions() func(net.Conn) error {
 			_, _ = dec.ReadString() // value
 		}
 
-		// send LogLast (no response payload for SetOptions)
+		// send LogLast (no ack for SetOptions)
 		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		return nil
@@ -496,7 +496,7 @@ func respondQueryPathFromHashPart(path string) func(net.Conn) error {
 		// send LogLast
 		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-		// send response: path string
+		// send response: path string (empty if not found)
 		_ = enc.WriteString(path)
 
 		return nil

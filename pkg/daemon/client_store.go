@@ -147,8 +147,10 @@ func (c *Client) RegisterDrvOutput(ctx context.Context, realisation *Realisation
 	if err != nil {
 		return err
 	}
+	defer resp.Close()
 
-	return resp.Close()
+	// drain logs but no ack — daemon sends only LogLast for RegisterDrvOutput.
+	return resp.ReadLogs(nil)
 }
 
 // AddToStoreNar imports a NAR into the store. The info parameter describes
@@ -190,8 +192,10 @@ func (c *Client) AddToStoreNar(
 	if err != nil {
 		return err
 	}
+	defer resp.Close()
 
-	return resp.Close()
+	// drain logs — daemon sends only LogLast for AddToStoreNar.
+	return resp.ReadLogs(nil)
 }
 
 // AddBuildLog uploads a build log for the given derivation path. The log
@@ -301,8 +305,10 @@ func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error
 	if err != nil {
 		return err
 	}
+	defer resp.Close()
 
-	return resp.Close()
+	// drain logs but no ack — daemon sends only LogLast for SetOptions.
+	return resp.ReadLogs(nil)
 }
 
 // AddMultipleToStore imports multiple store paths into the store in a single
@@ -371,6 +377,8 @@ func (c *Client) AddMultipleToStore(
 	if err != nil {
 		return err
 	}
+	defer resp.Close()
 
-	return resp.Close()
+	// drain logs — daemon sends only LogLast for AddMultipleToStore.
+	return resp.ReadLogs(nil)
 }

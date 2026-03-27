@@ -255,7 +255,7 @@ func TestClientRegisterDrvOutput(t *testing.T) {
 
 		_, _ = dec.ReadString() // realisation
 
-		// LogLast
+		// LogLast (no ack for RegisterDrvOutput)
 		_ = enc.WriteUint64(uint64(daemon.LogLast))
 
 		return nil
