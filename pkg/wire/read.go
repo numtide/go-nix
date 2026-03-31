@@ -84,7 +84,7 @@ func ReadBytesFull(r io.Reader, maxBytes uint64) ([]byte, error) {
 		return nil, fmt.Errorf("content length of %v bytes exceeds maximum of %v bytes", contentLength, maxBytes)
 	}
 
-	defer rd.Close()
+	defer func() { _ = rd.Close() }()
 
 	// consume content
 	buf := make([]byte, contentLength)
