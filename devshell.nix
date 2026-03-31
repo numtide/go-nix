@@ -3,7 +3,7 @@
   pkgs,
   ...
 }:
-perSystem.self.gonix.passthru.tests.integration.overrideAttrs (old: {
+perSystem.self.gonix.overrideAttrs (old: {
   doCheck = false;
 
   env = old.env // {
@@ -12,6 +12,9 @@ perSystem.self.gonix.passthru.tests.integration.overrideAttrs (old: {
 
   nativeBuildInputs =
     old.nativeBuildInputs
+    ++ [
+      perSystem.self.nix-test-daemons
+    ]
     ++ (with pkgs; [
       delve
       golangci-lint

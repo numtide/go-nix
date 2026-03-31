@@ -104,6 +104,7 @@ func startTestDaemon(t *testing.T, bin nixBinary) *daemon.Client {
 	cmd.Env = append(os.Environ(), "NIX_DAEMON_SOCKET_PATH="+socketPath)
 
 	var stderrBuf bytes.Buffer
+
 	cmd.Stderr = &stderrBuf
 
 	rq.NoError(cmd.Start(), "failed to start nix daemon (%s)", bin.Name)
@@ -154,6 +155,7 @@ func addTestPath(t *testing.T, client *daemon.Client) (string, []byte) {
 
 	// build a minimal NAR: a regular file with known content
 	var narBuf bytes.Buffer
+
 	nw, err := nar.NewWriter(&narBuf)
 	rq.NoError(err)
 
@@ -208,6 +210,18 @@ func skipIfUnsupported(t *testing.T, err error) bool {
 	return false
 }
 
+// runParallel registers a named subtest that starts its own daemon and runs the given test function in parallel.
+func runParallel(t *testing.T, name string, bin nixBinary, fn func(t *testing.T, client *daemon.Client)) {
+	t.Helper()
+
+	t.Run(name, func(t *testing.T) {
+		t.Parallel()
+
+		client := startTestDaemon(t, bin)
+		fn(t, client)
+	})
+}
+
 // TestIntegration is the top-level entry point that runs the full integration suite against every Nix daemon version
 // discovered via NIX_TEST_DAEMONS_DIR (or the single nix on PATH as a fallback).
 func TestIntegration(t *testing.T) {
@@ -215,105 +229,106 @@ func TestIntegration(t *testing.T) {
 
 	for _, bin := range binaries {
 		t.Run(bin.Name, func(t *testing.T) {
+			t.Parallel()
+
 			// --- Connection & Handshake ---
-			t.Run("Connect", func(t *testing.T) { testConnect(t, bin) })
-			t.Run("SetOptions", func(t *testing.T) { testSetOptions(t, bin) })
+			runParallel(t, "Connect", bin, testConnect)
+			runParallel(t, "SetOptions", bin, testSetOptions)
 
 			// --- Validity & Path Queries ---
-			t.Run("IsValidPath", func(t *testing.T) { testIsValidPath(t, bin) })
-			t.Run("IsValidPathTrue", func(t *testing.T) { testIsValidPathTrue(t, bin) })
-			t.Run("QueryAllValidPaths", func(t *testing.T) { testQueryAllValidPaths(t, bin) })
-			t.Run("QueryValidPaths", func(t *testing.T) { testQueryValidPaths(t, bin) })
-			t.Run("QueryValidPathsSubset", func(t *testing.T) { testQueryValidPathsSubset(t, bin) })
+			runParallel(t, "IsValidPath", bin, testIsValidPath)
+			runParallel(t, "IsValidPathTrue", bin, testIsValidPathTrue)
+			runParallel(t, "QueryAllValidPaths", bin, testQueryAllValidPaths)
+			runParallel(t, "QueryValidPaths", bin, testQueryValidPaths)
+			runParallel(t, "QueryValidPathsSubset", bin, testQueryValidPathsSubset)
 
 			// --- Path Info ---
-			t.Run("QueryPathInfo", func(t *testing.T) { testQueryPathInfo(t, bin) })
-			t.Run("QueryPathInfoNotFound", func(t *testing.T) { testQueryPathInfoNotFound(t, bin) })
-			t.Run("QueryPathFromHashPart", func(t *testing.T) { testQueryPathFromHashPart(t, bin) })
-			t.Run("QueryPathFromHashPartNotFound", func(t *testing.T) { testQueryPathFromHashPartNotFound(t, bin) })
+			runParallel(t, "QueryPathInfo", bin, testQueryPathInfo)
+			runParallel(t, "QueryPathInfoNotFound", bin, testQueryPathInfoNotFound)
+			runParallel(t, "QueryPathFromHashPart", bin, testQueryPathFromHashPart)
+			runParallel(t, "QueryPathFromHashPartNotFound", bin, testQueryPathFromHashPartNotFound)
 
 			// --- References & Derivers ---
-			t.Run("QueryReferrers", func(t *testing.T) { testQueryReferrers(t, bin) })
-			t.Run("QueryValidDerivers", func(t *testing.T) { testQueryValidDerivers(t, bin) })
+			runParallel(t, "QueryReferrers", bin, testQueryReferrers)
+			runParallel(t, "QueryValidDerivers", bin, testQueryValidDerivers)
 
 			// --- Substitutable & Missing ---
-			t.Run("QuerySubstitutablePaths", func(t *testing.T) { testQuerySubstitutablePaths(t, bin) })
-			t.Run("QueryMissing", func(t *testing.T) { testQueryMissing(t, bin) })
+			runParallel(t, "QuerySubstitutablePaths", bin, testQuerySubstitutablePaths)
+			runParallel(t, "QueryMissing", bin, testQueryMissing)
 
 			// --- NAR Streaming ---
-			t.Run("NarFromPath", func(t *testing.T) { testNarFromPath(t, bin) })
+			runParallel(t, "NarFromPath", bin, testNarFromPath)
 
 			// --- GC Roots ---
-			t.Run("FindRoots", func(t *testing.T) { testFindRoots(t, bin) })
-			t.Run("AddTempRoot", func(t *testing.T) { testAddTempRoot(t, bin) })
+			runParallel(t, "FindRoots", bin, testFindRoots)
+			runParallel(t, "AddTempRoot", bin, testAddTempRoot)
 
 			// --- Verify & Optimise ---
-			t.Run("VerifyStore", func(t *testing.T) { testVerifyStore(t, bin) })
+			runParallel(t, "VerifyStore", bin, testVerifyStore)
 
 			// --- Build Operations ---
-			t.Run("BuildPaths", func(t *testing.T) { testBuildPaths(t, bin) })
-			t.Run("BuildPathsWithResults", func(t *testing.T) { testBuildPathsWithResults(t, bin) })
-			t.Run("EnsurePath", func(t *testing.T) { testEnsurePath(t, bin) })
+			runParallel(t, "BuildPaths", bin, testBuildPaths)
+			runParallel(t, "BuildPathsWithResults", bin, testBuildPathsWithResults)
+			runParallel(t, "EnsurePath", bin, testEnsurePath)
 
 			// --- Sequential Operations ---
-			t.Run("SequentialOperations", func(t *testing.T) { testSequentialOperations(t, bin) })
+			runParallel(t, "SequentialOperations", bin, testSequentialOperations)
 
 			// --- Mutating Operations ---
-			t.Run("AddToStoreNarRoundTrip", func(t *testing.T) { testAddToStoreNarRoundTrip(t, bin) })
-			t.Run("BuildDerivation", func(t *testing.T) { testBuildDerivation(t, bin) })
-			t.Run("AddBuildLog", func(t *testing.T) { testAddBuildLog(t, bin) })
-			t.Run("AddIndirectRoot", func(t *testing.T) { testAddIndirectRoot(t, bin) })
-			t.Run("SetOptionsWithOverrides", func(t *testing.T) { testSetOptionsWithOverrides(t, bin) })
+			runParallel(t, "AddToStoreNarRoundTrip", bin, testAddToStoreNarRoundTrip)
+			runParallel(t, "BuildDerivation", bin, testBuildDerivation)
+			runParallel(t, "AddBuildLog", bin, testAddBuildLog)
+			runParallel(t, "AddIndirectRoot", bin, testAddIndirectRoot)
+			runParallel(t, "SetOptionsWithOverrides", bin, testSetOptionsWithOverrides)
 
 			// --- Derivation Output Map ---
-			t.Run("QueryDerivationOutputMap", func(t *testing.T) { testQueryDerivationOutputMap(t, bin) })
+			runParallel(t, "QueryDerivationOutputMap", bin, testQueryDerivationOutputMap)
 
 			// --- AddToStore ---
-			t.Run("AddToStore", func(t *testing.T) { testAddToStore(t, bin) })
-			t.Run("AddToStoreFlat", func(t *testing.T) { testAddToStoreFlat(t, bin) })
-			t.Run("AddToStoreIdempotent", func(t *testing.T) { testAddToStoreIdempotent(t, bin) })
+			runParallel(t, "AddToStore", bin, testAddToStore)
+			runParallel(t, "AddToStoreFlat", bin, testAddToStoreFlat)
+			runParallel(t, "AddToStoreIdempotent", bin, testAddToStoreIdempotent)
 
 			// --- QuerySubstitutablePathInfos ---
-			t.Run("QuerySubstitutablePathInfos", func(t *testing.T) { testQuerySubstitutablePathInfos(t, bin) })
-			t.Run("QuerySubstitutablePathInfosEmpty", func(t *testing.T) { testQuerySubstitutablePathInfosEmpty(t, bin) })
-			t.Run("QuerySubstitutablePathInfosMultiple", func(t *testing.T) { testQuerySubstitutablePathInfosMultiple(t, bin) })
+			runParallel(t, "QuerySubstitutablePathInfos", bin, testQuerySubstitutablePathInfos)
+			runParallel(t, "QuerySubstitutablePathInfosEmpty", bin, testQuerySubstitutablePathInfosEmpty)
+			runParallel(t, "QuerySubstitutablePathInfosMultiple", bin, testQuerySubstitutablePathInfosMultiple)
 
 			// --- QueryRealisation ---
-			t.Run("QueryRealisation", func(t *testing.T) { testQueryRealisation(t, bin) })
+			runParallel(t, "QueryRealisation", bin, testQueryRealisation)
 
 			// --- AddPermRoot ---
-			t.Run("AddPermRoot", func(t *testing.T) { testAddPermRoot(t, bin) })
+			runParallel(t, "AddPermRoot", bin, testAddPermRoot)
 
 			// --- AddSignatures ---
-			t.Run("AddSignatures", func(t *testing.T) { testAddSignatures(t, bin) })
+			runParallel(t, "AddSignatures", bin, testAddSignatures)
 
 			// --- RegisterDrvOutput ---
-			t.Run("RegisterDrvOutput", func(t *testing.T) { testRegisterDrvOutput(t, bin) })
+			runParallel(t, "RegisterDrvOutput", bin, testRegisterDrvOutput)
 
 			// --- CollectGarbage ---
-			t.Run("CollectGarbage", func(t *testing.T) { testCollectGarbage(t, bin) })
-			t.Run("CollectGarbageReturnDead", func(t *testing.T) { testCollectGarbageReturnDead(t, bin) })
-			t.Run("CollectGarbageWithTempRoot", func(t *testing.T) { testCollectGarbageWithTempRoot(t, bin) })
+			runParallel(t, "CollectGarbage", bin, testCollectGarbage)
+			runParallel(t, "CollectGarbageReturnDead", bin, testCollectGarbageReturnDead)
+			runParallel(t, "CollectGarbageWithTempRoot", bin, testCollectGarbageWithTempRoot)
 
 			// --- OptimiseStore ---
-			t.Run("OptimiseStore", func(t *testing.T) { testOptimiseStore(t, bin) })
+			runParallel(t, "OptimiseStore", bin, testOptimiseStore)
 
 			// --- Structured Error Parsing ---
-			t.Run("StructuredError", func(t *testing.T) { testStructuredError(t, bin) })
-			t.Run("StructuredErrorBuildDerivation", func(t *testing.T) { testStructuredErrorBuildDerivation(t, bin) })
+			runParallel(t, "StructuredError", bin, testStructuredError)
+			runParallel(t, "StructuredErrorBuildDerivation", bin, testStructuredErrorBuildDerivation)
 
 			// --- AddMultipleToStore ---
-			t.Run("AddMultipleToStore", func(t *testing.T) { testAddMultipleToStore(t, bin) })
+			runParallel(t, "AddMultipleToStore", bin, testAddMultipleToStore)
 		})
 	}
 }
 
 // --- Connection & Handshake ---
 
-func testConnect(t *testing.T, bin nixBinary) {
+func testConnect(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
 
-	client := startTestDaemon(t, bin)
 	info := client.Info()
 
 	rq.True(info.Version >= daemon.MinProtocolVersion,
@@ -326,8 +341,7 @@ func testConnect(t *testing.T, bin nixBinary) {
 	t.Logf("Nix version: %s, protocol: %#x, trust: %d", info.DaemonNixVersion, info.Version, info.Trust)
 }
 
-func testSetOptions(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testSetOptions(t *testing.T, client *daemon.Client) {
 	settings := daemon.DefaultClientSettings()
 	err := client.SetOptions(t.Context(), settings)
 	require.NoError(t, err)
@@ -335,16 +349,14 @@ func testSetOptions(t *testing.T, bin nixBinary) {
 
 // --- Validity & Path Queries ---
 
-func testIsValidPath(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testIsValidPath(t *testing.T, client *daemon.Client) {
 	// a path that definitely doesn't exist
 	valid, err := client.IsValidPath(t.Context(), "/nix/store/00000000000000000000000000000000-nonexistent")
 	require.NoError(t, err)
 	require.False(t, valid)
 }
 
-func testIsValidPathTrue(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testIsValidPathTrue(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	valid, err := client.IsValidPath(t.Context(), path)
@@ -352,8 +364,7 @@ func testIsValidPathTrue(t *testing.T, bin nixBinary) {
 	require.True(t, valid)
 }
 
-func testQueryAllValidPaths(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQueryAllValidPaths(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	paths, err := client.QueryAllValidPaths(t.Context())
@@ -362,8 +373,7 @@ func testQueryAllValidPaths(t *testing.T, bin nixBinary) {
 	t.Logf("Store has %d valid paths", len(paths))
 }
 
-func testQueryValidPaths(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQueryValidPaths(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	valid, err := client.QueryValidPaths(t.Context(), []string{path}, false)
@@ -371,9 +381,9 @@ func testQueryValidPaths(t *testing.T, bin nixBinary) {
 	require.Contains(t, valid, path)
 }
 
-func testQueryValidPathsSubset(t *testing.T, bin nixBinary) {
+func testQueryValidPathsSubset(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	path, _ := addTestPath(t, client)
 
 	bogus := "/nix/store/00000000000000000000000000000000-nonexistent"
@@ -385,9 +395,9 @@ func testQueryValidPathsSubset(t *testing.T, bin nixBinary) {
 
 // --- Path Info ---
 
-func testQueryPathInfo(t *testing.T, bin nixBinary) {
+func testQueryPathInfo(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	path, _ := addTestPath(t, client)
 
 	info, err := client.QueryPathInfo(t.Context(), path)
@@ -403,14 +413,12 @@ func testQueryPathInfo(t *testing.T, bin nixBinary) {
 	t.Logf("  NarSize: %d", info.NarSize)
 }
 
-func testQueryPathInfoNotFound(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQueryPathInfoNotFound(t *testing.T, client *daemon.Client) {
 	_, err := client.QueryPathInfo(t.Context(), "/nix/store/00000000000000000000000000000000-nonexistent")
 	require.ErrorIs(t, err, daemon.ErrNotFound)
 }
 
-func testQueryPathFromHashPart(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQueryPathFromHashPart(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	// extract hash part: /nix/store/<hash>-<name> -> <hash>
@@ -424,8 +432,7 @@ func testQueryPathFromHashPart(t *testing.T, bin nixBinary) {
 	require.Equal(t, path, result)
 }
 
-func testQueryPathFromHashPartNotFound(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQueryPathFromHashPartNotFound(t *testing.T, client *daemon.Client) {
 	result, err := client.QueryPathFromHashPart(t.Context(), "00000000000000000000000000000000")
 	require.NoError(t, err)
 	require.Empty(t, result)
@@ -433,8 +440,7 @@ func testQueryPathFromHashPartNotFound(t *testing.T, bin nixBinary) {
 
 // --- References & Derivers ---
 
-func testQueryReferrers(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQueryReferrers(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	referrers, err := client.QueryReferrers(t.Context(), path)
@@ -442,8 +448,7 @@ func testQueryReferrers(t *testing.T, bin nixBinary) {
 	t.Logf("Path %s has %d referrers", path, len(referrers))
 }
 
-func testQueryValidDerivers(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQueryValidDerivers(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	derivers, err := client.QueryValidDerivers(t.Context(), path)
@@ -453,9 +458,8 @@ func testQueryValidDerivers(t *testing.T, bin nixBinary) {
 
 // --- Substitutable & Missing ---
 
-func testQuerySubstitutablePaths(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
-	// query with a bogus path — should return empty (no substituters for it)
+func testQuerySubstitutablePaths(t *testing.T, client *daemon.Client) {
+	// query with a bogus path — should return empty (no substitutes for it)
 	substitutable, err := client.QuerySubstitutablePaths(t.Context(), []string{
 		"/nix/store/00000000000000000000000000000000-nonexistent",
 	})
@@ -463,9 +467,9 @@ func testQuerySubstitutablePaths(t *testing.T, bin nixBinary) {
 	require.Empty(t, substitutable)
 }
 
-func testQueryMissing(t *testing.T, bin nixBinary) {
+func testQueryMissing(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	path, _ := addTestPath(t, client)
 
 	missing, err := client.QueryMissing(t.Context(), []string{path})
@@ -485,9 +489,9 @@ func testQueryMissing(t *testing.T, bin nixBinary) {
 
 // --- NAR Streaming ---
 
-func testNarFromPath(t *testing.T, bin nixBinary) {
+func testNarFromPath(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	path, expectedNar := addTestPath(t, client)
 
 	// get expected NAR size
@@ -521,8 +525,7 @@ func testNarFromPath(t *testing.T, bin nixBinary) {
 
 // --- GC Roots ---
 
-func testFindRoots(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testFindRoots(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	// add a temp root so FindRoots returns something
@@ -536,8 +539,7 @@ func testFindRoots(t *testing.T, bin nixBinary) {
 	t.Logf("Found %d GC roots", len(roots))
 }
 
-func testAddTempRoot(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testAddTempRoot(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	err := client.AddTempRoot(t.Context(), path)
@@ -546,12 +548,10 @@ func testAddTempRoot(t *testing.T, bin nixBinary) {
 
 // --- Verify & Optimise ---
 
-func testVerifyStore(t *testing.T, bin nixBinary) {
+func testVerifyStore(t *testing.T, client *daemon.Client) {
 	if testing.Short() {
 		t.Skip("skipping store verification in short mode")
 	}
-
-	client := startTestDaemon(t, bin)
 
 	// checkContents=false, repair=false — just a quick metadata check
 	errorsFound, err := client.VerifyStore(t.Context(), false, false)
@@ -561,8 +561,7 @@ func testVerifyStore(t *testing.T, bin nixBinary) {
 
 // --- Build Operations ---
 
-func testBuildPaths(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testBuildPaths(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	// building an already-valid path should succeed immediately
@@ -570,8 +569,7 @@ func testBuildPaths(t *testing.T, bin nixBinary) {
 	require.NoError(t, err)
 }
 
-func testBuildPathsWithResults(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testBuildPathsWithResults(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	results, err := client.BuildPathsWithResults(t.Context(), []string{path}, daemon.BuildModeNormal)
@@ -586,8 +584,7 @@ func testBuildPathsWithResults(t *testing.T, bin nixBinary) {
 	}
 }
 
-func testEnsurePath(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testEnsurePath(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	err := client.EnsurePath(t.Context(), path)
@@ -597,9 +594,9 @@ func testEnsurePath(t *testing.T, bin nixBinary) {
 // --- Sequential Operations ---
 // Verify that multiple operations work on the same connection sequentially.
 
-func testSequentialOperations(t *testing.T, bin nixBinary) {
+func testSequentialOperations(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	path, _ := addTestPath(t, client)
 	ctx := t.Context()
 
@@ -638,13 +635,14 @@ func testSequentialOperations(t *testing.T, bin nixBinary) {
 
 // --- Mutating Operations ---
 
-func testAddToStoreNarRoundTrip(t *testing.T, bin nixBinary) {
+func testAddToStoreNarRoundTrip(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	ctx := t.Context()
 
 	// 1. build a minimal NAR: a regular file with known content.
 	var narBuf bytes.Buffer
+
 	nw, err := nar.NewWriter(&narBuf)
 	rq.NoError(err)
 
@@ -697,9 +695,7 @@ func testAddToStoreNarRoundTrip(t *testing.T, bin nixBinary) {
 	rq.Equal(narData, gotNar, "NAR content round-trip mismatch")
 }
 
-func testBuildDerivation(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
-
+func testBuildDerivation(t *testing.T, client *daemon.Client) {
 	drv := &daemon.BasicDerivation{
 		Outputs: map[string]daemon.DerivationOutput{
 			"out": {Path: "/nix/store/00000000000000000000000000000000-go-nix-test-out"},
@@ -719,20 +715,22 @@ func testBuildDerivation(t *testing.T, bin nixBinary) {
 	// the build should fail (nonexistent builder) but the protocol round-trip should work
 	if err != nil {
 		t.Logf("BuildDerivation returned error: %v (expected for nonexistent builder)", err)
+
 		return
 	}
+
 	require.NotEqual(t, daemon.BuildStatusBuilt, result.Status,
 		"build with nonexistent builder should not succeed")
 	t.Logf("BuildDerivation result: status=%s errorMsg=%q", result.Status, result.ErrorMsg)
 }
 
-func testAddBuildLog(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testAddBuildLog(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	// use the test path as a pseudo-derivation path for AddBuildLog.
 	// the daemon may reject this since it's not a real .drv, but the protocol round-trip is what we're testing.
 	logContent := "test build log from go-nix\n"
+
 	err := client.AddBuildLog(t.Context(), path, strings.NewReader(logContent))
 	if skipIfUnsupported(t, err) {
 		return
@@ -745,8 +743,7 @@ func testAddBuildLog(t *testing.T, bin nixBinary) {
 	}
 }
 
-func testAddIndirectRoot(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testAddIndirectRoot(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	// create a temp symlink pointing to the valid store path
@@ -758,8 +755,7 @@ func testAddIndirectRoot(t *testing.T, bin nixBinary) {
 	require.NoError(t, err)
 }
 
-func testSetOptionsWithOverrides(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testSetOptionsWithOverrides(t *testing.T, client *daemon.Client) {
 	ctx := t.Context()
 
 	settings := daemon.DefaultClientSettings()
@@ -778,9 +774,9 @@ func testSetOptionsWithOverrides(t *testing.T, bin nixBinary) {
 
 // --- Derivation Output Map ---
 
-func testQueryDerivationOutputMap(t *testing.T, bin nixBinary) {
+func testQueryDerivationOutputMap(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	path, _ := addTestPath(t, client)
 
 	// our test path has no deriver, so query its output map directly.
@@ -792,6 +788,7 @@ func testQueryDerivationOutputMap(t *testing.T, bin nixBinary) {
 
 	if info.Deriver == "" {
 		t.Log("Test path has no deriver (expected for addTestPath paths)")
+
 		return
 	}
 
@@ -801,6 +798,7 @@ func testQueryDerivationOutputMap(t *testing.T, bin nixBinary) {
 	}
 
 	rq.NoError(err)
+
 	for name, outPath := range outputs {
 		t.Logf("  output %q -> %s", name, outPath)
 	}
@@ -808,13 +806,14 @@ func testQueryDerivationOutputMap(t *testing.T, bin nixBinary) {
 
 // --- AddToStore ---
 
-func testAddToStore(t *testing.T, bin nixBinary) {
+func testAddToStore(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	ctx := t.Context()
 
 	// build a minimal NAR: a regular file with known content.
 	var narBuf bytes.Buffer
+
 	nw, err := nar.NewWriter(&narBuf)
 	rq.NoError(err)
 
@@ -868,9 +867,9 @@ func testAddToStore(t *testing.T, bin nixBinary) {
 	rq.Equal(narData, gotNar, "NAR content round-trip mismatch")
 }
 
-func testAddToStoreFlat(t *testing.T, bin nixBinary) {
+func testAddToStoreFlat(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	ctx := t.Context()
 
 	// for flat content addressing, the source is the raw file content (not NAR)
@@ -900,9 +899,9 @@ func testAddToStoreFlat(t *testing.T, bin nixBinary) {
 	rq.True(valid)
 }
 
-func testAddToStoreIdempotent(t *testing.T, bin nixBinary) {
+func testAddToStoreIdempotent(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	ctx := t.Context()
 
 	content := []byte("idempotent content\n")
@@ -932,9 +931,8 @@ func testAddToStoreIdempotent(t *testing.T, bin nixBinary) {
 
 // --- QuerySubstitutablePathInfos ---
 
-func testQuerySubstitutablePathInfos(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
-	// with a local-only store and no substituters configured, the result should be empty.
+func testQuerySubstitutablePathInfos(t *testing.T, client *daemon.Client) {
+	// with a local-only store and no substitutes configured, the result should be empty.
 	// the protocol round-trip must succeed.
 	result, err := client.QuerySubstitutablePathInfos(t.Context(), map[string]string{
 		"/nix/store/00000000000000000000000000000000-nonexistent": "",
@@ -943,16 +941,14 @@ func testQuerySubstitutablePathInfos(t *testing.T, bin nixBinary) {
 	require.Empty(t, result)
 }
 
-func testQuerySubstitutablePathInfosEmpty(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQuerySubstitutablePathInfosEmpty(t *testing.T, client *daemon.Client) {
 	// empty input map should return empty result
 	result, err := client.QuerySubstitutablePathInfos(t.Context(), map[string]string{})
 	require.NoError(t, err)
 	require.Empty(t, result)
 }
 
-func testQuerySubstitutablePathInfosMultiple(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQuerySubstitutablePathInfosMultiple(t *testing.T, client *daemon.Client) {
 	// multiple paths, none substitutable in a local-only store
 	result, err := client.QuerySubstitutablePathInfos(t.Context(), map[string]string{
 		"/nix/store/00000000000000000000000000000000-foo": "",
@@ -966,8 +962,7 @@ func testQuerySubstitutablePathInfosMultiple(t *testing.T, bin nixBinary) {
 
 // --- QueryRealisation ---
 
-func testQueryRealisation(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testQueryRealisation(t *testing.T, client *daemon.Client) {
 	// query a nonexistent output ID — should return empty, no error.
 	// note: some Nix versions crash with an SQLite assertion failure when the realisations DB is uninitialised
 	// (local?root= stores).
@@ -980,16 +975,18 @@ func testQueryRealisation(t *testing.T, bin nixBinary) {
 
 	if err != nil {
 		t.Logf("QueryRealisation returned error: %v (may be a Nix daemon bug with local?root= stores)", err)
+
 		return
 	}
+
 	require.Empty(t, realisations)
 }
 
 // --- AddPermRoot ---
 
-func testAddPermRoot(t *testing.T, bin nixBinary) {
+func testAddPermRoot(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	path, _ := addTestPath(t, client)
 
 	// create a symlink path for the permanent GC root
@@ -1013,9 +1010,9 @@ func testAddPermRoot(t *testing.T, bin nixBinary) {
 
 // --- AddSignatures ---
 
-func testAddSignatures(t *testing.T, bin nixBinary) {
+func testAddSignatures(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	path, _ := addTestPath(t, client)
 
 	// add a signature to the store path
@@ -1033,8 +1030,7 @@ func testAddSignatures(t *testing.T, bin nixBinary) {
 
 // --- RegisterDrvOutput ---
 
-func testRegisterDrvOutput(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testRegisterDrvOutput(t *testing.T, client *daemon.Client) {
 	path, _ := addTestPath(t, client)
 
 	// compute a fake but structurally valid output ID.
@@ -1060,9 +1056,9 @@ func testRegisterDrvOutput(t *testing.T, bin nixBinary) {
 
 // --- CollectGarbage ---
 
-func testCollectGarbage(t *testing.T, bin nixBinary) {
+func testCollectGarbage(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	ctx := t.Context()
 
 	// add a path, then collect garbage (without a temp root, it should be deletable)
@@ -1083,8 +1079,7 @@ func testCollectGarbage(t *testing.T, bin nixBinary) {
 	t.Logf("CollectGarbage: deleted %d paths, freed %d bytes", len(result.Paths), result.BytesFreed)
 }
 
-func testCollectGarbageReturnDead(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testCollectGarbageReturnDead(t *testing.T, client *daemon.Client) {
 	ctx := t.Context()
 
 	// gcReturnDead should return the list of dead paths without deleting them
@@ -1097,9 +1092,9 @@ func testCollectGarbageReturnDead(t *testing.T, bin nixBinary) {
 	t.Logf("CollectGarbage(ReturnDead): %d dead paths", len(result.Paths))
 }
 
-func testCollectGarbageWithTempRoot(t *testing.T, bin nixBinary) {
+func testCollectGarbageWithTempRoot(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	ctx := t.Context()
 
 	// add a path and protect it with a temp root
@@ -1121,8 +1116,7 @@ func testCollectGarbageWithTempRoot(t *testing.T, bin nixBinary) {
 
 // --- OptimiseStore ---
 
-func testOptimiseStore(t *testing.T, bin nixBinary) {
-	client := startTestDaemon(t, bin)
+func testOptimiseStore(t *testing.T, client *daemon.Client) {
 	// add some content so the store is not empty
 	addTestPath(t, client)
 
@@ -1132,9 +1126,9 @@ func testOptimiseStore(t *testing.T, bin nixBinary) {
 
 // --- Structured Error Parsing ---
 
-func testStructuredError(t *testing.T, bin nixBinary) {
+func testStructuredError(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	// ensurePath on a nonexistent, non-substitutable path should trigger a daemon error with structured fields
 	// (Type, Level, Name, Message)
 	err := client.EnsurePath(t.Context(), "/nix/store/00000000000000000000000000000000-nonexistent")
@@ -1159,9 +1153,8 @@ func testStructuredError(t *testing.T, bin nixBinary) {
 	rq.False(valid)
 }
 
-func testStructuredErrorBuildDerivation(t *testing.T, bin nixBinary) {
+func testStructuredErrorBuildDerivation(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
 
 	drv := &daemon.BasicDerivation{
 		Outputs: map[string]daemon.DerivationOutput{
@@ -1202,14 +1195,15 @@ func testStructuredErrorBuildDerivation(t *testing.T, bin nixBinary) {
 
 // --- AddMultipleToStore ---
 
-func testAddMultipleToStore(t *testing.T, bin nixBinary) {
+func testAddMultipleToStore(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
-	client := startTestDaemon(t, bin)
+
 	ctx := t.Context()
 
 	// build two distinct NARs with different content
 	makeNAR := func(content string) ([]byte, string, string) {
 		var buf bytes.Buffer
+
 		nw, err := nar.NewWriter(&buf)
 		rq.NoError(err)
 
