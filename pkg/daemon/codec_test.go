@@ -266,7 +266,10 @@ func TestReadBuildResult(t *testing.T) {
 	writeTestUint64(&buf, 0)          // cpuSystem: None
 	writeTestUint64(&buf, 1)          // builtOutputs count
 	writeTestString(&buf, "out")      // output name
-	writeTestString(&buf, `{"id":"sha256:abc123!out","outPath":"/nix/store/zzz-hello","signatures":["mykey:c2ln"],"dependentRealisations":{}}`)
+	writeTestString(
+		&buf,
+		`{"id":"sha256:abc123!out","outPath":"/nix/store/zzz-hello","signatures":["mykey:c2ln"],"dependentRealisations":{}}`,
+	)
 
 	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
 
@@ -369,7 +372,10 @@ func TestReadBuildResultWithCPUTimesBothPresent(t *testing.T) {
 	writeTestUint64(&buf, 250000) // value
 	writeTestUint64(&buf, 1)      // builtOutputs count
 	writeTestString(&buf, "out")  // output name
-	writeTestString(&buf, `{"id":"sha256:def456!out","outPath":"/nix/store/yyy-world","signatures":[],"dependentRealisations":{}}`)
+	writeTestString(
+		&buf,
+		`{"id":"sha256:def456!out","outPath":"/nix/store/yyy-world","signatures":[],"dependentRealisations":{}}`,
+	)
 
 	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
 
@@ -421,7 +427,10 @@ func TestReadBuildResultProto128(t *testing.T) {
 	writeTestString(&buf, "")    // errorMsg
 	writeTestUint64(&buf, 1)     // builtOutputs count
 	writeTestString(&buf, "out") // output name
-	writeTestString(&buf, `{"id":"sha256:abc!out","outPath":"/nix/store/zzz-pkg","signatures":[],"dependentRealisations":{}}`)
+	writeTestString(
+		&buf,
+		`{"id":"sha256:abc!out","outPath":"/nix/store/zzz-pkg","signatures":[],"dependentRealisations":{}}`,
+	)
 
 	dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
 

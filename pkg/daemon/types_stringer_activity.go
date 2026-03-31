@@ -29,9 +29,7 @@ const (
 	_ActivityType_name_1 = "CopyPathFileTransferRealiseCopyPathsBuildsBuildOptimiseStoreVerifyPathsSubstituteQueryPathInfoPostBuildHookBuildWaitingFetchTree"
 )
 
-var (
-	_ActivityType_index_1 = [...]uint8{0, 8, 20, 27, 36, 42, 47, 60, 71, 81, 94, 107, 119, 128}
-)
+var _ActivityType_index_1 = [...]uint8{0, 8, 20, 27, 36, 42, 47, 60, 71, 81, 94, 107, 119, 128}
 
 func (i ActivityType) String() string {
 	switch {

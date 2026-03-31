@@ -368,7 +368,11 @@ func TestClientAddBuildLog(t *testing.T) {
 
 	defer client.Close()
 
-	err = client.AddBuildLog(t.Context(), "/nix/store/00000000000000000000000000000000-test.drv", strings.NewReader(logContent))
+	err = client.AddBuildLog(
+		t.Context(),
+		"/nix/store/00000000000000000000000000000000-test.drv",
+		strings.NewReader(logContent),
+	)
 	require.NoError(t, err)
 }
 
