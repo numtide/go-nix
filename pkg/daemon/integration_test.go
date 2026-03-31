@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
+	"github.com/nix-community/go-nix/pkg/derivation"
 	"github.com/nix-community/go-nix/pkg/nar"
 	"github.com/nix-community/go-nix/pkg/nixbase32"
 	"github.com/stretchr/testify/require"
@@ -55,7 +56,7 @@ func discoverNixBinaries(t *testing.T) []nixBinary {
 		}
 
 		bin := filepath.Join(dir, e.Name(), "bin", "nix")
-		if _, err := os.Stat(bin); err != nil {
+		if _, err = os.Stat(bin); err != nil { //nolint:gosec
 			continue
 		}
 
@@ -90,10 +91,11 @@ func startTestDaemon(t *testing.T, bin nixBinary) *daemon.Client {
 	socketDir, err := os.MkdirTemp("", "nix")
 	rq.NoError(err)
 
-	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 
 	socketPath := filepath.Join(socketDir, "d.sock")
 
+	//nolint:gosec
 	cmd := exec.Command(bin.BinPath, "daemon",
 		"--store", "local?root="+storeRoot,
 		"--extra-experimental-features", "daemon-trust-override nix-command",
@@ -193,6 +195,168 @@ func addTestPath(t *testing.T, client *daemon.Client) (string, []byte) {
 	rq.NoError(err, "addTestPath: AddToStoreNar failed")
 
 	return storePath, narData
+}
+
+// testPathGraph holds the paths created by addTestPathWithDeps.
+type testPathGraph struct {
+	// depPath is a dependency with no references and no deriver.
+	DepPath string
+	// drvPath is a .drv-suffixed path that references depPath.
+	DrvPath string
+	// outPath is an output path that references depPath and has drvPath as its deriver.
+	OutPath string
+}
+
+// addTestPathWithDeps creates a small graph of store paths for testing reference and deriver queries.
+// The graph consists of three paths: a dependency, a real .drv derivation, and an output.
+// The derivation is serialized in ATerm format with a canonically computed .drv and output path.
+func addTestPathWithDeps(t *testing.T, client *daemon.Client) testPathGraph {
+	t.Helper()
+
+	rq := require.New(t)
+	ctx := t.Context()
+
+	// step 1: create the dependency path (no references, no deriver)
+	depNAR := buildTestNAR(t, []byte("dependency content\n"))
+	depHash := sha256.Sum256(depNAR)
+	depPath := "/nix/store/" + nixbase32.EncodeToString(depHash[:20]) + "-go-nix-dep"
+
+	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
+		StorePath:  depPath,
+		NarHash:    "sha256:" + nixbase32.EncodeToString(depHash[:]),
+		NarSize:    uint64(len(depNAR)),
+		References: []string{},
+		Sigs:       []string{},
+	}, bytes.NewReader(depNAR), false, true))
+
+	// step 2: build a real derivation with empty output path, then compute canonical paths
+	drv := &derivation.Derivation{
+		Outputs:          map[string]*derivation.Output{"out": {}},
+		InputSources:     []string{depPath},
+		InputDerivations: map[string][]string{},
+		Platform:         ":",
+		Builder:          ":",
+		Arguments:        []string{},
+		Env:              map[string]string{"name": "go-nix-test", "out": ""},
+	}
+
+	// compute the canonical output path from the derivation hash
+	outputPaths, err := drv.CalculateOutputPaths(nil)
+	rq.NoError(err)
+
+	outPath := outputPaths["out"]
+	rq.NotEmpty(outPath)
+
+	// fill in the computed output path
+	drv.Outputs["out"].Path = outPath
+	drv.Env["out"] = outPath
+
+	// serialize to ATerm and compute canonical .drv path
+	var drvBuf bytes.Buffer
+
+	rq.NoError(drv.WriteDerivation(&drvBuf))
+
+	drvPath, err := drv.DrvPath()
+	rq.NoError(err)
+
+	// wrap the ATerm content in a NAR and register the .drv path
+	drvNAR := buildTestNAR(t, drvBuf.Bytes())
+	drvNARHash := sha256.Sum256(drvNAR)
+
+	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
+		StorePath:  drvPath,
+		NarHash:    "sha256:" + nixbase32.EncodeToString(drvNARHash[:]),
+		NarSize:    uint64(len(drvNAR)),
+		References: []string{depPath},
+		Sigs:       []string{},
+	}, bytes.NewReader(drvNAR), false, true))
+
+	// step 3: register the output path with the derivation as its deriver
+	outNAR := buildTestNAR(t, []byte("output content\n"))
+	outNARHash := sha256.Sum256(outNAR)
+
+	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
+		StorePath:  outPath,
+		Deriver:    drvPath,
+		NarHash:    "sha256:" + nixbase32.EncodeToString(outNARHash[:]),
+		NarSize:    uint64(len(outNAR)),
+		References: []string{depPath},
+		Sigs:       []string{},
+	}, bytes.NewReader(outNAR), false, true))
+
+	return testPathGraph{DepPath: depPath, DrvPath: drvPath, OutPath: outPath}
+}
+
+// addUnbuiltDrv registers a .drv in the store whose output has NOT been built.
+// Returns a testPathGraph where OutPath is the expected (but missing) output.
+func addUnbuiltDrv(t *testing.T, client *daemon.Client) testPathGraph {
+	t.Helper()
+
+	rq := require.New(t)
+	ctx := t.Context()
+
+	// build a derivation with a unique name so it doesn't collide with addTestPathWithDeps
+	drv := &derivation.Derivation{
+		Outputs:          map[string]*derivation.Output{"out": {}},
+		InputSources:     []string{},
+		InputDerivations: map[string][]string{},
+		Platform:         ":",
+		Builder:          ":",
+		Arguments:        []string{},
+		Env:              map[string]string{"name": "go-nix-unbuilt", "out": ""},
+	}
+
+	outputPaths, err := drv.CalculateOutputPaths(nil)
+	rq.NoError(err)
+
+	outPath := outputPaths["out"]
+	drv.Outputs["out"].Path = outPath
+	drv.Env["out"] = outPath
+
+	var drvBuf bytes.Buffer
+
+	rq.NoError(drv.WriteDerivation(&drvBuf))
+
+	drvPath, err := drv.DrvPath()
+	rq.NoError(err)
+
+	drvNAR := buildTestNAR(t, drvBuf.Bytes())
+	drvNARHash := sha256.Sum256(drvNAR)
+
+	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
+		StorePath:  drvPath,
+		NarHash:    "sha256:" + nixbase32.EncodeToString(drvNARHash[:]),
+		NarSize:    uint64(len(drvNAR)),
+		References: []string{},
+		Sigs:       []string{},
+	}, bytes.NewReader(drvNAR), false, true))
+
+	// intentionally do NOT register outPath — it remains unbuilt
+	return testPathGraph{DrvPath: drvPath, OutPath: outPath}
+}
+
+// buildTestNAR creates a minimal NAR containing a single regular file with the given content.
+func buildTestNAR(t *testing.T, content []byte) []byte {
+	t.Helper()
+
+	rq := require.New(t)
+
+	var buf bytes.Buffer
+
+	nw, err := nar.NewWriter(&buf)
+	rq.NoError(err)
+
+	rq.NoError(nw.WriteHeader(&nar.Header{
+		Path: "/",
+		Type: nar.TypeRegular,
+		Size: int64(len(content)),
+	}))
+
+	_, err = nw.Write(content)
+	rq.NoError(err)
+	rq.NoError(nw.Close())
+
+	return buf.Bytes()
 }
 
 // skipIfUnsupported checks whether err is an UnsupportedOperationError and skips the test if so.
@@ -398,19 +562,17 @@ func testQueryValidPathsSubset(t *testing.T, client *daemon.Client) {
 func testQueryPathInfo(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
 
-	path, _ := addTestPath(t, client)
+	graph := addTestPathWithDeps(t, client)
 
-	info, err := client.QueryPathInfo(t.Context(), path)
+	info, err := client.QueryPathInfo(t.Context(), graph.OutPath)
 	rq.NoError(err)
 	rq.NotNil(info)
 
-	rq.Equal(path, info.StorePath)
+	rq.Equal(graph.OutPath, info.StorePath)
+	rq.Equal(graph.DrvPath, info.Deriver)
+	rq.Contains(info.References, graph.DepPath)
 	rq.NotEmpty(info.NarHash)
 	rq.True(info.NarSize > 0)
-
-	t.Logf("Path: %s", info.StorePath)
-	t.Logf("  NarHash: %s", info.NarHash)
-	t.Logf("  NarSize: %d", info.NarSize)
 }
 
 func testQueryPathInfoNotFound(t *testing.T, client *daemon.Client) {
@@ -441,19 +603,26 @@ func testQueryPathFromHashPartNotFound(t *testing.T, client *daemon.Client) {
 // --- References & Derivers ---
 
 func testQueryReferrers(t *testing.T, client *daemon.Client) {
-	path, _ := addTestPath(t, client)
+	rq := require.New(t)
 
-	referrers, err := client.QueryReferrers(t.Context(), path)
-	require.NoError(t, err)
-	t.Logf("Path %s has %d referrers", path, len(referrers))
+	graph := addTestPathWithDeps(t, client)
+
+	// depPath is referenced by both drvPath and outPath
+	referrers, err := client.QueryReferrers(t.Context(), graph.DepPath)
+	rq.NoError(err)
+	rq.Contains(referrers, graph.OutPath)
+	rq.Contains(referrers, graph.DrvPath)
 }
 
 func testQueryValidDerivers(t *testing.T, client *daemon.Client) {
-	path, _ := addTestPath(t, client)
+	rq := require.New(t)
 
-	derivers, err := client.QueryValidDerivers(t.Context(), path)
-	require.NoError(t, err)
-	t.Logf("Path %s has %d valid derivers", path, len(derivers))
+	graph := addTestPathWithDeps(t, client)
+
+	// outPath has drvPath as its deriver
+	derivers, err := client.QueryValidDerivers(t.Context(), graph.OutPath)
+	rq.NoError(err)
+	rq.Contains(derivers, graph.DrvPath)
 }
 
 // --- Substitutable & Missing ---
@@ -469,22 +638,25 @@ func testQuerySubstitutablePaths(t *testing.T, client *daemon.Client) {
 
 func testQueryMissing(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
+	ctx := t.Context()
 
+	// a path already in the store should not be missing
 	path, _ := addTestPath(t, client)
 
-	missing, err := client.QueryMissing(t.Context(), []string{path})
+	missing, err := client.QueryMissing(ctx, []string{path})
 	rq.NoError(err)
 	rq.NotNil(missing)
-	// a valid path should not appear in WillBuild or Unknown
 	rq.NotContains(missing.WillBuild, path)
 	rq.NotContains(missing.Unknown, path)
-	t.Logf("QueryMissing: willBuild=%d willSubstitute=%d unknown=%d downloadSize=%d narSize=%d",
-		len(missing.WillBuild),
-		len(missing.WillSubstitute),
-		len(missing.Unknown),
-		missing.DownloadSize,
-		missing.NarSize,
-	)
+
+	// a .drv whose output is not in the store should appear in WillBuild.
+	// register a derivation without registering its output.
+	unbuildable := addUnbuiltDrv(t, client)
+
+	missing, err = client.QueryMissing(ctx, []string{unbuildable.DrvPath + "!out"})
+	rq.NoError(err)
+	rq.NotNil(missing)
+	rq.Contains(missing.WillBuild, unbuildable.DrvPath)
 }
 
 // --- NAR Streaming ---
@@ -725,22 +897,16 @@ func testBuildDerivation(t *testing.T, client *daemon.Client) {
 }
 
 func testAddBuildLog(t *testing.T, client *daemon.Client) {
-	path, _ := addTestPath(t, client)
+	graph := addTestPathWithDeps(t, client)
 
-	// use the test path as a pseudo-derivation path for AddBuildLog.
-	// the daemon may reject this since it's not a real .drv, but the protocol round-trip is what we're testing.
 	logContent := "test build log from go-nix\n"
 
-	err := client.AddBuildLog(t.Context(), path, strings.NewReader(logContent))
+	err := client.AddBuildLog(t.Context(), graph.DrvPath, strings.NewReader(logContent))
 	if skipIfUnsupported(t, err) {
 		return
 	}
 
-	if err != nil {
-		t.Logf("AddBuildLog returned error: %v (may be expected for non-.drv path)", err)
-	} else {
-		t.Log("AddBuildLog succeeded")
-	}
+	require.NoError(t, err)
 }
 
 func testAddIndirectRoot(t *testing.T, client *daemon.Client) {
@@ -777,31 +943,16 @@ func testSetOptionsWithOverrides(t *testing.T, client *daemon.Client) {
 func testQueryDerivationOutputMap(t *testing.T, client *daemon.Client) {
 	rq := require.New(t)
 
-	path, _ := addTestPath(t, client)
+	graph := addTestPathWithDeps(t, client)
 
-	// our test path has no deriver, so query its output map directly.
-	// this should return an empty map (or an error if the path is not a .drv), but the protocol round-trip is what
-	// we're testing.
-	info, err := client.QueryPathInfo(t.Context(), path)
-	rq.NoError(err)
-	rq.NotNil(info)
-
-	if info.Deriver == "" {
-		t.Log("Test path has no deriver (expected for addTestPath paths)")
-
-		return
-	}
-
-	outputs, err := client.QueryDerivationOutputMap(t.Context(), info.Deriver)
+	outputs, err := client.QueryDerivationOutputMap(t.Context(), graph.DrvPath)
 	if skipIfUnsupported(t, err) {
 		return
 	}
 
 	rq.NoError(err)
-
-	for name, outPath := range outputs {
-		t.Logf("  output %q -> %s", name, outPath)
-	}
+	rq.Contains(outputs, "out")
+	rq.Equal(graph.OutPath, outputs["out"])
 }
 
 // --- AddToStore ---
