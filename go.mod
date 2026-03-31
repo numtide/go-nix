@@ -5,12 +5,12 @@ go 1.26
 toolchain go1.26.1
 
 require (
-	github.com/adrg/xdg v0.5.0
 	github.com/alecthomas/kong v0.5.0
 	github.com/dgraph-io/badger/v3 v3.2103.2
 	github.com/mattn/go-sqlite3 v1.14.23
 	github.com/nsf/jsondiff v0.0.0-20210926074059-1e845ec5d249
 	github.com/stretchr/testify v1.9.0
+	golang.org/x/sync v0.20.0
 )
 
 require (
@@ -30,7 +30,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.opencensus.io v0.22.5 // indirect
 	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.22.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

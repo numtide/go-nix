@@ -3,20 +3,26 @@
   pkgs,
   ...
 }:
-pkgs.mkShell {
-  env.GOROOT = "${pkgs.go}/share/go";
+perSystem.self.gonix.passthru.tests.integration.overrideAttrs (old: {
+  doCheck = false;
 
-  packages =
-    (with pkgs; [
+  env = old.env // {
+    GOROOT = "${old.passthru.go}/share/go";
+  };
+
+  nativeBuildInputs =
+    old.nativeBuildInputs
+    ++ (with pkgs; [
       delve
-      go
       golangci-lint
       gotools
       lazysql
       pprof
       sqlc
-    ])
-    ++ (with perSystem; [
-      gomod2nix.default
     ]);
-}
+
+  shellHook = ''
+    # these are only needed for hermetic builds
+    unset GO_NO_VENDOR_CHECKS GOSUMDB GOPROXY GOFLAGS
+  '';
+})

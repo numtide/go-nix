@@ -6,7 +6,6 @@ CREATE TABLE BinaryCaches (
     wantMassQuery integer not null,
     priority  integer not null
 );
-CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE NARs (
     cache            integer not null,
     hashPart         text not null,

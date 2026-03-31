@@ -9,7 +9,6 @@ CREATE TABLE ValidPaths (
     sigs             text, -- space-separated
     ca               text -- if not null, an assertion that the path is content-addressed; see ValidPathInfo
 );
-CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE Refs (
     referrer  integer not null,
     reference integer not null,

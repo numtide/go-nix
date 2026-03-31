@@ -331,7 +331,7 @@ func TestReaderSmoketest(t *testing.T) {
 			f, err := os.Open("../../test/testdata/nar_1094wph9z4nwlgvsd53abfz8i117ykiv5dwnq9nnhz846s7xqd7d.nar_bin_arp")
 			assert.NoError(t, err)
 
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
 			expectedContents, err := io.ReadAll(f)
 			assert.NoError(t, err)
