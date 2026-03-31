@@ -4,8 +4,7 @@ import (
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
-// ClientSettings holds the client-side build settings sent to the daemon
-// via the SetOptions operation.
+// ClientSettings holds the client-side build settings sent to the daemon via the SetOptions operation.
 type ClientSettings struct {
 	// KeepFailed controls whether to keep build directories of failed builds.
 	KeepFailed bool
@@ -45,9 +44,8 @@ func DefaultClientSettings() *ClientSettings {
 	}
 }
 
-// WriteClientSettings serializes the SetOptions request fields using the
-// encoder in the Nix daemon wire format. The version parameter is the
-// negotiated protocol version.
+// WriteClientSettings serializes the SetOptions request fields using the encoder in the Nix daemon wire format.
+// The version parameter is the negotiated protocol version.
 func WriteClientSettings(enc *wire.Encoder, s *ClientSettings, version uint64) error {
 	if s == nil {
 		s = DefaultClientSettings()

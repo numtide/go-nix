@@ -9,17 +9,16 @@ import (
 
 const defaultFrameSize = 32 * 1024 // 32KB
 
-// FramedReader reads framed data from an underlying reader. Each frame
-// consists of a uint64 length header followed by that many bytes of data
-// (no padding). A zero-length frame signals end-of-stream.
+// FramedReader reads framed data from an underlying reader.
+// Each frame consists of a uint64 length header followed by that many bytes of data (no padding).
+// A zero-length frame signals end-of-stream.
 //
-// This matches the Nix C++ FramedSource format: repeated
-// [length(uint64)][raw_data], terminated by [0(uint64)].
+// This matches the Nix C++ FramedSource format: repeated [length(uint64)][raw_data], terminated by [0(uint64)].
 //
 // FramedReader is not safe for concurrent use.
 type FramedReader struct {
 	r          io.Reader
-	remaining  uint64 // bytes remaining in current frame
+	remaining  uint64 // bytes remaining in the current frame
 	needHeader bool   // true when we need to read the next frame header
 	done       bool   // true after we read a zero-length terminator frame
 }
@@ -32,14 +31,14 @@ func NewFramedReader(r io.Reader) *FramedReader {
 	}
 }
 
-// Read implements io.Reader. It transparently handles frame boundaries,
-// reading frame headers as needed.
+// Read implements io.Reader.
+// It transparently handles frame boundaries, reading frame headers as needed.
 func (fr *FramedReader) Read(p []byte) (int, error) {
 	if fr.done {
 		return 0, io.EOF
 	}
 
-	// If the current frame is exhausted, advance to the next one.
+	// if the current frame is exhausted, advance to the next one
 	if fr.needHeader {
 		if err := fr.nextFrame(); err != nil {
 			return 0, err
@@ -50,7 +49,7 @@ func (fr *FramedReader) Read(p []byte) (int, error) {
 		}
 	}
 
-	// Limit the read to the remaining bytes in the current frame.
+	// limit the read to the remaining bytes in the current frame
 	toRead := min(uint64(len(p)), fr.remaining)
 
 	n, err := fr.r.Read(p[:toRead])
@@ -63,8 +62,8 @@ func (fr *FramedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// nextFrame reads the next frame header. If a zero-length frame is
-// encountered, fr.done is set to true.
+// nextFrame reads the next frame header.
+// If a zero-length frame is encountered, fr.done is set to true.
 func (fr *FramedReader) nextFrame() error {
 	frameLen, err := wire.ReadUint64(fr.r)
 	if err != nil {
@@ -83,13 +82,11 @@ func (fr *FramedReader) nextFrame() error {
 	return nil
 }
 
-// FramedWriter writes framed data to an underlying writer. Data written via
-// Write is buffered and flushed as frames when the buffer reaches the
-// threshold (default 32KB). Close flushes any remaining buffered data and
-// writes a zero-length terminator frame.
+// FramedWriter writes framed data to an underlying writer.
+// Data written via Write is buffered and flushed as frames when the buffer reaches the threshold (default 32KB).
+// Close flushes any remaining buffered data and writes a zero-length terminator frame.
 //
-// This matches the Nix C++ FramedSink format: each frame is
-// [length(uint64)][raw_data] with no padding.
+// This matches the Nix C++ FramedSink format: each frame is [length(uint64)][raw_data] with no padding.
 //
 // FramedWriter is not safe for concurrent use.
 type FramedWriter struct {
@@ -115,14 +112,14 @@ func (fw *FramedWriter) Write(p []byte) (int, error) {
 	written := 0
 
 	for len(p) > 0 {
-		// Fill the buffer up to capacity.
+		// fill the buffer up to capacity
 		space := min(cap(fw.buf)-len(fw.buf), len(p))
 
 		fw.buf = append(fw.buf, p[:space]...)
 		p = p[space:]
 		written += space
 
-		// Flush if the buffer is full.
+		// flush if the buffer is full
 		if len(fw.buf) == cap(fw.buf) {
 			if err := fw.flush(); err != nil {
 				return written, err
@@ -133,8 +130,7 @@ func (fw *FramedWriter) Write(p []byte) (int, error) {
 	return written, nil
 }
 
-// Close flushes any remaining buffered data as a frame and writes a
-// zero-length terminator frame.
+// Close flushes any remaining buffered data as a frame and writes a zero-length terminator frame.
 func (fw *FramedWriter) Close() error {
 	if fw.closed {
 		return nil
@@ -142,14 +138,14 @@ func (fw *FramedWriter) Close() error {
 
 	fw.closed = true
 
-	// Flush any remaining data.
+	// flush any remaining data.
 	if len(fw.buf) > 0 {
 		if err := fw.flush(); err != nil {
 			return err
 		}
 	}
 
-	// Write terminator frame (zero-length).
+	// write terminator frame (zero-length).
 	return wire.WriteUint64(fw.w, 0)
 }
 
@@ -160,17 +156,17 @@ func (fw *FramedWriter) flush() error {
 		return nil
 	}
 
-	// Write frame header.
+	// write the frame header
 	if err := wire.WriteUint64(fw.w, n); err != nil {
 		return err
 	}
 
-	// Write frame data (no padding).
+	// write frame data (no padding)
 	if _, err := fw.w.Write(fw.buf); err != nil {
 		return err
 	}
 
-	// Reset buffer.
+	// reset buffer.
 	fw.buf = fw.buf[:0]
 
 	return nil

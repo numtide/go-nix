@@ -8,13 +8,12 @@ import (
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
-// OpResponse wraps the response phase of a daemon operation. It implements
-// io.ReadCloser over the connection's reader and deregisters the context
-// cancellation callback when closed.
+// OpResponse wraps the response phase of a daemon operation.
+// It implements io.ReadCloser over the connection's reader and deregisters the context cancellation callback when
+// closed.
 //
-// Before reading response data, the caller may call ReadLogs to receive log
-// messages from the daemon. If Read is called before ReadLogs, any pending
-// log messages are drained and discarded automatically.
+// Before reading response data, the caller may call ReadLogs to receive log messages from the daemon.
+// If Read is called before ReadLogs, any pending log messages are drained and discarded automatically.
 //
 // Callers must call Close when done reading, even if they did not read any data.
 //
@@ -32,7 +31,7 @@ type OpResponse struct {
 // ReadLogs reads log messages from the daemon, calling fn for each message.
 // It blocks until all log messages have been consumed (LogLast received).
 // Returns ErrLogsDrained if called after logs have already been read.
-// Returns a *Error if the daemon reports an error via LogError.
+// Returns an error if the daemon reports an error via LogError.
 func (resp *OpResponse) ReadLogs(fn func(LogMessage)) error {
 	if resp.logsDrained {
 		return ErrLogsDrained
@@ -43,7 +42,7 @@ func (resp *OpResponse) ReadLogs(fn func(LogMessage)) error {
 	return resp.readLogs(fn)
 }
 
-// readLogs reads and dispatches log messages from the daemon's stderr channel.
+// readLogs processes daemon log messages and invokes the provided function for each log message encountered.
 func (resp *OpResponse) readLogs(fn func(LogMessage)) error {
 	for {
 		raw, err := wire.ReadUint64(resp.r)
@@ -115,8 +114,8 @@ func (resp *OpResponse) readLogs(fn func(LogMessage)) error {
 	}
 }
 
-// Read reads response data from the daemon connection. If log messages have
-// not yet been drained, they are discarded before reading response data.
+// Read reads response data from the daemon connection.
+// If log messages have not yet been drained, they are discarded before reading response data.
 // Returns ErrClosed if the response has been closed.
 func (resp *OpResponse) Read(p []byte) (int, error) {
 	if resp.closed {
@@ -134,8 +133,9 @@ func (resp *OpResponse) Read(p []byte) (int, error) {
 	return resp.r.Read(p)
 }
 
-// Close deregisters the context cancellation callback and resets the
-// connection deadline. It is idempotent. After Close, Read returns ErrClosed.
+// Close deregisters the context cancellation callback and resets the connection deadline.
+// It is idempotent.
+// After Close, Read returns ErrClosed.
 func (resp *OpResponse) Close() error {
 	if resp.closed {
 		return nil

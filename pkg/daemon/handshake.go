@@ -13,14 +13,14 @@ type HandshakeInfo struct {
 	Version          uint64
 	DaemonNixVersion string
 	Trust            TrustLevel
+
 	// Features is the set of protocol features negotiated with the daemon.
-	// This is the intersection of the features supported by both client and
-	// daemon (protocol >= 1.38). Empty for older protocols.
+	// This is the intersection of the features supported by both client and daemon (protocol >= 1.38).
+	// Empty for older protocols.
 	Features []string
 }
 
-// handshakeWithBufIO performs the Nix daemon protocol handshake using the
-// provided buffered reader and writer.
+// handshakeWithBufIO performs the Nix daemon protocol handshake using the provided reader and writer.
 func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	// 1. Client sends ClientMagic — flush.
 	if err := wire.WriteUint64(w, ClientMagic); err != nil {
@@ -44,13 +44,13 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 		}
 	}
 
-	// 3. Server sends protocol version.
+	// 3. Server sends its protocol version.
 	serverVersion, err := wire.ReadUint64(r)
 	if err != nil {
 		return nil, &ProtocolError{Op: "handshake read server version", Err: err}
 	}
 
-	// 4. Client computes negotiated version = min(serverVersion, ProtocolVersion).
+	// 4. Client computes a negotiated version = min(serverVersion, ProtocolVersion).
 	negotiated := min(serverVersion, ProtocolVersion)
 
 	// Validate the negotiated version is at least the minimum we support.
@@ -61,7 +61,7 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 		}
 	}
 
-	// 5. Client sends negotiated version.
+	// 5. Client sends the negotiated version.
 	if err := wire.WriteUint64(w, negotiated); err != nil {
 		return nil, &ProtocolError{Op: "handshake write negotiated version", Err: err}
 	}
@@ -70,26 +70,27 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 		return nil, &ProtocolError{Op: "handshake flush negotiated version", Err: err}
 	}
 
-	// 6. Feature set exchange (v1.38+): client sends its features, then reads
-	// the daemon's features. The negotiated features are the intersection.
+	// 6. Feature set exchange (v1.38+): client sends its features, then reads the daemon's features.
+	// The negotiated features are the intersection.
 	var features []string
 
 	if negotiated >= ProtoVersionFeatureExchange {
-		// We currently support no protocol features; send empty list.
-		if err := wire.WriteStrings(w, nil); err != nil {
+		// we currently support no protocol features, send an empty list
+		if err = wire.WriteStrings(w, nil); err != nil {
 			return nil, &ProtocolError{Op: "handshake write features", Err: err}
 		}
 
-		if err := w.Flush(); err != nil {
+		if err = w.Flush(); err != nil {
 			return nil, &ProtocolError{Op: "handshake flush features", Err: err}
 		}
 
+		// read daemon features
 		daemonFeatures, err := wire.ReadStrings(r, MaxStringSize)
 		if err != nil {
 			return nil, &ProtocolError{Op: "handshake read daemon features", Err: err}
 		}
 
-		// Intersect: keep only features both client and daemon support.
+		// intersect: keep only features both client and daemon support.
 		clientFeatures := map[string]bool{} // no client features yet
 		for _, f := range daemonFeatures {
 			if clientFeatures[f] {
@@ -100,19 +101,19 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 
 	// 7. Client sends CPU affinity flag: false (v1.14+).
 	if negotiated >= ProtoVersionCPUAffinity {
-		if err := wire.WriteBool(w, false); err != nil {
+		if err = wire.WriteBool(w, false); err != nil {
 			return nil, &ProtocolError{Op: "handshake write cpu affinity", Err: err}
 		}
 	}
 
 	// 8. Client sends reserve space flag: false (v1.11+).
 	if negotiated >= ProtoVersionReserveSpace {
-		if err := wire.WriteBool(w, false); err != nil {
+		if err = wire.WriteBool(w, false); err != nil {
 			return nil, &ProtocolError{Op: "handshake write reserve space", Err: err}
 		}
 	}
 
-	if err := w.Flush(); err != nil {
+	if err = w.Flush(); err != nil {
 		return nil, &ProtocolError{Op: "handshake flush client flags", Err: err}
 	}
 
@@ -120,8 +121,6 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	daemonVersion := ""
 
 	if negotiated >= ProtoVersionNixVersion {
-		var err error
-
 		daemonVersion, err = wire.ReadString(r, MaxStringSize)
 		if err != nil {
 			return nil, &ProtocolError{Op: "handshake read daemon version", Err: err}
@@ -132,8 +131,6 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	var trustRaw uint64
 
 	if negotiated >= ProtoVersionTrust {
-		var err error
-
 		trustRaw, err = wire.ReadUint64(r)
 		if err != nil {
 			return nil, &ProtocolError{Op: "handshake read trust level", Err: err}
@@ -141,9 +138,8 @@ func handshakeWithBufIO(r io.Reader, w *bufio.Writer) (*HandshakeInfo, error) {
 	}
 
 	// 11. Consume the daemon's post-handshake startWork/stopWork cycle.
-	// The daemon sends STDERR_LAST after the handshake to flush any pending
-	// startup messages.
-	if err := ProcessStderr(r, nil, negotiated); err != nil {
+	// The daemon sends STDERR_LAST after the handshake to flush any pending startup messages.
+	if err = ProcessStderr(r, nil, negotiated); err != nil {
 		return nil, &ProtocolError{Op: "handshake process startup stderr", Err: err}
 	}
 

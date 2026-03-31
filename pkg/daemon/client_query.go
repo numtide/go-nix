@@ -11,8 +11,7 @@ import (
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
-// IsValidPath checks whether the given store path is valid (exists in the
-// store).
+// IsValidPath checks whether the given store path is valid (exists in the store).
 func (c *Client) IsValidPath(ctx context.Context, path string) (bool, error) {
 	resp, err := c.Execute(ctx, OpIsValidPath, func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
@@ -20,7 +19,8 @@ func (c *Client) IsValidPath(ctx context.Context, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -32,8 +32,8 @@ func (c *Client) IsValidPath(ctx context.Context, path string) (bool, error) {
 	return valid, nil
 }
 
-// QueryPathInfo retrieves the metadata for the given store path. Returns
-// ErrNotFound if the path does not exist in the store.
+// QueryPathInfo retrieves the metadata for the given store path.
+// Returns ErrNotFound if the path does not exist in the store.
 func (c *Client) QueryPathInfo(ctx context.Context, path string) (*PathInfo, error) {
 	resp, err := c.Execute(ctx, OpQueryPathInfo, func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
@@ -41,7 +41,8 @@ func (c *Client) QueryPathInfo(ctx context.Context, path string) (*PathInfo, err
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -57,8 +58,8 @@ func (c *Client) QueryPathInfo(ctx context.Context, path string) (*PathInfo, err
 	return ReadPathInfo(dec, path, c.info.Version)
 }
 
-// QueryPathFromHashPart looks up a store path by its hash part. If nothing
-// is found, the result is an empty string with no error.
+// QueryPathFromHashPart looks up a store path by its hash part.
+// If nothing is found, the result is an empty string with no error.
 func (c *Client) QueryPathFromHashPart(ctx context.Context, hashPart string) (string, error) {
 	resp, err := c.Execute(ctx, OpQueryPathFromHashPart, func(enc *wire.Encoder) error {
 		return enc.WriteString(hashPart)
@@ -66,7 +67,8 @@ func (c *Client) QueryPathFromHashPart(ctx context.Context, hashPart string) (st
 	if err != nil {
 		return "", err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -84,7 +86,8 @@ func (c *Client) QueryAllValidPaths(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -96,8 +99,8 @@ func (c *Client) QueryAllValidPaths(ctx context.Context) ([]string, error) {
 	return paths, nil
 }
 
-// QueryValidPaths returns the subset of the given paths that are valid. If
-// substituteOk is true, the daemon may attempt to substitute missing paths.
+// QueryValidPaths returns the subset of the given paths that are valid.
+// If substituteOk is true, the daemon may attempt to substitute missing paths.
 func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substituteOk bool) ([]string, error) {
 	resp, err := c.Execute(ctx, OpQueryValidPaths, func(enc *wire.Encoder) error {
 		if err := enc.WriteStrings(paths); err != nil {
@@ -116,7 +119,8 @@ func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substitute
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -128,8 +132,8 @@ func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substitute
 	return valid, nil
 }
 
-// QuerySubstitutablePaths returns the subset of the given paths that can be
-// substituted from a binary cache or other substitute source.
+// QuerySubstitutablePaths returns the subset of the given paths that can be substituted from a binary cache or other
+// substitute source.
 func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([]string, error) {
 	resp, err := c.Execute(ctx, OpQuerySubstitutablePaths, func(enc *wire.Encoder) error {
 		return enc.WriteStrings(paths)
@@ -137,7 +141,8 @@ func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -149,9 +154,9 @@ func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([
 	return substitutable, nil
 }
 
-// QuerySubstitutablePathInfos returns substitution metadata (deriver,
-// references, download size, NAR size) for the given paths. The input is a
-// map from store paths to optional content addresses (empty string for no CA).
+// QuerySubstitutablePathInfos returns substitution metadata (deriver, references, download size, NAR size) for the
+// given paths.
+// The input is a map from store paths to optional content addresses (empty string for no CA).
 // Paths not available from any substituter are omitted from the result.
 func (c *Client) QuerySubstitutablePathInfos(
 	ctx context.Context, paths map[string]string,
@@ -177,7 +182,8 @@ func (c *Client) QuerySubstitutablePathInfos(
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -186,6 +192,7 @@ func (c *Client) QuerySubstitutablePathInfos(
 		return nil, &ProtocolError{Op: "QuerySubstitutablePathInfos read response", Err: err}
 	}
 
+	// drain the results
 	result := make(map[string]*SubstitutablePathInfo, count)
 
 	for range count {
@@ -205,8 +212,7 @@ func (c *Client) QuerySubstitutablePathInfos(
 	return result, nil
 }
 
-// QueryValidDerivers returns the derivations known to have produced the given
-// store path.
+// QueryValidDerivers returns the derivations known to have produced the given store path.
 func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string, error) {
 	resp, err := c.Execute(ctx, OpQueryValidDerivers, func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
@@ -214,7 +220,8 @@ func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -226,8 +233,7 @@ func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string,
 	return derivers, nil
 }
 
-// QueryReferrers returns the set of store paths that reference (depend on)
-// the given path.
+// QueryReferrers returns the set of store paths that reference (depend on) the given path.
 func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, error) {
 	resp, err := c.Execute(ctx, OpQueryReferrers, func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
@@ -235,7 +241,8 @@ func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -247,21 +254,25 @@ func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, err
 	return referrers, nil
 }
 
-// QueryDerivationOutputMap returns a map from output names to store paths
-// for the given derivation. Requires protocol >= 1.30.
+// QueryDerivationOutputMap returns a map from output names to store paths for the given derivation.
+// Requires protocol >= 1.30.
 func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (map[string]string, error) {
+	// version check
 	if err := c.requireVersion(OpQueryDerivationOutputMap, ProtoVersionQueryDerivationOutputMap); err != nil {
 		return nil, err
 	}
 
+	// send request
 	resp, err := c.Execute(ctx, OpQueryDerivationOutputMap, func(enc *wire.Encoder) error {
 		return enc.WriteString(drvPath)
 	})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
 
+	defer func() { _ = resp.Close() }()
+
+	// process the response
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
 	outputs, err := dec.ReadStringMap()
@@ -272,22 +283,26 @@ func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (
 	return outputs, nil
 }
 
-// QueryMissing determines which of the given paths need to be built,
-// substituted, or are unknown. It also reports the expected download and
-// unpacked NAR sizes. Requires protocol >= 1.30.
+// QueryMissing determines which of the given paths need to be built, substituted, or are unknown.
+// It also reports the expected download and unpacked NAR sizes.
+// Requires protocol >= 1.30.
 func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo, error) {
+	// version check
 	if err := c.requireVersion(OpQueryMissing, ProtoVersionQueryMissing); err != nil {
 		return nil, err
 	}
 
+	// send request
 	resp, err := c.Execute(ctx, OpQueryMissing, func(enc *wire.Encoder) error {
 		return enc.WriteStrings(paths)
 	})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
 
+	defer func() { _ = resp.Close() }()
+
+	// process the response
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
 	var info MissingInfo
@@ -320,21 +335,25 @@ func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo
 	return &info, nil
 }
 
-// QueryRealisation looks up content-addressed realisations for the given
-// output identifier. Requires protocol >= 1.31.
+// QueryRealisation looks up content-addressed realisations for the given output identifier.
+// Requires protocol >= 1.31.
 func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]Realisation, error) {
+	// version check
 	if err := c.requireVersion(OpQueryRealisation, ProtoVersionRealisationJSON); err != nil {
 		return nil, err
 	}
 
+	// send the request
 	resp, err := c.Execute(ctx, OpQueryRealisation, func(enc *wire.Encoder) error {
 		return enc.WriteString(outputID)
 	})
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
 
+	defer func() { _ = resp.Close() }()
+
+	// process the response
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
 	ss, err := dec.ReadStrings()
@@ -353,14 +372,15 @@ func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]Reali
 	return realisations, nil
 }
 
-// FindRoots returns the set of GC roots known to the daemon. The map keys
-// are the root link paths and the values are the store paths they point to.
+// FindRoots returns the set of GC roots known to the daemon.
+// The map keys are the root link paths, and the values are the store paths they point to.
 func (c *Client) FindRoots(ctx context.Context) (map[string]string, error) {
 	resp, err := c.Execute(ctx, OpFindRoots, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -372,12 +392,11 @@ func (c *Client) FindRoots(ctx context.Context) (map[string]string, error) {
 	return roots, nil
 }
 
-// NarFromPath returns the NAR serialisation of the given store path as a
-// streaming reader. The caller must read the complete NAR and call Close
-// before starting another operation.
+// NarFromPath returns the NAR serialisation of the given store path as a streaming reader.
+// The caller must read the complete NAR and call Close before starting another operation.
 //
-// If logFn is non-nil, daemon log messages are passed to it before the NAR
-// data is returned. If nil, log messages are discarded.
+// If logFn is non-nil, daemon log messages are passed to it before the NAR data is returned.
+// If nil, log messages are discarded.
 func (c *Client) NarFromPath(
 	ctx context.Context, path string, logFn func(LogMessage),
 ) (r io.ReadCloser, err error) {
@@ -452,8 +471,7 @@ func (c *Client) NarFromPath(
 	return pr, nil
 }
 
-// drainNAR reads one complete NAR archive from r using nar.Reader,
-// consuming all entries and file content until EOF.
+// drainNAR reads one complete NAR archive from r using nar.Reader, consuming all entries and file content until EOF.
 func drainNAR(r io.Reader) error {
 	nr, err := nar.NewReader(r)
 	if err != nil {

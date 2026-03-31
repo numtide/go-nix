@@ -7,17 +7,16 @@ import (
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
-// ProcessStderr reads and dispatches log/activity messages from the daemon's
-// stderr channel. The daemon interleaves these messages before the actual
-// response payload. The function loops until it receives LogLast, at which
-// point the caller can proceed to read the response.
+// ProcessStderr reads and dispatches log/activity messages from the daemon's stderr channel.
+// The daemon interleaves these messages before the actual response payload.
+// The function loops until it receives LogLast, at which point the caller can proceed to read the response.
 //
 // If fn is non-nil, each log message (other than errors) is passed to it.
 // If fn is nil, non-error messages are silently discarded.
 // If a LogError message is received, the parsed Error is returned.
 //
-// The version parameter is the negotiated protocol version, used to select
-// the correct error format (structured errors require >= 1.26).
+// The version parameter is the negotiated protocol version, used to select the correct error format (structured errors
+// require >= 1.26).
 func ProcessStderr(r io.Reader, fn func(LogMessage), version uint64) error {
 	for {
 		raw, err := wire.ReadUint64(r)
@@ -89,10 +88,10 @@ func ProcessStderr(r io.Reader, fn func(LogMessage), version uint64) error {
 	}
 }
 
-// readError parses an Error from the daemon's stderr channel. The format
-// depends on the negotiated protocol version: >= 1.26 uses structured errors
-// with type/level/name/traces; older versions send a plain message string
-// and an exit status.
+// readError parses an Error from the daemon's stderr channel.
+// The format depends on the negotiated protocol version.
+// >= 1.26 uses structured errors with type/level/name/traces.
+// Older versions send a plain message string and an exit status.
 func readError(r io.Reader, version uint64) error {
 	if version < ProtoVersionStructuredErrors {
 		message, err := wire.ReadString(r, MaxStringSize)
@@ -246,8 +245,8 @@ func readActivityResult(r io.Reader) (*ActivityResult, error) {
 	}, nil
 }
 
-// readFields parses a sequence of typed fields from the daemon's stderr
-// channel. Each field is preceded by a type tag: 0 for integer, 1 for string.
+// readFields parses a sequence of typed fields from the daemon's stderr channel.
+// Each field is preceded by a type tag: 0 for integer, 1 for string.
 func readFields(r io.Reader, count uint64) ([]LogField, error) {
 	fields := make([]LogField, count)
 

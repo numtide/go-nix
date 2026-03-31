@@ -18,10 +18,9 @@ const (
 	ProtocolVersion uint64 = 0x0126
 
 	// MinProtocolVersion is the minimum protocol version we support (1.23).
-	// We require 1.23+ because the framed streaming protocol (used by
-	// AddToStoreNar, AddBuildLog, etc.) was introduced in 1.23. Versions
-	// 1.21–1.22 use a different bidirectional STDERR_READ mechanism that
-	// this client does not implement.
+	// We require 1.23+ because the framed streaming protocol (used by AddToStoreNar, AddBuildLog, etc.) was introduced
+	// in 1.23.
+	// Versions 1.21–1.22 use a different bidirectional STDERR_READ mechanism that this client does not implement.
 	MinProtocolVersion uint64 = 0x0117
 )
 
@@ -38,7 +37,6 @@ const (
 	ProtoVersionAddToStore               = 0x0119 // 1.25: modern AddToStore format (framed)
 	ProtoVersionStructuredErrors         = 0x011a // 1.26: structured Error with type/level/traces
 	ProtoVersionSubstituteOk             = 0x011b // 1.27: substituteOk in QueryValidPaths
-	ProtoVersionRegisterDrvOutput        = 0x011b // 1.27: RegisterDrvOutput, QueryRealisation
 	ProtoVersionBuiltOutputs             = 0x011c // 1.28: builtOutputs in BuildResult
 	ProtoVersionBuildTimes               = 0x011d // 1.29: timesBuilt etc. in BuildResult
 	ProtoVersionAddPermRoot              = 0x0124 // 1.36: AddPermRoot op
@@ -345,11 +343,9 @@ type MissingInfo struct {
 	NarSize uint64
 }
 
-// SubstitutablePathInfo holds substitution metadata for a store path, as
-// returned by QuerySubstitutablePathInfos.
+// SubstitutablePathInfo holds substitution metadata for a store path, as returned by QuerySubstitutablePathInfos.
 type SubstitutablePathInfo struct {
-	// Deriver is the store path of the derivation that produced this path,
-	// or empty if unknown.
+	// Deriver is the store path of the derivation that produced this path, or empty if unknown.
 	Deriver string
 	// References is the set of store paths this path depends on at runtime.
 	References []string

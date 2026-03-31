@@ -9,14 +9,12 @@ import (
 	"github.com/nix-community/go-nix/pkg/wire"
 )
 
-// AddToStore imports content into the store using content-addressing. The daemon
-// computes the store path from the provided data, content-address method, and
-// hash algorithm. This differs from AddToStoreNar where the caller already knows
-// the full PathInfo.
+// AddToStore imports content into the store using content-addressing.
+// The daemon computes the store path from the provided data, content-address method, and hash algorithm.
+// This differs from AddToStoreNar where the caller already knows the full PathInfo.
 //
 // The name parameter is the derivation name (e.g. "hello-2.12.1").
-// The caMethodWithAlgo parameter specifies the content-address method and hash
-// algorithm as a combined string:
+// The caMethodWithAlgo parameter specifies the content-address method and hash algorithm as a combined string:
 //   - "fixed:sha256"     — flat file, SHA256
 //   - "fixed:r:sha256"   — recursive (NAR), SHA256
 //   - "text:sha256"      — text hashing, SHA256
@@ -25,19 +23,23 @@ import (
 // The source provides the data to import (raw bytes for flat, NAR for recursive).
 // Returns the PathInfo computed by the daemon. Requires protocol >= 1.25.
 func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest) (*PathInfo, error) {
+	// nil check
 	if req.Source == nil {
 		return nil, ErrNilReader
 	}
 
+	// version check
 	if err := c.requireVersion(OpAddToStore, ProtoVersionAddToStore); err != nil {
 		return nil, err
 	}
 
+	// send the request
 	resp, err := c.Execute(ctx, OpAddToStore, req.MarshalNix)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -50,9 +52,8 @@ func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest) (*PathI
 	return ReadPathInfo(dec, storePath, c.info.Version)
 }
 
-// AddTempRoot adds a temporary GC root for the given store path. Temporary
-// roots prevent the garbage collector from deleting the path for the duration
-// of the daemon session.
+// AddTempRoot adds a temporary GC root for the given store path.
+// Temporary roots prevent the garbage collector from deleting the path for the duration of the daemon session.
 func (c *Client) AddTempRoot(ctx context.Context, path string) error {
 	resp, err := c.Execute(ctx, OpAddTempRoot, func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
@@ -60,13 +61,14 @@ func (c *Client) AddTempRoot(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	return readAck(wire.NewDecoder(resp, MaxStringSize))
 }
 
-// AddIndirectRoot adds an indirect GC root. The path should be a symlink
-// outside the store that points to a store path.
+// AddIndirectRoot adds an indirect GC root.
+// The path should be a symlink outside the store that points to a store path.
 func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
 	resp, err := c.Execute(ctx, OpAddIndirectRoot, func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
@@ -74,18 +76,21 @@ func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	return readAck(wire.NewDecoder(resp, MaxStringSize))
 }
 
-// AddPermRoot adds a permanent GC root linking gcRoot to storePath. Returns
-// the resulting root path. Requires protocol >= 1.36.
+// AddPermRoot adds a permanent GC root linking gcRoot to storePath.
+// Returns the resulting root path. Requires protocol >= 1.36.
 func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot string) (string, error) {
+	// version check
 	if err := c.requireVersion(OpAddPermRoot, ProtoVersionAddPermRoot); err != nil {
 		return "", err
 	}
 
+	// send the request
 	resp, err := c.Execute(ctx, OpAddPermRoot, func(enc *wire.Encoder) error {
 		if err := enc.WriteString(storePath); err != nil {
 			return err
@@ -96,8 +101,10 @@ func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot strin
 	if err != nil {
 		return "", err
 	}
-	defer resp.Close()
 
+	defer func() { _ = resp.Close() }()
+
+	// process the response
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
 	resultPath, err := dec.ReadString()
@@ -120,22 +127,26 @@ func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) 
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	return readAck(wire.NewDecoder(resp, MaxStringSize))
 }
 
-// RegisterDrvOutput registers a content-addressed realisation for a
-// derivation output. Requires protocol >= 1.31.
+// RegisterDrvOutput registers a content-addressed realisation for a derivation output.
+// Requires protocol >= 1.31.
 func (c *Client) RegisterDrvOutput(ctx context.Context, realisation *Realisation) error {
+	// nil check
 	if realisation == nil {
 		return ErrNilRealisation
 	}
 
+	// version check
 	if err := c.requireVersion(OpRegisterDrvOutput, ProtoVersionRealisationJSON); err != nil {
 		return err
 	}
 
+	// send the request
 	data, err := json.Marshal(realisation)
 	if err != nil {
 		return &ProtocolError{Op: "RegisterDrvOutput marshal JSON", Err: err}
@@ -147,19 +158,24 @@ func (c *Client) RegisterDrvOutput(ctx context.Context, realisation *Realisation
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	// drain logs but no ack — daemon sends only LogLast for RegisterDrvOutput.
 	return resp.ReadLogs(nil)
 }
 
-// AddToStoreNar imports a NAR into the store. The info parameter describes
-// the path metadata, and source provides the NAR data to stream.
+// AddToStoreNar imports a NAR into the store.
+// The info parameter describes the path metadata, and source provides the NAR data to stream.
 // If repair is true, the path is repaired even if it already exists.
 // If dontCheckSigs is true, signature verification is skipped.
 func (c *Client) AddToStoreNar(
-	ctx context.Context, info *PathInfo, source io.Reader, repair, dontCheckSigs bool,
+	ctx context.Context,
+	info *PathInfo,
+	source io.Reader,
+	repair, dontCheckSigs bool,
 ) error {
+	// nil checks
 	if info == nil {
 		return ErrNilPathInfo
 	}
@@ -168,6 +184,7 @@ func (c *Client) AddToStoreNar(
 		return ErrNilReader
 	}
 
+	// send the request
 	resp, err := c.Execute(ctx, OpAddToStoreNar, func(enc *wire.Encoder) error {
 		if err := WritePathInfo(enc, info, c.info.Version); err != nil {
 			return err
@@ -192,19 +209,23 @@ func (c *Client) AddToStoreNar(
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	// drain logs — daemon sends only LogLast for AddToStoreNar.
 	return resp.ReadLogs(nil)
 }
 
-// AddBuildLog uploads a build log for the given derivation path. The log
-// data is streamed from the provided reader. Requires protocol >= 1.32.
+// AddBuildLog uploads a build log for the given derivation path.
+// The log data is streamed from the provided reader.
+// Requires protocol >= 1.32.
 func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader) error {
+	// nil check
 	if log == nil {
 		return ErrNilReader
 	}
 
+	// version check
 	if err := c.requireVersion(OpAddBuildLog, ProtoVersionAddMultipleToStore); err != nil {
 		return err
 	}
@@ -231,7 +252,8 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	return readAck(wire.NewDecoder(resp, MaxStringSize))
 }
@@ -246,7 +268,8 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	var result GCResult
 
@@ -258,21 +281,21 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 	return &result, nil
 }
 
-// OptimiseStore asks the daemon to optimise the Nix store by hard-linking
-// identical files.
+// OptimiseStore asks the daemon to optimise the Nix store by hard-linking identical files.
 func (c *Client) OptimiseStore(ctx context.Context) error {
 	resp, err := c.Execute(ctx, OpOptimiseStore, nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	return readAck(wire.NewDecoder(resp, MaxStringSize))
 }
 
-// VerifyStore checks the consistency of the Nix store. If checkContents is
-// true, the contents of each path are verified against their hash. If repair
-// is true, inconsistencies are repaired. Returns true if errors were found.
+// VerifyStore checks the consistency of the Nix store.
+// If checkContents is true, the contents of each path are verified against their hash.
+// If repair is true, inconsistencies are repaired. Returns true if errors were found.
 func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair bool) (bool, error) {
 	resp, err := c.Execute(ctx, OpVerifyStore, func(enc *wire.Encoder) error {
 		if err := enc.WriteBool(checkContents); err != nil {
@@ -284,7 +307,8 @@ func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair boo
 	if err != nil {
 		return false, err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
@@ -296,8 +320,8 @@ func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair boo
 	return errorsFound, nil
 }
 
-// SetOptions sends the client build settings to the daemon. This should
-// typically be called once after connecting.
+// SetOptions sends the client build settings to the daemon.
+// This should typically be called once after connecting.
 func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error {
 	resp, err := c.Execute(ctx, OpSetOptions, func(enc *wire.Encoder) error {
 		return WriteClientSettings(enc, settings, c.info.Version)
@@ -305,16 +329,18 @@ func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	// drain logs but no ack — daemon sends only LogLast for SetOptions.
 	return resp.ReadLogs(nil)
 }
 
-// AddMultipleToStore imports multiple store paths into the store in a single
-// operation. Each item consists of a PathInfo and a NAR data reader. If repair
-// is true, existing paths are repaired. If dontCheckSigs is true, signature
-// verification is skipped. Requires protocol >= 1.32.
+// AddMultipleToStore imports multiple store paths into the store in a single operation.
+// Each item consists of a PathInfo and a NAR data reader.
+// If repair is true, existing paths are repaired.
+// If dontCheckSigs is true, signature verification is skipped.
+// Requires protocol >= 1.32.
 //
 // Wire format:
 //
@@ -330,18 +356,23 @@ func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error
 //	[flush]
 //	[ProcessStderr]
 func (c *Client) AddMultipleToStore(
-	ctx context.Context, items []AddToStoreItem, repair, dontCheckSigs bool,
+	ctx context.Context,
+	items []AddToStoreItem,
+	repair, dontCheckSigs bool,
 ) error {
+	// version check
 	if err := c.requireVersion(OpAddMultipleToStore, ProtoVersionAddMultipleToStore); err != nil {
 		return err
 	}
 
+	// nil checks
 	for i := range len(items) {
 		if items[i].Source == nil {
 			return ErrNilReader
 		}
 	}
 
+	// send the request
 	resp, err := c.Execute(ctx, OpAddMultipleToStore, func(enc *wire.Encoder) error {
 		// structured header (outside framed stream).
 		if err := enc.WriteBool(repair); err != nil {
@@ -377,7 +408,8 @@ func (c *Client) AddMultipleToStore(
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
+
+	defer func() { _ = resp.Close() }()
 
 	// drain logs — daemon sends only LogLast for AddMultipleToStore.
 	return resp.ReadLogs(nil)

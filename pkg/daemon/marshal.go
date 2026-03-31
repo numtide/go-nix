@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"io"
 
 	"github.com/nix-community/go-nix/pkg/wire"
@@ -16,30 +17,39 @@ type AddToStoreRequest struct {
 }
 
 // MarshalNix encodes AddToStoreRequest in Nix wire format.
-func (r *AddToStoreRequest) MarshalNix(enc *wire.Encoder) error {
-	if err := enc.WriteString(r.Name); err != nil {
+func (r *AddToStoreRequest) MarshalNix(enc *wire.Encoder) (err error) {
+	if err = enc.WriteString(r.Name); err != nil {
 		return err
 	}
 
-	if err := enc.WriteString(r.CAMethodWithAlgo); err != nil {
+	if err = enc.WriteString(r.CAMethodWithAlgo); err != nil {
 		return err
 	}
 
-	if err := enc.WriteStrings(r.References); err != nil {
+	if err = enc.WriteStrings(r.References); err != nil {
 		return err
 	}
 
-	if err := enc.WriteBool(r.Repair); err != nil {
+	if err = enc.WriteBool(r.Repair); err != nil {
 		return err
 	}
 
 	// stream source data as framed.
 	fw := NewFramedWriter(enc.Writer())
-	if _, err := io.Copy(fw, r.Source); err != nil {
+
+	// ensure the fw is always closed and we catch the error
+	defer func() {
+		closeErr := fw.Close()
+		if closeErr != nil && err == nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	if _, err = io.Copy(fw, r.Source); err != nil {
 		return err
 	}
 
-	return fw.Close()
+	return nil
 }
 
 // BuildDerivationRequest holds the parameters for the BuildDerivation operation.
@@ -116,7 +126,7 @@ func (o *GCOptions) UnmarshalNix(dec *wire.Decoder) error {
 
 	// deprecated fields, discard.
 	for range numDeprecatedGCFields {
-		if _, err := dec.ReadUint64(); err != nil {
+		if _, err = dec.ReadUint64(); err != nil {
 			return err
 		}
 	}

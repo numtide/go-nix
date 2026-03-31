@@ -2,12 +2,15 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/nix-community/go-nix/pkg/wire"
 )
+
+var ErrOptionalEmpty = errors.New("optional field is empty")
 
 // readAck reads the daemon's acknowledgment uint64 and verifies it equals 1.
 func readAck(dec *wire.Decoder) error {
@@ -134,14 +137,15 @@ func WritePathInfo(enc *wire.Encoder, info *PathInfo, version uint64) error {
 	return nil
 }
 
-// WriteBasicDerivation writes a BasicDerivation to the wire. Outputs are
-// written sorted by name; environment variables are written sorted by key.
+// WriteBasicDerivation writes a BasicDerivation to the wire.
+// Outputs are written sorted by name.
+// Environment variables are written sorted by key.
 func WriteBasicDerivation(enc *wire.Encoder, drv *BasicDerivation) error {
+	// nil check
 	if drv == nil {
 		return ErrNilDerivation
 	}
 
-	// Outputs: count + sorted entries.
 	outputNames := make([]string, 0, len(drv.Outputs))
 	for name := range drv.Outputs {
 		outputNames = append(outputNames, name)
@@ -173,33 +177,28 @@ func WriteBasicDerivation(enc *wire.Encoder, drv *BasicDerivation) error {
 		}
 	}
 
-	// Inputs: count + strings.
 	if err := enc.WriteStrings(drv.Inputs); err != nil {
 		return err
 	}
 
-	// Platform.
 	if err := enc.WriteString(drv.Platform); err != nil {
 		return err
 	}
 
-	// Builder.
 	if err := enc.WriteString(drv.Builder); err != nil {
 		return err
 	}
 
-	// Args: count + strings.
 	if err := enc.WriteStrings(drv.Args); err != nil {
 		return err
 	}
 
-	// Env: count + sorted key/value pairs.
 	return enc.WriteStringMap(drv.Env)
 }
 
 // readOptionalMicroseconds reads an optional<microseconds> from the wire.
 // Wire format: tag(uint64: 0=none, 1=some) [+ value(uint64) if tag=1].
-// Returns nil if absent, or a pointer to the duration if present.
+// Returns ErrOptionalEmpty if absent, or a pointer to the duration if present.
 func readOptionalMicroseconds(dec *wire.Decoder) (*time.Duration, error) {
 	tag, err := dec.ReadUint64()
 	if err != nil {
@@ -208,7 +207,7 @@ func readOptionalMicroseconds(dec *wire.Decoder) (*time.Duration, error) {
 
 	switch tag {
 	case 0: // none
-		return nil, nil //nolint:nilnil // nil pointer with nil error means "absent optional"
+		return nil, ErrOptionalEmpty
 	case optionalSome:
 		us, err := dec.ReadUint64()
 		if err != nil {
@@ -270,12 +269,16 @@ func ReadBuildResult(dec *wire.Decoder, version uint64) (*BuildResult, error) {
 	// Protocol >= 1.37: cpuUser and cpuSystem as optional<microseconds>.
 	if version >= ProtoVersionCPUTimes {
 		result.CpuUser, err = readOptionalMicroseconds(dec)
-		if err != nil {
+		if errors.Is(err, ErrOptionalEmpty) {
+			// do nothing
+		} else if err != nil {
 			return nil, &ProtocolError{Op: "read build result cpuUser", Err: err}
 		}
 
 		result.CpuSystem, err = readOptionalMicroseconds(dec)
-		if err != nil {
+		if errors.Is(err, ErrOptionalEmpty) {
+			// do nothing
+		} else if err != nil {
 			return nil, &ProtocolError{Op: "read build result cpuSystem", Err: err}
 		}
 	}
