@@ -1,10 +1,19 @@
 package daemon
 
 import (
-	"fmt"
 	"io"
 	"time"
 )
+
+//go:generate stringer -type=Operation -trimprefix=Op -output=types_stringer_operation.go
+//go:generate stringer -type=TrustLevel -trimprefix=Trust -output=types_stringer_trust.go
+//go:generate stringer -type=LogMessageType -trimprefix=Log -output=types_stringer_log.go
+//go:generate stringer -type=ActivityType -trimprefix=Act -output=types_stringer_activity.go
+//go:generate stringer -type=ResultType -trimprefix=Res -output=types_stringer_result.go
+//go:generate stringer -type=Verbosity -trimprefix=Verb -output=types_stringer_verbosity.go
+//go:generate stringer -type=BuildMode -trimprefix=BuildMode -output=types_stringer_buildmode.go
+//go:generate stringer -type=BuildStatus -trimprefix=BuildStatus -output=types_stringer_buildstatus.go
+//go:generate stringer -type=GCAction -trimprefix=GC -output=types_stringer_gc.go
 
 // Protocol handshake constants.
 const (
@@ -88,50 +97,6 @@ const (
 	OpBuildPathsWithResults       Operation = 46
 	OpAddPermRoot                 Operation = 47
 )
-
-//nolint:gochecknoglobals
-var operationNames = map[Operation]string{
-	OpIsValidPath:                 "IsValidPath",
-	OpQueryReferrers:              "QueryReferrers",
-	OpAddToStore:                  "AddToStore",
-	OpBuildPaths:                  "BuildPaths",
-	OpEnsurePath:                  "EnsurePath",
-	OpAddTempRoot:                 "AddTempRoot",
-	OpAddIndirectRoot:             "AddIndirectRoot",
-	OpFindRoots:                   "FindRoots",
-	OpSetOptions:                  "SetOptions",
-	OpCollectGarbage:              "CollectGarbage",
-	OpQueryAllValidPaths:          "QueryAllValidPaths",
-	OpQueryPathInfo:               "QueryPathInfo",
-	OpQueryPathFromHashPart:       "QueryPathFromHashPart",
-	OpQuerySubstitutablePathInfos: "QuerySubstitutablePathInfos",
-	OpQueryValidPaths:             "QueryValidPaths",
-	OpQuerySubstitutablePaths:     "QuerySubstitutablePaths",
-	OpQueryValidDerivers:          "QueryValidDerivers",
-	OpOptimiseStore:               "OptimiseStore",
-	OpVerifyStore:                 "VerifyStore",
-	OpBuildDerivation:             "BuildDerivation",
-	OpAddSignatures:               "AddSignatures",
-	OpNarFromPath:                 "NarFromPath",
-	OpAddToStoreNar:               "AddToStoreNar",
-	OpQueryMissing:                "QueryMissing",
-	OpQueryDerivationOutputMap:    "QueryDerivationOutputMap",
-	OpRegisterDrvOutput:           "RegisterDrvOutput",
-	OpQueryRealisation:            "QueryRealisation",
-	OpAddMultipleToStore:          "AddMultipleToStore",
-	OpAddBuildLog:                 "AddBuildLog",
-	OpBuildPathsWithResults:       "BuildPathsWithResults",
-	OpAddPermRoot:                 "AddPermRoot",
-}
-
-// String returns the human-readable name of the operation.
-func (o Operation) String() string {
-	if name, ok := operationNames[o]; ok {
-		return name
-	}
-
-	return fmt.Sprintf("Operation(%d)", o)
-}
 
 // TrustLevel indicates the trust level of the client as reported by the daemon.
 type TrustLevel uint64
@@ -234,34 +199,6 @@ const (
 	BuildStatusResolvesToAlreadyValid BuildStatus = 13
 	BuildStatusNoSubstituters         BuildStatus = 14
 )
-
-//nolint:gochecknoglobals
-var buildStatusNames = map[BuildStatus]string{
-	BuildStatusBuilt:                  "Built",
-	BuildStatusSubstituted:            "Substituted",
-	BuildStatusAlreadyValid:           "AlreadyValid",
-	BuildStatusPermanentFailure:       "PermanentFailure",
-	BuildStatusInputRejected:          "InputRejected",
-	BuildStatusOutputRejected:         "OutputRejected",
-	BuildStatusTransientFailure:       "TransientFailure",
-	BuildStatusCachedFailure:          "CachedFailure",
-	BuildStatusTimedOut:               "TimedOut",
-	BuildStatusMiscFailure:            "MiscFailure",
-	BuildStatusDependencyFailed:       "DependencyFailed",
-	BuildStatusLogLimitExceeded:       "LogLimitExceeded",
-	BuildStatusNotDeterministic:       "NotDeterministic",
-	BuildStatusResolvesToAlreadyValid: "ResolvesToAlreadyValid",
-	BuildStatusNoSubstituters:         "NoSubstituters",
-}
-
-// String returns the human-readable name of the build status.
-func (s BuildStatus) String() string {
-	if name, ok := buildStatusNames[s]; ok {
-		return name
-	}
-
-	return fmt.Sprintf("BuildStatus(%d)", s)
-}
 
 // GCAction specifies the garbage collection action to perform.
 type GCAction uint64
