@@ -33,6 +33,12 @@ pkgs.buildGo126Module (final: {
 
   env.GOTOOLCHAIN = "local";
 
+  # match CI: race detector + benchmarks
+  checkFlags = [
+    "-race"
+    "-bench=.+"
+  ];
+
   ldflags = [
     "-s"
     "-w"
