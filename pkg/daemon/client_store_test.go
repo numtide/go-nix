@@ -12,739 +12,761 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestClientAddToStore(t *testing.T) {
-	rq := require.New(t)
+func TestAddToStore(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		rq := require.New(t)
 
-	mock := newMockDaemon(t)
+		mock := newMockDaemon(t)
 
-	dumpData := []byte("fake-nar-content-for-testing")
+		dumpData := []byte("fake-nar-content-for-testing")
 
-	expected := &daemon.PathInfo{
-		StorePath:        "/nix/store/abc123-hello-2.12.1",
-		Deriver:          "",
-		NarHash:          "sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
-		References:       []string{},
-		RegistrationTime: 1700000000,
-		NarSize:          uint64(len(dumpData)),
-		Ultimate:         true,
-		Sigs:             []string{},
-		CA:               "fixed:r:sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
-	}
+		expected := &daemon.PathInfo{
+			StorePath:        "/nix/store/abc123-hello-2.12.1",
+			Deriver:          "",
+			NarHash:          "sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+			References:       []string{},
+			RegistrationTime: 1700000000,
+			NarSize:          uint64(len(dumpData)),
+			Ultimate:         true,
+			Sigs:             []string{},
+			CA:               "fixed:r:sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+		}
 
-	mock.onAccept(respondAddToStore(expected))
+		mock.onAccept(respondAddToStore(expected))
 
-	client, err := daemon.Connect(t.Context(), mock.path)
+		client, err := daemon.Connect(t.Context(), mock.path)
 
-	rq.NoError(err)
+		rq.NoError(err)
 
-	defer client.Close()
+		defer client.Close()
 
-	info, err := client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
-		Name:             "hello-2.12.1",
-		CAMethodWithAlgo: "fixed:r:sha256",
-		References:       []string{},
-		Source:           bytes.NewReader(dumpData),
-	})
-	rq.NoError(err)
-	rq.NotNil(info)
-	rq.Equal(expected.StorePath, info.StorePath)
-	rq.Equal(expected.Deriver, info.Deriver)
-	rq.Equal(expected.NarHash, info.NarHash)
-	rq.Equal(expected.References, info.References)
-	rq.Equal(expected.RegistrationTime, info.RegistrationTime)
-	rq.Equal(expected.NarSize, info.NarSize)
-	rq.Equal(expected.Ultimate, info.Ultimate)
-	rq.Equal(expected.Sigs, info.Sigs)
-	rq.Equal(expected.CA, info.CA)
-}
-
-func TestAddToStoreUnsupportedVersion(t *testing.T) {
-	rq := require.New(t)
-
-	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-
-	rq.NoError(err)
-
-	defer client.Close()
-
-	_, err = client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
-		Name:             "hello",
-		CAMethodWithAlgo: "fixed:r:sha256",
-		Source:           bytes.NewReader([]byte("data")),
-	})
-	rq.Error(err)
-	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
-}
-
-func TestAddToStoreNilSource(t *testing.T) {
-	client := &daemon.Client{}
-
-	_, err := client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
-		Name:             "hello",
-		CAMethodWithAlgo: "fixed:r:sha256",
-	})
-	require.ErrorIs(t, err, daemon.ErrNilReader)
-}
-
-func TestCollectGarbageNilOptions(t *testing.T) {
-	client := &daemon.Client{}
-	_, err := client.CollectGarbage(t.Context(), nil)
-	require.ErrorIs(t, err, daemon.ErrNilOptions)
-}
-
-func TestAddToStoreNarNilArgs(t *testing.T) {
-	client := &daemon.Client{}
-
-	err := client.AddToStoreNar(t.Context(), nil, nil, false, false)
-	require.ErrorIs(t, err, daemon.ErrNilPathInfo)
-
-	err = client.AddToStoreNar(t.Context(), &daemon.PathInfo{}, nil, false, false)
-	require.ErrorIs(t, err, daemon.ErrNilReader)
-}
-
-func TestAddBuildLogNilReader(t *testing.T) {
-	client := &daemon.Client{}
-
-	err := client.AddBuildLog(t.Context(), "/nix/store/abc.drv", nil)
-	require.ErrorIs(t, err, daemon.ErrNilReader)
-}
-
-func TestClientAddTempRoot(t *testing.T) {
-	mock := newMockDaemon(t)
-
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
-
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpAddTempRoot), op)
-
-		_, _ = dec.ReadString() // path
-
-		// LogLast
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
-
-		// uint64(1) acknowledgment
-		_ = enc.WriteUint64(1)
-
-		return nil
+		info, err := client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
+			Name:             "hello-2.12.1",
+			CAMethodWithAlgo: "fixed:r:sha256",
+			References:       []string{},
+			Source:           bytes.NewReader(dumpData),
+		})
+		rq.NoError(err)
+		rq.NotNil(info)
+		rq.Equal(expected.StorePath, info.StorePath)
+		rq.Equal(expected.Deriver, info.Deriver)
+		rq.Equal(expected.NarHash, info.NarHash)
+		rq.Equal(expected.References, info.References)
+		rq.Equal(expected.RegistrationTime, info.RegistrationTime)
+		rq.Equal(expected.NarSize, info.NarSize)
+		rq.Equal(expected.Ultimate, info.Ultimate)
+		rq.Equal(expected.Sigs, info.Sigs)
+		rq.Equal(expected.CA, info.CA)
 	})
 
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
+	t.Run("UnsupportedVersion", func(t *testing.T) {
+		rq := require.New(t)
 
-	defer client.Close()
+		mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
 
-	err = client.AddTempRoot(t.Context(), "/nix/store/abc-test")
-	require.NoError(t, err)
-}
+		client, err := daemon.Connect(t.Context(), mock.path)
 
-func TestClientAddIndirectRoot(t *testing.T) {
-	mock := newMockDaemon(t)
+		rq.NoError(err)
 
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
+		defer client.Close()
 
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpAddIndirectRoot), op)
-
-		_, _ = dec.ReadString() // path
-
-		// LogLast
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
-
-		// uint64(1) acknowledgment
-		_ = enc.WriteUint64(1)
-
-		return nil
+		_, err = client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
+			Name:             "hello",
+			CAMethodWithAlgo: "fixed:r:sha256",
+			Source:           bytes.NewReader([]byte("data")),
+		})
+		rq.Error(err)
+		rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 	})
 
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
+	t.Run("NilSource", func(t *testing.T) {
+		client := &daemon.Client{}
 
-	defer client.Close()
-
-	err = client.AddIndirectRoot(t.Context(), "/home/user/result")
-	require.NoError(t, err)
+		_, err := client.AddToStore(t.Context(), &daemon.AddToStoreRequest{
+			Name:             "hello",
+			CAMethodWithAlgo: "fixed:r:sha256",
+		})
+		require.ErrorIs(t, err, daemon.ErrNilReader)
+	})
 }
 
-func TestClientAddPermRoot(t *testing.T) {
-	rq := require.New(t)
+func TestAddToStoreNar(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
 
-	mock := newMockDaemon(t)
+		narData := []byte("fake-nar-content-for-testing")
 
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
+		info := &daemon.PathInfo{
+			StorePath:  "/nix/store/abc-test",
+			Deriver:    "/nix/store/xyz-test.drv",
+			NarHash:    "sha256:fakehash",
+			References: []string{},
+			NarSize:    uint64(len(narData)),
+			Sigs:       []string{},
+		}
 
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpAddPermRoot), op)
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
 
-		_, _ = dec.ReadString() // storePath
-		_, _ = dec.ReadString() // gcRoot
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpAddToStoreNar), op)
 
-		// LogLast
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
+			// read PathInfo: storePath, deriver, narHash, refs, regTime, narSize, ultimate, sigs, ca
+			_, _ = dec.ReadString() // storePath
+			_, _ = dec.ReadString() // deriver
+			_, _ = dec.ReadString() // narHash
 
-		// Response: result path string
-		_ = enc.WriteString("/nix/var/nix/gcroots/auto/abc")
+			_, _ = dec.ReadUint64() // refs count = 0
 
-		return nil
-	})
+			_, _ = dec.ReadUint64() // registrationTime
+			_, _ = dec.ReadUint64() // narSize
+			_, _ = dec.ReadUint64() // ultimate
 
-	client, err := daemon.Connect(t.Context(), mock.path)
+			_, _ = dec.ReadUint64() // sigs count = 0
 
-	rq.NoError(err)
+			_, _ = dec.ReadString() // ca
 
-	defer client.Close()
+			_, _ = dec.ReadUint64() // repair
+			_, _ = dec.ReadUint64() // dontCheckSigs
 
-	resultPath, err := client.AddPermRoot(t.Context(), "/nix/store/abc-test", "/home/user/result")
-	rq.NoError(err)
-	rq.Equal("/nix/var/nix/gcroots/auto/abc", resultPath)
-}
+			// read framed NAR data (no padding in framed protocol)
+			fr := daemon.NewFramedReader(conn)
+			received, err := io.ReadAll(fr)
+			require.NoError(t, err)
+			require.Equal(t, narData, received)
 
-func TestClientAddSignatures(t *testing.T) {
-	mock := newMockDaemon(t)
+			// LogLast
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
+			return nil
+		})
 
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpAddSignatures), op)
-
-		_, _ = dec.ReadString() // path
-
-		// read sigs: count + strings
-		count, _ := dec.ReadUint64()
-		require.Equal(t, uint64(2), count)
-
-		_, _ = dec.ReadString() // sig 1
-		_, _ = dec.ReadString() // sig 2
-
-		// LogLast
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
-
-		// uint64(1) acknowledgment
-		_ = enc.WriteUint64(1)
-
-		return nil
-	})
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
-
-	defer client.Close()
-
-	err = client.AddSignatures(t.Context(), "/nix/store/abc-test", []string{"sig1", "sig2"})
-	require.NoError(t, err)
-}
-
-func TestClientRegisterDrvOutput(t *testing.T) {
-	mock := newMockDaemon(t)
-
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
-
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpRegisterDrvOutput), op)
-
-		_, _ = dec.ReadString() // realisation
-
-		// LogLast (no ack for RegisterDrvOutput)
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
-
-		return nil
-	})
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
-
-	defer client.Close()
-
-	err = client.RegisterDrvOutput(t.Context(), &daemon.Realisation{
-		ID:      "sha256:abc!out",
-		OutPath: "/nix/store/abc-out",
-	})
-	require.NoError(t, err)
-}
-
-func TestClientAddToStoreNar(t *testing.T) {
-	mock := newMockDaemon(t)
-
-	narData := []byte("fake-nar-content-for-testing")
-
-	info := &daemon.PathInfo{
-		StorePath:  "/nix/store/abc-test",
-		Deriver:    "/nix/store/xyz-test.drv",
-		NarHash:    "sha256:fakehash",
-		References: []string{},
-		NarSize:    uint64(len(narData)),
-		Sigs:       []string{},
-	}
-
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
-
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpAddToStoreNar), op)
-
-		// read PathInfo: storePath, deriver, narHash, refs, regTime, narSize, ultimate, sigs, ca
-		_, _ = dec.ReadString() // storePath
-		_, _ = dec.ReadString() // deriver
-		_, _ = dec.ReadString() // narHash
-
-		_, _ = dec.ReadUint64() // refs count = 0
-
-		_, _ = dec.ReadUint64() // registrationTime
-		_, _ = dec.ReadUint64() // narSize
-		_, _ = dec.ReadUint64() // ultimate
-
-		_, _ = dec.ReadUint64() // sigs count = 0
-
-		_, _ = dec.ReadString() // ca
-
-		_, _ = dec.ReadUint64() // repair
-		_, _ = dec.ReadUint64() // dontCheckSigs
-
-		// read framed NAR data (no padding in framed protocol)
-		fr := daemon.NewFramedReader(conn)
-		received, err := io.ReadAll(fr)
+		client, err := daemon.Connect(t.Context(), mock.path)
 		require.NoError(t, err)
-		require.Equal(t, narData, received)
 
-		// LogLast
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
+		defer client.Close()
 
-		return nil
-	})
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
-
-	defer client.Close()
-
-	err = client.AddToStoreNar(t.Context(), info, bytes.NewReader(narData), false, true)
-	require.NoError(t, err)
-}
-
-func TestClientAddBuildLog(t *testing.T) {
-	mock := newMockDaemon(t)
-
-	logContent := "building '/nix/store/00000000000000000000000000000000-test.drv'...\nok\n"
-
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
-
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpAddBuildLog), op)
-
-		drvPath, _ := dec.ReadString() // drvPath (BaseStorePath)
-		require.Equal(t, "00000000000000000000000000000000-test.drv", drvPath)
-
-		// read framed log data (no padding in framed protocol)
-		fr := daemon.NewFramedReader(conn)
-		received, err := io.ReadAll(fr)
+		err = client.AddToStoreNar(t.Context(), info, bytes.NewReader(narData), false, true)
 		require.NoError(t, err)
-		require.Equal(t, logContent, string(received))
-
-		// LogLast
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
-
-		// uint64(1) acknowledgment
-		_ = enc.WriteUint64(1)
-
-		return nil
 	})
 
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
+	t.Run("NilArgs", func(t *testing.T) {
+		client := &daemon.Client{}
 
-	defer client.Close()
+		err := client.AddToStoreNar(t.Context(), nil, nil, false, false)
+		require.ErrorIs(t, err, daemon.ErrNilPathInfo)
 
-	err = client.AddBuildLog(
-		t.Context(),
-		"/nix/store/00000000000000000000000000000000-test.drv",
-		strings.NewReader(logContent),
-	)
-	require.NoError(t, err)
+		err = client.AddToStoreNar(t.Context(), &daemon.PathInfo{}, nil, false, false)
+		require.ErrorIs(t, err, daemon.ErrNilReader)
+	})
 }
 
-func TestClientAddBuildLogInvalidPath(t *testing.T) {
-	mock := newMockDaemon(t)
+func TestAddMultipleToStore(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
 
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
+		narData1 := []byte("nar-content-one")
+		narData2 := []byte("nar-content-two")
 
-	defer client.Close()
-
-	err = client.AddBuildLog(t.Context(), "/tmp/not-a-store-path", strings.NewReader("log"))
-	require.Error(t, err)
-}
-
-func TestClientAddMultipleToStore(t *testing.T) {
-	mock := newMockDaemon(t)
-
-	narData1 := []byte("nar-content-one")
-	narData2 := []byte("nar-content-two")
-
-	items := []daemon.AddToStoreItem{
-		{
-			Info: daemon.PathInfo{
-				StorePath:  "/nix/store/aaa-one",
-				Deriver:    "/nix/store/aaa-one.drv",
-				NarHash:    "sha256:aaaa",
-				References: []string{},
-				NarSize:    uint64(len(narData1)),
-				Sigs:       []string{},
+		items := []daemon.AddToStoreItem{
+			{
+				Info: daemon.PathInfo{
+					StorePath:  "/nix/store/aaa-one",
+					Deriver:    "/nix/store/aaa-one.drv",
+					NarHash:    "sha256:aaaa",
+					References: []string{},
+					NarSize:    uint64(len(narData1)),
+					Sigs:       []string{},
+				},
+				Source: bytes.NewReader(narData1),
 			},
-			Source: bytes.NewReader(narData1),
-		},
-		{
-			Info: daemon.PathInfo{
-				StorePath:  "/nix/store/bbb-two",
-				Deriver:    "/nix/store/bbb-two.drv",
-				NarHash:    "sha256:bbbb",
-				References: []string{"/nix/store/aaa-one"},
-				NarSize:    uint64(len(narData2)),
-				Sigs:       []string{},
+			{
+				Info: daemon.PathInfo{
+					StorePath:  "/nix/store/bbb-two",
+					Deriver:    "/nix/store/bbb-two.drv",
+					NarHash:    "sha256:bbbb",
+					References: []string{"/nix/store/aaa-one"},
+					NarSize:    uint64(len(narData2)),
+					Sigs:       []string{},
+				},
+				Source: bytes.NewReader(narData2),
 			},
-			Source: bytes.NewReader(narData2),
-		},
-	}
+		}
 
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
 
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
 
-		repair, _ := dec.ReadUint64()
-		require.Equal(t, uint64(1), repair)
+			repair, _ := dec.ReadUint64()
+			require.Equal(t, uint64(1), repair)
 
-		dontCheckSigs, _ := dec.ReadUint64()
-		require.Equal(t, uint64(0), dontCheckSigs)
+			dontCheckSigs, _ := dec.ReadUint64()
+			require.Equal(t, uint64(0), dontCheckSigs)
 
-		// read all framed data into a buffer.
-		fr := daemon.NewFramedReader(conn)
-		framedData, err := io.ReadAll(fr)
+			// read all framed data into a buffer.
+			fr := daemon.NewFramedReader(conn)
+			framedData, err := io.ReadAll(fr)
+			require.NoError(t, err)
+
+			// parse the deframed data.
+			r := bytes.NewReader(framedData)
+			frameDec := wire.NewDecoder(r, daemon.MaxStringSize)
+
+			// count.
+			count, err := frameDec.ReadUint64()
+			require.NoError(t, err)
+			require.Equal(t, uint64(2), count)
+
+			// Item 1: PathInfo fields.
+			s, _ := frameDec.ReadString() // storePath
+			require.Equal(t, "/nix/store/aaa-one", s)
+
+			_, _ = frameDec.ReadString() // deriver
+			_, _ = frameDec.ReadString() // narHash
+			_, _ = frameDec.ReadUint64() // refs count (0)
+			_, _ = frameDec.ReadUint64() // registrationTime
+			_, _ = frameDec.ReadUint64() // narSize
+			_, _ = frameDec.ReadUint64() // ultimate
+			_, _ = frameDec.ReadUint64() // sigs count (0)
+			_, _ = frameDec.ReadString() // ca
+
+			// Item 1: NAR data.
+			nar1 := make([]byte, len(narData1))
+			_, _ = io.ReadFull(r, nar1)
+			require.Equal(t, narData1, nar1)
+
+			// Item 2: PathInfo fields.
+			s, _ = frameDec.ReadString() // storePath
+			require.Equal(t, "/nix/store/bbb-two", s)
+
+			_, _ = frameDec.ReadString()          // deriver
+			_, _ = frameDec.ReadString()          // narHash
+			refsCount, _ := frameDec.ReadUint64() // refs count (1)
+			require.Equal(t, uint64(1), refsCount)
+
+			_, _ = frameDec.ReadString() // ref
+			_, _ = frameDec.ReadUint64() // registrationTime
+			_, _ = frameDec.ReadUint64() // narSize
+			_, _ = frameDec.ReadUint64() // ultimate
+			_, _ = frameDec.ReadUint64() // sigs count (0)
+			_, _ = frameDec.ReadString() // ca
+
+			// Item 2: NAR data.
+			nar2 := make([]byte, len(narData2))
+			_, _ = io.ReadFull(r, nar2)
+			require.Equal(t, narData2, nar2)
+
+			// LogLast.
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
 		require.NoError(t, err)
 
-		// parse the deframed data.
-		r := bytes.NewReader(framedData)
-		frameDec := wire.NewDecoder(r, daemon.MaxStringSize)
+		defer client.Close()
 
-		// count.
-		count, err := frameDec.ReadUint64()
+		err = client.AddMultipleToStore(t.Context(), items, true, false)
 		require.NoError(t, err)
-		require.Equal(t, uint64(2), count)
-
-		// Item 1: PathInfo fields.
-		s, _ := frameDec.ReadString() // storePath
-		require.Equal(t, "/nix/store/aaa-one", s)
-
-		_, _ = frameDec.ReadString() // deriver
-		_, _ = frameDec.ReadString() // narHash
-		_, _ = frameDec.ReadUint64() // refs count (0)
-		_, _ = frameDec.ReadUint64() // registrationTime
-		_, _ = frameDec.ReadUint64() // narSize
-		_, _ = frameDec.ReadUint64() // ultimate
-		_, _ = frameDec.ReadUint64() // sigs count (0)
-		_, _ = frameDec.ReadString() // ca
-
-		// Item 1: NAR data.
-		nar1 := make([]byte, len(narData1))
-		_, _ = io.ReadFull(r, nar1)
-		require.Equal(t, narData1, nar1)
-
-		// Item 2: PathInfo fields.
-		s, _ = frameDec.ReadString() // storePath
-		require.Equal(t, "/nix/store/bbb-two", s)
-
-		_, _ = frameDec.ReadString()          // deriver
-		_, _ = frameDec.ReadString()          // narHash
-		refsCount, _ := frameDec.ReadUint64() // refs count (1)
-		require.Equal(t, uint64(1), refsCount)
-
-		_, _ = frameDec.ReadString() // ref
-		_, _ = frameDec.ReadUint64() // registrationTime
-		_, _ = frameDec.ReadUint64() // narSize
-		_, _ = frameDec.ReadUint64() // ultimate
-		_, _ = frameDec.ReadUint64() // sigs count (0)
-		_, _ = frameDec.ReadString() // ca
-
-		// Item 2: NAR data.
-		nar2 := make([]byte, len(narData2))
-		_, _ = io.ReadFull(r, nar2)
-		require.Equal(t, narData2, nar2)
-
-		// LogLast.
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
-
-		return nil
 	})
 
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
+	t.Run("Empty", func(t *testing.T) {
+		mock := newMockDaemon(t)
 
-	defer client.Close()
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
 
-	err = client.AddMultipleToStore(t.Context(), items, true, false)
-	require.NoError(t, err)
-}
+			// read op code.
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
 
-func TestClientAddMultipleToStoreEmpty(t *testing.T) {
-	mock := newMockDaemon(t)
+			// read repair.
+			_, _ = dec.ReadUint64()
 
-	mock.onAccept(func(conn net.Conn) error {
-		dec := wire.NewDecoder(conn, 64*1024)
-		enc := wire.NewEncoder(conn)
+			// read dontCheckSigs.
+			_, _ = dec.ReadUint64()
 
-		// read op code.
-		op, _ := dec.ReadUint64()
-		require.Equal(t, uint64(daemon.OpAddMultipleToStore), op)
+			// read all framed data into a buffer.
+			fr := daemon.NewFramedReader(conn)
+			framedData, err := io.ReadAll(fr)
+			require.NoError(t, err)
 
-		// read repair.
-		_, _ = dec.ReadUint64()
+			// parse the deframed data.
+			r := bytes.NewReader(framedData)
+			frameDec := wire.NewDecoder(r, daemon.MaxStringSize)
 
-		// read dontCheckSigs.
-		_, _ = dec.ReadUint64()
+			// count.
+			count, err := frameDec.ReadUint64()
+			require.NoError(t, err)
+			require.Equal(t, uint64(0), count)
 
-		// read all framed data into a buffer.
-		fr := daemon.NewFramedReader(conn)
-		framedData, err := io.ReadAll(fr)
+			// send LogLast.
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
 		require.NoError(t, err)
 
-		// parse the deframed data.
-		r := bytes.NewReader(framedData)
-		frameDec := wire.NewDecoder(r, daemon.MaxStringSize)
+		defer client.Close()
 
-		// count.
-		count, err := frameDec.ReadUint64()
+		err = client.AddMultipleToStore(t.Context(), nil, false, false)
 		require.NoError(t, err)
-		require.Equal(t, uint64(0), count)
-
-		// send LogLast.
-		_ = enc.WriteUint64(uint64(daemon.LogLast))
-
-		return nil
 	})
 
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
+	t.Run("UnsupportedVersion", func(t *testing.T) {
+		rq := require.New(t)
 
-	defer client.Close()
+		mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
 
-	err = client.AddMultipleToStore(t.Context(), nil, false, false)
-	require.NoError(t, err)
-}
+		client, err := daemon.Connect(t.Context(), mock.path)
 
-func TestClientSetOptions(t *testing.T) {
-	mock := newMockDaemon(t)
+		rq.NoError(err)
 
-	mock.onAccept(respondSetOptions())
+		defer client.Close()
 
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
-
-	defer client.Close()
-
-	settings := &daemon.ClientSettings{
-		KeepFailed:     true,
-		KeepGoing:      false,
-		TryFallback:    true,
-		Verbosity:      daemon.VerbInfo,
-		MaxBuildJobs:   4,
-		MaxSilentTime:  300,
-		BuildVerbosity: daemon.VerbNotice,
-		BuildCores:     8,
-		UseSubstitutes: true,
-		Overrides: map[string]string{
-			"sandbox": "true",
-		},
-	}
-
-	err = client.SetOptions(t.Context(), settings)
-	require.NoError(t, err)
-}
-
-func TestClientCollectGarbage(t *testing.T) {
-	rq := require.New(t)
-
-	mock := newMockDaemon(t)
-
-	expected := &daemon.GCResult{
-		Paths: []string{
-			"/nix/store/old-package-1",
-			"/nix/store/old-package-2",
-		},
-		BytesFreed: 5242880,
-	}
-
-	mock.onAccept(respondCollectGarbage(expected))
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-
-	rq.NoError(err)
-
-	defer client.Close()
-
-	options := &daemon.GCOptions{
-		Action:         daemon.GCDeleteDead,
-		PathsToDelete:  []string{},
-		IgnoreLiveness: false,
-		MaxFreed:       0,
-	}
-
-	result, err := client.CollectGarbage(t.Context(), options)
-	rq.NoError(err)
-	rq.Equal(expected.Paths, result.Paths)
-	rq.Equal(expected.BytesFreed, result.BytesFreed)
-}
-
-func TestClientVerifyStore(t *testing.T) {
-	rq := require.New(t)
-
-	mock := newMockDaemon(t)
-
-	mock.onAccept(respondVerifyStore(true))
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-
-	rq.NoError(err)
-
-	defer client.Close()
-
-	errorsFound, err := client.VerifyStore(t.Context(), true, false)
-	rq.NoError(err)
-	rq.True(errorsFound)
-}
-
-func TestClientOptimiseStore(t *testing.T) {
-	mock := newMockDaemon(t)
-
-	mock.onAccept(respondOptimiseStore())
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-	require.NoError(t, err)
-
-	defer client.Close()
-
-	err = client.OptimiseStore(t.Context())
-	require.NoError(t, err)
-}
-
-// Version-specific store tests
-
-func TestAddBuildLogUnsupportedVersion(t *testing.T) {
-	rq := require.New(t)
-
-	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-
-	rq.NoError(err)
-
-	defer client.Close()
-
-	err = client.AddBuildLog(t.Context(), "/nix/store/abc-test.drv", strings.NewReader("log"))
-	rq.Error(err)
-	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
-}
-
-func TestAddMultipleToStoreUnsupportedVersion(t *testing.T) {
-	rq := require.New(t)
-
-	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-
-	rq.NoError(err)
-
-	defer client.Close()
-
-	err = client.AddMultipleToStore(t.Context(), nil, false, false)
-	rq.Error(err)
-	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
-}
-
-func TestAddPermRootUnsupportedVersion(t *testing.T) {
-	rq := require.New(t)
-
-	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-
-	rq.NoError(err)
-
-	defer client.Close()
-
-	_, err = client.AddPermRoot(t.Context(), "/nix/store/abc-test", "/home/user/result")
-	rq.Error(err)
-	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
-}
-
-func TestRegisterDrvOutputUnsupportedVersion(t *testing.T) {
-	rq := require.New(t)
-
-	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
-
-	client, err := daemon.Connect(t.Context(), mock.path)
-
-	rq.NoError(err)
-
-	defer client.Close()
-
-	err = client.RegisterDrvOutput(t.Context(), &daemon.Realisation{
-		ID:      "sha256:abc!out",
-		OutPath: "/nix/store/abc-out",
+		err = client.AddMultipleToStore(t.Context(), nil, false, false)
+		rq.Error(err)
+		rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 	})
-	rq.Error(err)
-	rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
 }
 
-// TestClientSetOptionsProto123 connects at proto 1.23 (MinProtocolVersion,
-// which is >= ProtoVersionOverrides = 1.12) and calls SetOptions with
-// settings that include an overrides map. This confirms that at
-// MinProtocolVersion, overrides ARE always sent on the wire.
-func TestClientSetOptionsProto123(t *testing.T) {
-	rq := require.New(t)
+func TestAddBuildLog(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
 
-	mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
+		logContent := "building '/nix/store/00000000000000000000000000000000-test.drv'...\nok\n"
 
-	mock.onAccept(respondSetOptions())
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
 
-	client, err := daemon.Connect(t.Context(), mock.path)
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpAddBuildLog), op)
 
-	rq.NoError(err)
+			drvPath, _ := dec.ReadString() // drvPath (BaseStorePath)
+			require.Equal(t, "00000000000000000000000000000000-test.drv", drvPath)
 
-	defer client.Close()
+			// read framed log data (no padding in framed protocol)
+			fr := daemon.NewFramedReader(conn)
+			received, err := io.ReadAll(fr)
+			require.NoError(t, err)
+			require.Equal(t, logContent, string(received))
 
-	rq.Equal(daemon.ProtoVersion(1, 23), client.Info().Version)
+			// LogLast
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
 
-	settings := &daemon.ClientSettings{
-		KeepFailed:     true,
-		KeepGoing:      false,
-		TryFallback:    false,
-		Verbosity:      daemon.VerbInfo,
-		MaxBuildJobs:   2,
-		MaxSilentTime:  60,
-		BuildVerbosity: daemon.VerbError,
-		BuildCores:     4,
-		UseSubstitutes: true,
-		Overrides: map[string]string{
-			"sandbox":               "true",
-			"max-substitution-jobs": "8",
-		},
-	}
+			// uint64(1) acknowledgment
+			_ = enc.WriteUint64(1)
 
-	err = client.SetOptions(t.Context(), settings)
-	rq.NoError(err)
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		require.NoError(t, err)
+
+		defer client.Close()
+
+		err = client.AddBuildLog(
+			t.Context(),
+			"/nix/store/00000000000000000000000000000000-test.drv",
+			strings.NewReader(logContent),
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("InvalidPath", func(t *testing.T) {
+		mock := newMockDaemon(t)
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		require.NoError(t, err)
+
+		defer client.Close()
+
+		err = client.AddBuildLog(t.Context(), "/tmp/not-a-store-path", strings.NewReader("log"))
+		require.Error(t, err)
+	})
+
+	t.Run("NilReader", func(t *testing.T) {
+		client := &daemon.Client{}
+
+		err := client.AddBuildLog(t.Context(), "/nix/store/abc.drv", nil)
+		require.ErrorIs(t, err, daemon.ErrNilReader)
+	})
+
+	t.Run("UnsupportedVersion", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+
+		rq.NoError(err)
+
+		defer client.Close()
+
+		err = client.AddBuildLog(t.Context(), "/nix/store/abc-test.drv", strings.NewReader("log"))
+		rq.Error(err)
+		rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
+	})
+}
+
+func TestAddTempRoot(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
+
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
+
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpAddTempRoot), op)
+
+			_, _ = dec.ReadString() // path
+
+			// LogLast
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+			// uint64(1) acknowledgment
+			_ = enc.WriteUint64(1)
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		require.NoError(t, err)
+
+		defer client.Close()
+
+		err = client.AddTempRoot(t.Context(), "/nix/store/abc-test")
+		require.NoError(t, err)
+	})
+}
+
+func TestAddIndirectRoot(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
+
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
+
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpAddIndirectRoot), op)
+
+			_, _ = dec.ReadString() // path
+
+			// LogLast
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+			// uint64(1) acknowledgment
+			_ = enc.WriteUint64(1)
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		require.NoError(t, err)
+
+		defer client.Close()
+
+		err = client.AddIndirectRoot(t.Context(), "/home/user/result")
+		require.NoError(t, err)
+	})
+}
+
+func TestAddPermRoot(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemon(t)
+
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
+
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpAddPermRoot), op)
+
+			_, _ = dec.ReadString() // storePath
+			_, _ = dec.ReadString() // gcRoot
+
+			// LogLast
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+			// Response: result path string
+			_ = enc.WriteString("/nix/var/nix/gcroots/auto/abc")
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+
+		rq.NoError(err)
+
+		defer client.Close()
+
+		resultPath, err := client.AddPermRoot(t.Context(), "/nix/store/abc-test", "/home/user/result")
+		rq.NoError(err)
+		rq.Equal("/nix/var/nix/gcroots/auto/abc", resultPath)
+	})
+
+	t.Run("UnsupportedVersion", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+
+		rq.NoError(err)
+
+		defer client.Close()
+
+		_, err = client.AddPermRoot(t.Context(), "/nix/store/abc-test", "/home/user/result")
+		rq.Error(err)
+		rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
+	})
+}
+
+func TestAddSignatures(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
+
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
+
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpAddSignatures), op)
+
+			_, _ = dec.ReadString() // path
+
+			// read sigs: count + strings
+			count, _ := dec.ReadUint64()
+			require.Equal(t, uint64(2), count)
+
+			_, _ = dec.ReadString() // sig 1
+			_, _ = dec.ReadString() // sig 2
+
+			// LogLast
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+			// uint64(1) acknowledgment
+			_ = enc.WriteUint64(1)
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		require.NoError(t, err)
+
+		defer client.Close()
+
+		err = client.AddSignatures(t.Context(), "/nix/store/abc-test", []string{"sig1", "sig2"})
+		require.NoError(t, err)
+	})
+}
+
+func TestRegisterDrvOutput(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
+
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
+
+			op, _ := dec.ReadUint64()
+			require.Equal(t, uint64(daemon.OpRegisterDrvOutput), op)
+
+			_, _ = dec.ReadString() // realisation
+
+			// LogLast (no ack for RegisterDrvOutput)
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		require.NoError(t, err)
+
+		defer client.Close()
+
+		err = client.RegisterDrvOutput(t.Context(), &daemon.Realisation{
+			ID:      "sha256:abc!out",
+			OutPath: "/nix/store/abc-out",
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("UnsupportedVersion", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 27))
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+
+		rq.NoError(err)
+
+		defer client.Close()
+
+		err = client.RegisterDrvOutput(t.Context(), &daemon.Realisation{
+			ID:      "sha256:abc!out",
+			OutPath: "/nix/store/abc-out",
+		})
+		rq.Error(err)
+		rq.ErrorIs(err, daemon.ErrUnsupportedOperation)
+	})
+}
+
+func TestSetOptions(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
+
+		mock.onAccept(respondSetOptions())
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		require.NoError(t, err)
+
+		defer client.Close()
+
+		settings := &daemon.ClientSettings{
+			KeepFailed:     true,
+			KeepGoing:      false,
+			TryFallback:    true,
+			Verbosity:      daemon.VerbInfo,
+			MaxBuildJobs:   4,
+			MaxSilentTime:  300,
+			BuildVerbosity: daemon.VerbNotice,
+			BuildCores:     8,
+			UseSubstitutes: true,
+			Overrides: map[string]string{
+				"sandbox": "true",
+			},
+		}
+
+		err = client.SetOptions(t.Context(), settings)
+		require.NoError(t, err)
+	})
+
+	// connects at proto 1.23 (MinProtocolVersion, which is >= ProtoVersionOverrides
+	// = 1.12) and calls SetOptions with settings that include an overrides map.
+	t.Run("Proto123", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemonWithVersion(t, daemon.ProtoVersion(1, 23))
+
+		mock.onAccept(respondSetOptions())
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+
+		rq.NoError(err)
+
+		defer client.Close()
+
+		rq.Equal(daemon.ProtoVersion(1, 23), client.Info().Version)
+
+		settings := &daemon.ClientSettings{
+			KeepFailed:     true,
+			KeepGoing:      false,
+			TryFallback:    false,
+			Verbosity:      daemon.VerbInfo,
+			MaxBuildJobs:   2,
+			MaxSilentTime:  60,
+			BuildVerbosity: daemon.VerbError,
+			BuildCores:     4,
+			UseSubstitutes: true,
+			Overrides: map[string]string{
+				"sandbox":               "true",
+				"max-substitution-jobs": "8",
+			},
+		}
+
+		err = client.SetOptions(t.Context(), settings)
+		rq.NoError(err)
+	})
+}
+
+func TestCollectGarbage(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemon(t)
+
+		expected := &daemon.GCResult{
+			Paths: []string{
+				"/nix/store/old-package-1",
+				"/nix/store/old-package-2",
+			},
+			BytesFreed: 5242880,
+		}
+
+		mock.onAccept(respondCollectGarbage(expected))
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+
+		rq.NoError(err)
+
+		defer client.Close()
+
+		options := &daemon.GCOptions{
+			Action:         daemon.GCDeleteDead,
+			PathsToDelete:  []string{},
+			IgnoreLiveness: false,
+			MaxFreed:       0,
+		}
+
+		result, err := client.CollectGarbage(t.Context(), options)
+		rq.NoError(err)
+		rq.Equal(expected.Paths, result.Paths)
+		rq.Equal(expected.BytesFreed, result.BytesFreed)
+	})
+
+	t.Run("NilOptions", func(t *testing.T) {
+		client := &daemon.Client{}
+		_, err := client.CollectGarbage(t.Context(), nil)
+		require.ErrorIs(t, err, daemon.ErrNilOptions)
+	})
+}
+
+func TestVerifyStore(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemon(t)
+
+		mock.onAccept(respondVerifyStore(true))
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+
+		rq.NoError(err)
+
+		defer client.Close()
+
+		errorsFound, err := client.VerifyStore(t.Context(), true, false)
+		rq.NoError(err)
+		rq.True(errorsFound)
+	})
+}
+
+func TestOptimiseStore(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		mock := newMockDaemon(t)
+
+		mock.onAccept(respondOptimiseStore())
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		require.NoError(t, err)
+
+		defer client.Close()
+
+		err = client.OptimiseStore(t.Context())
+		require.NoError(t, err)
+	})
 }

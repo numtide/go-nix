@@ -35,253 +35,255 @@ func collect() (func(daemon.LogMessage), *[]daemon.LogMessage) {
 	}, &msgs
 }
 
-func TestProcessStderrLast(t *testing.T) {
-	var buf bytes.Buffer
+func TestProcessStderr(t *testing.T) {
+	t.Run("Last", func(t *testing.T) {
+		var buf bytes.Buffer
 
-	writeTestUint64(&buf, uint64(daemon.LogLast))
+		writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	fn, msgs := collect()
-	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
-	require.NoError(t, err)
-	require.Empty(t, *msgs)
-}
+		fn, msgs := collect()
+		err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
+		require.NoError(t, err)
+		require.Empty(t, *msgs)
+	})
 
-func TestProcessStderrNext(t *testing.T) {
-	rq := require.New(t)
+	t.Run("Next", func(t *testing.T) {
+		rq := require.New(t)
 
-	var buf bytes.Buffer
+		var buf bytes.Buffer
 
-	writeTestUint64(&buf, uint64(daemon.LogNext))
-	writeTestString(&buf, "building /nix/store/xxx")
-	writeTestUint64(&buf, uint64(daemon.LogLast))
+		writeTestUint64(&buf, uint64(daemon.LogNext))
+		writeTestString(&buf, "building /nix/store/xxx")
+		writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	fn, msgs := collect()
-	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
-	rq.NoError(err)
-	rq.Len(*msgs, 1)
-	rq.Equal(daemon.LogNext, (*msgs)[0].Type)
-	rq.Equal("building /nix/store/xxx", (*msgs)[0].Text)
-}
+		fn, msgs := collect()
+		err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
+		rq.NoError(err)
+		rq.Len(*msgs, 1)
+		rq.Equal(daemon.LogNext, (*msgs)[0].Type)
+		rq.Equal("building /nix/store/xxx", (*msgs)[0].Text)
+	})
 
-func TestProcessStderrError(t *testing.T) {
-	rq := require.New(t)
+	t.Run("Error", func(t *testing.T) {
+		rq := require.New(t)
 
-	var buf bytes.Buffer
+		var buf bytes.Buffer
 
-	writeTestUint64(&buf, uint64(daemon.LogError))
-	writeTestString(&buf, "Error")          // type
-	writeTestUint64(&buf, 0)                // level
-	writeTestString(&buf, "SomeError")      // name
-	writeTestString(&buf, "path not found") // message
-	writeTestUint64(&buf, 0)                // havePos
-	writeTestUint64(&buf, 0)                // nrTraces
+		writeTestUint64(&buf, uint64(daemon.LogError))
+		writeTestString(&buf, "Error")          // type
+		writeTestUint64(&buf, 0)                // level
+		writeTestString(&buf, "SomeError")      // name
+		writeTestString(&buf, "path not found") // message
+		writeTestUint64(&buf, 0)                // havePos
+		writeTestUint64(&buf, 0)                // nrTraces
 
-	err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
+		err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
 
-	rq.Error(err)
+		rq.Error(err)
 
-	var de *daemon.Error
+		var de *daemon.Error
 
-	rq.ErrorAs(err, &de)
-	rq.Equal("path not found", de.Message)
-	rq.Equal("SomeError", de.Name)
-}
+		rq.ErrorAs(err, &de)
+		rq.Equal("path not found", de.Message)
+		rq.Equal("SomeError", de.Name)
+	})
 
-func TestProcessStderrStartStopActivity(t *testing.T) {
-	rq := require.New(t)
+	t.Run("ErrorWithTraces", func(t *testing.T) {
+		rq := require.New(t)
 
-	var buf bytes.Buffer
-	// StartActivity
-	writeTestUint64(&buf, uint64(daemon.LogStartActivity))
-	writeTestUint64(&buf, 42)  // id
-	writeTestUint64(&buf, 3)   // level (Info)
-	writeTestUint64(&buf, 104) // type (ActBuilds)
-	writeTestString(&buf, "building foo")
-	writeTestUint64(&buf, 0) // nrFields
-	writeTestUint64(&buf, 0) // parent
+		var buf bytes.Buffer
 
-	// StopActivity
-	writeTestUint64(&buf, uint64(daemon.LogStopActivity))
-	writeTestUint64(&buf, 42) // id
+		writeTestUint64(&buf, uint64(daemon.LogError))
+		writeTestString(&buf, "Error")              // type
+		writeTestUint64(&buf, 0)                    // level
+		writeTestString(&buf, "EvalError")          // name
+		writeTestString(&buf, "undefined variable") // message
+		writeTestUint64(&buf, 0)                    // havePos
+		writeTestUint64(&buf, 2)                    // nrTraces
+		// trace 1
+		writeTestUint64(&buf, 1)                  // traceHavePos
+		writeTestString(&buf, "while evaluating") // traceMsg
+		// trace 2
+		writeTestUint64(&buf, 0)                     // traceHavePos
+		writeTestString(&buf, "in file default.nix") // traceMsg
 
-	// Last
-	writeTestUint64(&buf, uint64(daemon.LogLast))
+		err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
 
-	fn, msgs := collect()
-	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
-	rq.NoError(err)
-	rq.Len(*msgs, 2)
+		rq.Error(err)
 
-	rq.Equal(daemon.LogStartActivity, (*msgs)[0].Type)
-	rq.Equal(uint64(42), (*msgs)[0].Activity.ID)
-	rq.Equal("building foo", (*msgs)[0].Activity.Text)
-	rq.Equal(daemon.ActBuilds, (*msgs)[0].Activity.Type)
+		var de *daemon.Error
 
-	rq.Equal(daemon.LogStopActivity, (*msgs)[1].Type)
-	rq.Equal(uint64(42), (*msgs)[1].ActivityID)
-}
+		rq.ErrorAs(err, &de)
+		rq.Equal("undefined variable", de.Message)
+		rq.Equal("EvalError", de.Name)
+		rq.Len(de.Traces, 2)
+		rq.Equal("while evaluating", de.Traces[0].Message)
+		rq.Equal(uint64(1), de.Traces[0].HavePos)
+		rq.Equal("in file default.nix", de.Traces[1].Message)
+	})
 
-func TestProcessStderrResult(t *testing.T) {
-	rq := require.New(t)
+	t.Run("LegacyError", func(t *testing.T) {
+		rq := require.New(t)
 
-	var buf bytes.Buffer
+		var buf bytes.Buffer
 
-	writeTestUint64(&buf, uint64(daemon.LogResult))
-	writeTestUint64(&buf, 7)   // id
-	writeTestUint64(&buf, 101) // resType (ResBuildLogLine)
-	writeTestUint64(&buf, 1)   // nrFields
-	writeTestUint64(&buf, 1)   // field type: string
-	writeTestString(&buf, "compiling main.c")
-	writeTestUint64(&buf, uint64(daemon.LogLast))
+		writeTestUint64(&buf, uint64(daemon.LogError))
+		writeTestString(&buf, "path '/nix/store/abc' is not valid") // message
+		writeTestUint64(&buf, 1)                                    // exitStatus
 
-	fn, msgs := collect()
-	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
-	rq.NoError(err)
-	rq.Len(*msgs, 1)
+		err := daemon.ProcessStderr(&buf, nil, daemon.ProtoVersion(1, 25))
 
-	rq.Equal(daemon.LogResult, (*msgs)[0].Type)
-	rq.Equal(uint64(7), (*msgs)[0].Result.ID)
-	rq.Equal(daemon.ResBuildLogLine, (*msgs)[0].Result.Type)
-	rq.Len((*msgs)[0].Result.Fields, 1)
-	rq.False((*msgs)[0].Result.Fields[0].IsInt)
-	rq.Equal("compiling main.c", (*msgs)[0].Result.Fields[0].String)
-}
+		rq.Error(err)
 
-func TestProcessStderrReadWrite(t *testing.T) {
-	var buf bytes.Buffer
-	// LogRead
-	writeTestUint64(&buf, uint64(daemon.LogRead))
-	writeTestUint64(&buf, 4096) // count (ignored)
+		var de *daemon.Error
 
-	// LogWrite
-	writeTestUint64(&buf, uint64(daemon.LogWrite))
-	writeTestUint64(&buf, 8192) // count (ignored)
+		rq.ErrorAs(err, &de)
+		rq.Equal("path '/nix/store/abc' is not valid", de.Message)
+		rq.Equal(uint64(1), de.ExitStatus)
+		rq.Equal("Error", de.Type)
+		rq.Empty(de.Traces)
+	})
 
-	// Last
-	writeTestUint64(&buf, uint64(daemon.LogLast))
+	t.Run("StartStopActivity", func(t *testing.T) {
+		rq := require.New(t)
 
-	fn, msgs := collect()
-	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
-	require.NoError(t, err)
-	require.Empty(t, *msgs) // Read/Write messages are silently consumed
-}
+		var buf bytes.Buffer
+		// StartActivity
+		writeTestUint64(&buf, uint64(daemon.LogStartActivity))
+		writeTestUint64(&buf, 42)  // id
+		writeTestUint64(&buf, 3)   // level (Info)
+		writeTestUint64(&buf, 104) // type (ActBuilds)
+		writeTestString(&buf, "building foo")
+		writeTestUint64(&buf, 0) // nrFields
+		writeTestUint64(&buf, 0) // parent
 
-func TestProcessStderrUnknownType(t *testing.T) {
-	rq := require.New(t)
+		// StopActivity
+		writeTestUint64(&buf, uint64(daemon.LogStopActivity))
+		writeTestUint64(&buf, 42) // id
 
-	var buf bytes.Buffer
+		// Last
+		writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	writeTestUint64(&buf, 0xDEADBEEF)
+		fn, msgs := collect()
+		err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
+		rq.NoError(err)
+		rq.Len(*msgs, 2)
 
-	err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
+		rq.Equal(daemon.LogStartActivity, (*msgs)[0].Type)
+		rq.Equal(uint64(42), (*msgs)[0].Activity.ID)
+		rq.Equal("building foo", (*msgs)[0].Activity.Text)
+		rq.Equal(daemon.ActBuilds, (*msgs)[0].Activity.Type)
 
-	rq.Error(err)
+		rq.Equal(daemon.LogStopActivity, (*msgs)[1].Type)
+		rq.Equal(uint64(42), (*msgs)[1].ActivityID)
+	})
 
-	var pe *daemon.ProtocolError
+	t.Run("ActivityWithFields", func(t *testing.T) {
+		rq := require.New(t)
 
-	rq.ErrorAs(err, &pe)
-}
+		var buf bytes.Buffer
 
-func TestProcessStderrErrorWithTraces(t *testing.T) {
-	rq := require.New(t)
+		writeTestUint64(&buf, uint64(daemon.LogStartActivity))
+		writeTestUint64(&buf, 99)  // id
+		writeTestUint64(&buf, 3)   // level (Info)
+		writeTestUint64(&buf, 101) // type (ActFileTransfer)
+		writeTestString(&buf, "downloading file")
+		writeTestUint64(&buf, 2) // nrFields
+		// field 1: string
+		writeTestUint64(&buf, 1) // field type string
+		writeTestString(&buf, "https://example.com/file.tar.gz")
+		// field 2: int
+		writeTestUint64(&buf, 0) // field type int
+		writeTestUint64(&buf, 1048576)
+		writeTestUint64(&buf, 0) // parent
 
-	var buf bytes.Buffer
+		writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	writeTestUint64(&buf, uint64(daemon.LogError))
-	writeTestString(&buf, "Error")              // type
-	writeTestUint64(&buf, 0)                    // level
-	writeTestString(&buf, "EvalError")          // name
-	writeTestString(&buf, "undefined variable") // message
-	writeTestUint64(&buf, 0)                    // havePos
-	writeTestUint64(&buf, 2)                    // nrTraces
-	// trace 1
-	writeTestUint64(&buf, 1)                  // traceHavePos
-	writeTestString(&buf, "while evaluating") // traceMsg
-	// trace 2
-	writeTestUint64(&buf, 0)                     // traceHavePos
-	writeTestString(&buf, "in file default.nix") // traceMsg
+		fn, msgs := collect()
+		err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
+		rq.NoError(err)
+		rq.Len(*msgs, 1)
 
-	err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
+		rq.Equal(daemon.LogStartActivity, (*msgs)[0].Type)
+		rq.Equal(uint64(99), (*msgs)[0].Activity.ID)
+		rq.Equal(daemon.ActFileTransfer, (*msgs)[0].Activity.Type)
+		rq.Len((*msgs)[0].Activity.Fields, 2)
+		rq.False((*msgs)[0].Activity.Fields[0].IsInt)
+		rq.Equal("https://example.com/file.tar.gz", (*msgs)[0].Activity.Fields[0].String)
+		rq.True((*msgs)[0].Activity.Fields[1].IsInt)
+		rq.Equal(uint64(1048576), (*msgs)[0].Activity.Fields[1].Int)
+	})
 
-	rq.Error(err)
+	t.Run("Result", func(t *testing.T) {
+		rq := require.New(t)
 
-	var de *daemon.Error
+		var buf bytes.Buffer
 
-	rq.ErrorAs(err, &de)
-	rq.Equal("undefined variable", de.Message)
-	rq.Equal("EvalError", de.Name)
-	rq.Len(de.Traces, 2)
-	rq.Equal("while evaluating", de.Traces[0].Message)
-	rq.Equal(uint64(1), de.Traces[0].HavePos)
-	rq.Equal("in file default.nix", de.Traces[1].Message)
-}
+		writeTestUint64(&buf, uint64(daemon.LogResult))
+		writeTestUint64(&buf, 7)   // id
+		writeTestUint64(&buf, 101) // resType (ResBuildLogLine)
+		writeTestUint64(&buf, 1)   // nrFields
+		writeTestUint64(&buf, 1)   // field type: string
+		writeTestString(&buf, "compiling main.c")
+		writeTestUint64(&buf, uint64(daemon.LogLast))
 
-func TestProcessStderrLegacyError(t *testing.T) {
-	rq := require.New(t)
+		fn, msgs := collect()
+		err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
+		rq.NoError(err)
+		rq.Len(*msgs, 1)
 
-	var buf bytes.Buffer
+		rq.Equal(daemon.LogResult, (*msgs)[0].Type)
+		rq.Equal(uint64(7), (*msgs)[0].Result.ID)
+		rq.Equal(daemon.ResBuildLogLine, (*msgs)[0].Result.Type)
+		rq.Len((*msgs)[0].Result.Fields, 1)
+		rq.False((*msgs)[0].Result.Fields[0].IsInt)
+		rq.Equal("compiling main.c", (*msgs)[0].Result.Fields[0].String)
+	})
 
-	writeTestUint64(&buf, uint64(daemon.LogError))
-	writeTestString(&buf, "path '/nix/store/abc' is not valid") // message
-	writeTestUint64(&buf, 1)                                    // exitStatus
+	t.Run("ReadWrite", func(t *testing.T) {
+		var buf bytes.Buffer
+		// LogRead
+		writeTestUint64(&buf, uint64(daemon.LogRead))
+		writeTestUint64(&buf, 4096) // count (ignored)
 
-	err := daemon.ProcessStderr(&buf, nil, daemon.ProtoVersion(1, 25))
+		// LogWrite
+		writeTestUint64(&buf, uint64(daemon.LogWrite))
+		writeTestUint64(&buf, 8192) // count (ignored)
 
-	rq.Error(err)
+		// Last
+		writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	var de *daemon.Error
+		fn, msgs := collect()
+		err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
+		require.NoError(t, err)
+		require.Empty(t, *msgs) // Read/Write messages are silently consumed
+	})
 
-	rq.ErrorAs(err, &de)
-	rq.Equal("path '/nix/store/abc' is not valid", de.Message)
-	rq.Equal(uint64(1), de.ExitStatus)
-	rq.Equal("Error", de.Type)
-	rq.Empty(de.Traces)
-}
+	t.Run("UnknownType", func(t *testing.T) {
+		rq := require.New(t)
 
-func TestProcessStderrActivityWithFields(t *testing.T) {
-	rq := require.New(t)
+		var buf bytes.Buffer
 
-	var buf bytes.Buffer
+		writeTestUint64(&buf, 0xDEADBEEF)
 
-	writeTestUint64(&buf, uint64(daemon.LogStartActivity))
-	writeTestUint64(&buf, 99)  // id
-	writeTestUint64(&buf, 3)   // level (Info)
-	writeTestUint64(&buf, 101) // type (ActFileTransfer)
-	writeTestString(&buf, "downloading file")
-	writeTestUint64(&buf, 2) // nrFields
-	// field 1: string
-	writeTestUint64(&buf, 1) // field type string
-	writeTestString(&buf, "https://example.com/file.tar.gz")
-	// field 2: int
-	writeTestUint64(&buf, 0) // field type int
-	writeTestUint64(&buf, 1048576)
-	writeTestUint64(&buf, 0) // parent
+		err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
 
-	writeTestUint64(&buf, uint64(daemon.LogLast))
+		rq.Error(err)
 
-	fn, msgs := collect()
-	err := daemon.ProcessStderr(&buf, fn, daemon.ProtocolVersion)
-	rq.NoError(err)
-	rq.Len(*msgs, 1)
+		var pe *daemon.ProtocolError
 
-	rq.Equal(daemon.LogStartActivity, (*msgs)[0].Type)
-	rq.Equal(uint64(99), (*msgs)[0].Activity.ID)
-	rq.Equal(daemon.ActFileTransfer, (*msgs)[0].Activity.Type)
-	rq.Len((*msgs)[0].Activity.Fields, 2)
-	rq.False((*msgs)[0].Activity.Fields[0].IsInt)
-	rq.Equal("https://example.com/file.tar.gz", (*msgs)[0].Activity.Fields[0].String)
-	rq.True((*msgs)[0].Activity.Fields[1].IsInt)
-	rq.Equal(uint64(1048576), (*msgs)[0].Activity.Fields[1].Int)
-}
+		rq.ErrorAs(err, &pe)
+	})
 
-func TestProcessStderrNilCallback(t *testing.T) {
-	var buf bytes.Buffer
+	t.Run("NilCallback", func(t *testing.T) {
+		var buf bytes.Buffer
 
-	writeTestUint64(&buf, uint64(daemon.LogNext))
-	writeTestString(&buf, "should be discarded")
-	writeTestUint64(&buf, uint64(daemon.LogLast))
+		writeTestUint64(&buf, uint64(daemon.LogNext))
+		writeTestString(&buf, "should be discarded")
+		writeTestUint64(&buf, uint64(daemon.LogLast))
 
-	// nil callback should not panic.
-	err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
-	require.NoError(t, err)
+		// nil callback should not panic.
+		err := daemon.ProcessStderr(&buf, nil, daemon.ProtocolVersion)
+		require.NoError(t, err)
+	})
 }
