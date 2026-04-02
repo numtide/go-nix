@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	badger "github.com/dgraph-io/badger/v3"
+	badger "github.com/dgraph-io/badger/v4"
 	"github.com/nix-community/go-nix/pkg/derivation"
 )
 
