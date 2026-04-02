@@ -22,6 +22,7 @@ perSystem.self.gonix.overrideAttrs (old: {
       lazysql
       pprof
       sqlc
+      nix-eval-jobs
     ]);
 
   shellHook = ''

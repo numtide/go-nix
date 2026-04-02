@@ -7,10 +7,13 @@ This repository holds a bunch of experiments written in Go.
 ## `cmd/gonix`
 
 A command line entrypoint called `gonix`, currently implementing the nar
-{cat,dump-path,ls} commands.
+{cat,dump-path,ls} and fast-build commands.
 
-They're not meant to be 100% compatible, but are documented in the `--help`
-output.
+Also implements `fast-build` which reads JSON eval jobs from stdin (as produced by [nix-eval-jobs]), builds them in 
+parallel via the Nix daemon socket, and streams build results as JSON to stdout.
+
+Commands are not meant to be 100% compatible with their Nix counterparts, but
+are documented in the `--help` output.
 
 ## `pkg/derivation`
 
@@ -78,3 +81,5 @@ A collection of interfaces and utilities for writing to and querying various `sq
 ## `pkg/wire`
 
 Methods to parse and produce fields used in the low-level Nix wire protocol.
+
+[nix-eval-jobs]: https://github.com/Mic92/nix-eval-jobs
