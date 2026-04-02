@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/derivation"
-	"github.com/nsf/jsondiff"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -64,16 +63,8 @@ func TestJSONSerialize(t *testing.T) {
 			panic(err)
 		}
 
-		// encoding/json serializes in struct key definition order, not alphabetic.
-		// So we can't just compare the raw bytes unfortunately.
-		diffOpts := jsondiff.DefaultConsoleOptions()
-
-		diff, str := jsondiff.Compare(derivationJSONBytes, buf.Bytes(), &diffOpts)
-
-		assert.Equal(t, jsondiff.FullMatch, diff, "produced json should be equal")
-
-		if diff != jsondiff.FullMatch {
-			panic(str)
-		}
+		// encoding/json serializes in struct field order, the fixture is
+		// alphabetic — JSONEq unmarshals both sides so key order is irrelevant.
+		assert.JSONEq(t, string(derivationJSONBytes), buf.String(), "produced json should be equal")
 	}
 }

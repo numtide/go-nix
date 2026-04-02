@@ -29,7 +29,7 @@ pkgs.buildGo126Module (final: {
     ];
   };
 
-  vendorHash = "sha256-dR+AVB92BYpkR0NrAgKZ7cNbEPykH8XdPGW2kFf79tA=";
+  vendorHash = "sha256-eX39JUF6q+mfg5rCp+mvhgqgy3YdT25BQ6zglDY/fM8=";
 
   env.GOTOOLCHAIN = "local";
 
