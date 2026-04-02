@@ -8,7 +8,6 @@ require (
 	github.com/alecthomas/kong v0.5.0
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/mattn/go-sqlite3 v1.14.23
-	github.com/nsf/jsondiff v0.0.0-20210926074059-1e845ec5d249
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/sync v0.20.0
 )
