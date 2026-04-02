@@ -12,10 +12,10 @@ import (
 )
 
 // IsValidPath checks whether the given store path is valid (exists in the store).
-func (c *Client) IsValidPath(ctx context.Context, path string) (bool, error) {
-	resp, err := c.Execute(ctx, OpIsValidPath, func(enc *wire.Encoder) error {
+func (c *Client) IsValidPath(ctx context.Context, path string, opts ...ExecOption) (bool, error) {
+	resp, err := c.Execute(ctx, OpIsValidPath, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
-	})
+	}))...)
 	if err != nil {
 		return false, err
 	}
@@ -34,10 +34,10 @@ func (c *Client) IsValidPath(ctx context.Context, path string) (bool, error) {
 
 // QueryPathInfo retrieves the metadata for the given store path.
 // Returns ErrNotFound if the path does not exist in the store.
-func (c *Client) QueryPathInfo(ctx context.Context, path string) (*PathInfo, error) {
-	resp, err := c.Execute(ctx, OpQueryPathInfo, func(enc *wire.Encoder) error {
+func (c *Client) QueryPathInfo(ctx context.Context, path string, opts ...ExecOption) (*PathInfo, error) {
+	resp, err := c.Execute(ctx, OpQueryPathInfo, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -60,10 +60,10 @@ func (c *Client) QueryPathInfo(ctx context.Context, path string) (*PathInfo, err
 
 // QueryPathFromHashPart looks up a store path by its hash part.
 // If nothing is found, the result is an empty string with no error.
-func (c *Client) QueryPathFromHashPart(ctx context.Context, hashPart string) (string, error) {
-	resp, err := c.Execute(ctx, OpQueryPathFromHashPart, func(enc *wire.Encoder) error {
+func (c *Client) QueryPathFromHashPart(ctx context.Context, hashPart string, opts ...ExecOption) (string, error) {
+	resp, err := c.Execute(ctx, OpQueryPathFromHashPart, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(hashPart)
-	})
+	}))...)
 	if err != nil {
 		return "", err
 	}
@@ -81,8 +81,8 @@ func (c *Client) QueryPathFromHashPart(ctx context.Context, hashPart string) (st
 }
 
 // QueryAllValidPaths returns all valid store paths known to the daemon.
-func (c *Client) QueryAllValidPaths(ctx context.Context) ([]string, error) {
-	resp, err := c.Execute(ctx, OpQueryAllValidPaths, nil)
+func (c *Client) QueryAllValidPaths(ctx context.Context, opts ...ExecOption) ([]string, error) {
+	resp, err := c.Execute(ctx, OpQueryAllValidPaths, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -101,8 +101,13 @@ func (c *Client) QueryAllValidPaths(ctx context.Context) ([]string, error) {
 
 // QueryValidPaths returns the subset of the given paths that are valid.
 // If substituteOk is true, the daemon may attempt to substitute missing paths.
-func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substituteOk bool) ([]string, error) {
-	resp, err := c.Execute(ctx, OpQueryValidPaths, func(enc *wire.Encoder) error {
+func (c *Client) QueryValidPaths(
+	ctx context.Context,
+	paths []string,
+	substituteOk bool,
+	opts ...ExecOption,
+) ([]string, error) {
+	resp, err := c.Execute(ctx, OpQueryValidPaths, append(opts, WithBody(func(enc *wire.Encoder) error {
 		if err := enc.WriteStrings(paths); err != nil {
 			return err
 		}
@@ -115,7 +120,7 @@ func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substitute
 		}
 
 		return nil
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +139,10 @@ func (c *Client) QueryValidPaths(ctx context.Context, paths []string, substitute
 
 // QuerySubstitutablePaths returns the subset of the given paths that can be substituted from a binary cache or other
 // substitute source.
-func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([]string, error) {
-	resp, err := c.Execute(ctx, OpQuerySubstitutablePaths, func(enc *wire.Encoder) error {
+func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string, opts ...ExecOption) ([]string, error) {
+	resp, err := c.Execute(ctx, OpQuerySubstitutablePaths, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteStrings(paths)
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -160,8 +165,9 @@ func (c *Client) QuerySubstitutablePaths(ctx context.Context, paths []string) ([
 // Paths not available from any substituter are omitted from the result.
 func (c *Client) QuerySubstitutablePathInfos(
 	ctx context.Context, paths map[string]string,
+	opts ...ExecOption,
 ) (map[string]*SubstitutablePathInfo, error) {
-	resp, err := c.Execute(ctx, OpQuerySubstitutablePathInfos, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpQuerySubstitutablePathInfos, append(opts, WithBody(func(enc *wire.Encoder) error {
 		// protocol >= 1.22 (always true for us): send StorePathCAMap.
 		if err := enc.WriteUint64(uint64(len(paths))); err != nil {
 			return err
@@ -178,7 +184,7 @@ func (c *Client) QuerySubstitutablePathInfos(
 		}
 
 		return nil
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -213,10 +219,10 @@ func (c *Client) QuerySubstitutablePathInfos(
 }
 
 // QueryValidDerivers returns the derivations known to have produced the given store path.
-func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string, error) {
-	resp, err := c.Execute(ctx, OpQueryValidDerivers, func(enc *wire.Encoder) error {
+func (c *Client) QueryValidDerivers(ctx context.Context, path string, opts ...ExecOption) ([]string, error) {
+	resp, err := c.Execute(ctx, OpQueryValidDerivers, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -234,10 +240,10 @@ func (c *Client) QueryValidDerivers(ctx context.Context, path string) ([]string,
 }
 
 // QueryReferrers returns the set of store paths that reference (depend on) the given path.
-func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, error) {
-	resp, err := c.Execute(ctx, OpQueryReferrers, func(enc *wire.Encoder) error {
+func (c *Client) QueryReferrers(ctx context.Context, path string, opts ...ExecOption) ([]string, error) {
+	resp, err := c.Execute(ctx, OpQueryReferrers, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -256,16 +262,20 @@ func (c *Client) QueryReferrers(ctx context.Context, path string) ([]string, err
 
 // QueryDerivationOutputMap returns a map from output names to store paths for the given derivation.
 // Requires protocol >= 1.30.
-func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (map[string]string, error) {
+func (c *Client) QueryDerivationOutputMap(
+	ctx context.Context,
+	drvPath string,
+	opts ...ExecOption,
+) (map[string]string, error) {
 	// version check
 	if err := c.requireVersion(OpQueryDerivationOutputMap, ProtoVersionQueryDerivationOutputMap); err != nil {
 		return nil, err
 	}
 
 	// send request
-	resp, err := c.Execute(ctx, OpQueryDerivationOutputMap, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpQueryDerivationOutputMap, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(drvPath)
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -286,16 +296,16 @@ func (c *Client) QueryDerivationOutputMap(ctx context.Context, drvPath string) (
 // QueryMissing determines which of the given paths need to be built, substituted, or are unknown.
 // It also reports the expected download and unpacked NAR sizes.
 // Requires protocol >= 1.30.
-func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo, error) {
+func (c *Client) QueryMissing(ctx context.Context, paths []string, opts ...ExecOption) (*MissingInfo, error) {
 	// version check
 	if err := c.requireVersion(OpQueryMissing, ProtoVersionQueryMissing); err != nil {
 		return nil, err
 	}
 
 	// send request
-	resp, err := c.Execute(ctx, OpQueryMissing, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpQueryMissing, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteStrings(paths)
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -337,16 +347,16 @@ func (c *Client) QueryMissing(ctx context.Context, paths []string) (*MissingInfo
 
 // QueryRealisation looks up content-addressed realisations for the given output identifier.
 // Requires protocol >= 1.31.
-func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]Realisation, error) {
+func (c *Client) QueryRealisation(ctx context.Context, outputID string, opts ...ExecOption) ([]Realisation, error) {
 	// version check
 	if err := c.requireVersion(OpQueryRealisation, ProtoVersionRealisationJSON); err != nil {
 		return nil, err
 	}
 
 	// send the request
-	resp, err := c.Execute(ctx, OpQueryRealisation, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpQueryRealisation, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(outputID)
-	})
+	}))...)
 	if err != nil {
 		return nil, err
 	}
@@ -374,8 +384,8 @@ func (c *Client) QueryRealisation(ctx context.Context, outputID string) ([]Reali
 
 // FindRoots returns the set of GC roots known to the daemon.
 // The map keys are the root link paths, and the values are the store paths they point to.
-func (c *Client) FindRoots(ctx context.Context) (map[string]string, error) {
-	resp, err := c.Execute(ctx, OpFindRoots, nil)
+func (c *Client) FindRoots(ctx context.Context, opts ...ExecOption) (map[string]string, error) {
+	resp, err := c.Execute(ctx, OpFindRoots, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -395,11 +405,14 @@ func (c *Client) FindRoots(ctx context.Context) (map[string]string, error) {
 // NarFromPath returns the NAR serialisation of the given store path as a streaming reader.
 // The caller must read the complete NAR and call Close before starting another operation.
 //
-// If logFn is non-nil, daemon log messages are passed to it before the NAR data is returned.
-// If nil, log messages are discarded.
-func (c *Client) NarFromPath(
-	ctx context.Context, path string, logFn func(LogMessage),
+// Use WithLogger to receive daemon log messages emitted before the NAR data.
+func (c *Client) NarFromPath(ctx context.Context, path string, opts ...ExecOption,
 ) (r io.ReadCloser, err error) {
+	execOpts, err := c.execOptions(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply exec option: %w", err)
+	}
+
 	var unsetCancelDeadline func() error
 
 	// set a cancel deadline on the connection in the event the context is cancelled
@@ -444,12 +457,7 @@ func (c *Client) NarFromPath(
 	}
 
 	// drain stderr log messages until LogLast
-	fn := logFn
-	if fn == nil {
-		fn = c.Logger
-	}
-
-	if err = ProcessStderr(c.r, fn, c.info.Version); err != nil {
+	if err = ProcessStderr(c.r, execOpts.Logger, c.info.Version); err != nil {
 		_ = unsetCancelDeadline()
 
 		return nil, err

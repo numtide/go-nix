@@ -11,7 +11,7 @@ import (
 )
 
 func TestClientLogs(t *testing.T) {
-	t.Run("Forwarding", func(t *testing.T) {
+	t.Run("ExplicitReadLogs", func(t *testing.T) {
 		rq := require.New(t)
 
 		mock := newMockDaemon(t)
@@ -47,9 +47,9 @@ func TestClientLogs(t *testing.T) {
 		defer client.Close()
 
 		// use Execute directly to get OpResponse with log access.
-		resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, func(enc *wire.Encoder) error {
+		resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, daemon.WithBody(func(enc *wire.Encoder) error {
 			return enc.WriteString("/nix/store/abc-test")
-		})
+		}))
 		rq.NoError(err)
 
 		defer resp.Close()
@@ -68,7 +68,7 @@ func TestClientLogs(t *testing.T) {
 		rq.Equal(daemon.LogNext, msgs[1].Type)
 		rq.Equal("done", msgs[1].Text)
 
-		// Read response.
+		// read response.
 		respDec := wire.NewDecoder(resp, daemon.MaxStringSize)
 
 		valid, err := respDec.ReadBool()
@@ -116,9 +116,9 @@ func TestClientLogs(t *testing.T) {
 
 		defer client.Close()
 
-		resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, func(enc *wire.Encoder) error {
+		resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, daemon.WithBody(func(enc *wire.Encoder) error {
 			return enc.WriteString("/nix/store/abc-test")
-		})
+		}))
 		rq.NoError(err)
 
 		defer resp.Close()
@@ -141,7 +141,7 @@ func TestClientLogs(t *testing.T) {
 		rq.Equal(uint64(42), msgs[1].ActivityID)
 	})
 
-	t.Run("ChannelFull", func(t *testing.T) {
+	t.Run("AutoDrainWithoutLogger", func(t *testing.T) {
 		rq := require.New(t)
 
 		mock := newMockDaemon(t)
@@ -180,7 +180,50 @@ func TestClientLogs(t *testing.T) {
 		rq.True(valid)
 	})
 
-	t.Run("AutoDrain", func(t *testing.T) {
+	t.Run("AutoDrainWithCallLogger", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemon(t)
+
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
+
+			_, _ = dec.ReadUint64() // op
+			_, _ = dec.ReadString() // path
+
+			_ = enc.WriteUint64(uint64(daemon.LogNext))
+			_ = enc.WriteString("per-call message")
+
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+			_ = enc.WriteUint64(1) // result: true
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		rq.NoError(err)
+
+		defer client.Close()
+
+		// Pass WithLogger to a concrete method.
+		var msgs []daemon.LogMessage
+
+		valid, err := client.IsValidPath(
+			t.Context(), "/nix/store/abc-test",
+			daemon.WithLogger(func(msg daemon.LogMessage) {
+				msgs = append(msgs, msg)
+			}),
+		)
+		rq.NoError(err)
+		rq.True(valid)
+
+		// The per-call logger should have received the message.
+		rq.Len(msgs, 1)
+		rq.Equal("per-call message", msgs[0].Text)
+	})
+
+	t.Run("AutoDrainWithDefaultLogger", func(t *testing.T) {
 		rq := require.New(t)
 
 		mock := newMockDaemon(t)
@@ -211,22 +254,73 @@ func TestClientLogs(t *testing.T) {
 
 		defer client.Close()
 
-		// Set a logger on the client.
+		// set a default logger on the client
 		var msgs []daemon.LogMessage
 
-		client.Logger = func(msg daemon.LogMessage) {
+		client.DefaultExecOptions.Logger = func(msg daemon.LogMessage) {
 			msgs = append(msgs, msg)
 		}
 
-		// Call IsValidPath which auto-drains logs via Read.
+		// call IsValidPath which auto-drains logs via Read
 		valid, err := client.IsValidPath(t.Context(), "/nix/store/abc-test")
 		rq.NoError(err)
 		rq.True(valid)
 
-		// The logger should have received the auto-drained message.
+		// the default logger should have received the auto-drained message
 		rq.Len(msgs, 1)
 		rq.Equal(daemon.LogNext, msgs[0].Type)
 		rq.Equal("auto-drained message", msgs[0].Text)
+	})
+
+	t.Run("WithLoggerOverridesDefaultLogger", func(t *testing.T) {
+		rq := require.New(t)
+
+		mock := newMockDaemon(t)
+
+		mock.onAccept(func(conn net.Conn) error {
+			dec := wire.NewDecoder(conn, 64*1024)
+			enc := wire.NewEncoder(conn)
+
+			_, _ = dec.ReadUint64() // op
+			_, _ = dec.ReadString() // path
+
+			_ = enc.WriteUint64(uint64(daemon.LogNext))
+			_ = enc.WriteString("should go to per-call logger")
+
+			_ = enc.WriteUint64(uint64(daemon.LogLast))
+			_ = enc.WriteUint64(1)
+
+			return nil
+		})
+
+		client, err := daemon.Connect(t.Context(), mock.path)
+		rq.NoError(err)
+
+		defer client.Close()
+
+		// set a default logger that should NOT receive messages
+		var defaultMsgs []daemon.LogMessage
+
+		client.DefaultExecOptions.Logger = func(msg daemon.LogMessage) {
+			defaultMsgs = append(defaultMsgs, msg)
+		}
+
+		// pass a per-call logger via WithLogger
+		var callMsgs []daemon.LogMessage
+
+		valid, err := client.IsValidPath(
+			t.Context(), "/nix/store/abc-test",
+			daemon.WithLogger(func(msg daemon.LogMessage) {
+				callMsgs = append(callMsgs, msg)
+			}),
+		)
+		rq.NoError(err)
+		rq.True(valid)
+
+		// per-call logger wins; default logger receives nothing
+		rq.Len(callMsgs, 1)
+		rq.Equal("should go to per-call logger", callMsgs[0].Text)
+		rq.Empty(defaultMsgs)
 	})
 
 	t.Run("ReadLogsDrained", func(t *testing.T) {
@@ -241,9 +335,9 @@ func TestClientLogs(t *testing.T) {
 
 		defer client.Close()
 
-		resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, func(enc *wire.Encoder) error {
+		resp, err := client.Execute(t.Context(), daemon.OpIsValidPath, daemon.WithBody(func(enc *wire.Encoder) error {
 			return enc.WriteString("/nix/store/abc-test")
-		})
+		}))
 		rq.NoError(err)
 
 		defer resp.Close()

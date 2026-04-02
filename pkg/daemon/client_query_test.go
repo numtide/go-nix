@@ -301,7 +301,7 @@ func TestNarFromPath(t *testing.T) {
 			}
 		})
 
-		rc, err := client.NarFromPath(t.Context(), "/nix/store/abc-test", nil)
+		rc, err := client.NarFromPath(t.Context(), "/nix/store/abc-test")
 		rq.NoError(err)
 
 		// The returned data is the complete NAR including wire formatting.

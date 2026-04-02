@@ -671,7 +671,7 @@ func testNarFromPath(t *testing.T, client *daemon.Client) {
 	rq.NoError(err)
 	rq.NotNil(info)
 
-	rc, err := client.NarFromPath(t.Context(), path, nil)
+	rc, err := client.NarFromPath(t.Context(), path)
 	rq.NoError(err)
 	rq.NotNil(rc)
 
@@ -788,7 +788,7 @@ func testSequentialOperations(t *testing.T, client *daemon.Client) {
 	rq.NotNil(info)
 
 	// operation 4: NarFromPath + read + close
-	rc, err := client.NarFromPath(ctx, path, nil)
+	rc, err := client.NarFromPath(ctx, path)
 	rq.NoError(err)
 	_, err = io.ReadAll(rc)
 	rq.NoError(err)
@@ -859,7 +859,7 @@ func testAddToStoreNarRoundTrip(t *testing.T, client *daemon.Client) {
 	t.Logf("AddToStoreNar round-trip: path=%s narSize=%d", gotInfo.StorePath, gotInfo.NarSize)
 
 	// 6. verify via NarFromPath: the retrieved NAR should match what we sent.
-	rc, err := client.NarFromPath(ctx, storePath, nil)
+	rc, err := client.NarFromPath(ctx, storePath)
 	rq.NoError(err)
 	gotNar, err := io.ReadAll(rc)
 	rq.NoError(err)
@@ -1010,7 +1010,7 @@ func testAddToStore(t *testing.T, client *daemon.Client) {
 	rq.True(valid)
 
 	// verify round-trip: retrieve the NAR and compare
-	rc, err := client.NarFromPath(ctx, info.StorePath, nil)
+	rc, err := client.NarFromPath(ctx, info.StorePath)
 	rq.NoError(err)
 	gotNar, err := io.ReadAll(rc)
 	rq.NoError(err)

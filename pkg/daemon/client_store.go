@@ -22,7 +22,7 @@ import (
 //
 // The source provides the data to import (raw bytes for flat, NAR for recursive).
 // Returns the PathInfo computed by the daemon. Requires protocol >= 1.25.
-func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest) (*PathInfo, error) {
+func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest, opts ...ExecOption) (*PathInfo, error) {
 	// nil check
 	if req.Source == nil {
 		return nil, ErrNilReader
@@ -34,7 +34,7 @@ func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest) (*PathI
 	}
 
 	// send the request
-	resp, err := c.Execute(ctx, OpAddToStore, req.MarshalNix)
+	resp, err := c.Execute(ctx, OpAddToStore, append(opts, WithBody(req.MarshalNix))...)
 	if err != nil {
 		return nil, err
 	}
@@ -54,10 +54,10 @@ func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest) (*PathI
 
 // AddTempRoot adds a temporary GC root for the given store path.
 // Temporary roots prevent the garbage collector from deleting the path for the duration of the daemon session.
-func (c *Client) AddTempRoot(ctx context.Context, path string) error {
-	resp, err := c.Execute(ctx, OpAddTempRoot, func(enc *wire.Encoder) error {
+func (c *Client) AddTempRoot(ctx context.Context, path string, opts ...ExecOption) error {
+	resp, err := c.Execute(ctx, OpAddTempRoot, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
-	})
+	}))...)
 	if err != nil {
 		return err
 	}
@@ -69,10 +69,10 @@ func (c *Client) AddTempRoot(ctx context.Context, path string) error {
 
 // AddIndirectRoot adds an indirect GC root.
 // The path should be a symlink outside the store that points to a store path.
-func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
-	resp, err := c.Execute(ctx, OpAddIndirectRoot, func(enc *wire.Encoder) error {
+func (c *Client) AddIndirectRoot(ctx context.Context, path string, opts ...ExecOption) error {
+	resp, err := c.Execute(ctx, OpAddIndirectRoot, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(path)
-	})
+	}))...)
 	if err != nil {
 		return err
 	}
@@ -84,20 +84,20 @@ func (c *Client) AddIndirectRoot(ctx context.Context, path string) error {
 
 // AddPermRoot adds a permanent GC root linking gcRoot to storePath.
 // Returns the resulting root path. Requires protocol >= 1.36.
-func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot string) (string, error) {
+func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot string, opts ...ExecOption) (string, error) {
 	// version check
 	if err := c.requireVersion(OpAddPermRoot, ProtoVersionAddPermRoot); err != nil {
 		return "", err
 	}
 
 	// send the request
-	resp, err := c.Execute(ctx, OpAddPermRoot, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpAddPermRoot, append(opts, WithBody(func(enc *wire.Encoder) error {
 		if err := enc.WriteString(storePath); err != nil {
 			return err
 		}
 
 		return enc.WriteString(gcRoot)
-	})
+	}))...)
 	if err != nil {
 		return "", err
 	}
@@ -116,14 +116,14 @@ func (c *Client) AddPermRoot(ctx context.Context, storePath string, gcRoot strin
 }
 
 // AddSignatures attaches the given signatures to a store path.
-func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) error {
-	resp, err := c.Execute(ctx, OpAddSignatures, func(enc *wire.Encoder) error {
+func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string, opts ...ExecOption) error {
+	resp, err := c.Execute(ctx, OpAddSignatures, append(opts, WithBody(func(enc *wire.Encoder) error {
 		if err := enc.WriteString(path); err != nil {
 			return err
 		}
 
 		return enc.WriteStrings(sigs)
-	})
+	}))...)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func (c *Client) AddSignatures(ctx context.Context, path string, sigs []string) 
 
 // RegisterDrvOutput registers a content-addressed realisation for a derivation output.
 // Requires protocol >= 1.31.
-func (c *Client) RegisterDrvOutput(ctx context.Context, realisation *Realisation) error {
+func (c *Client) RegisterDrvOutput(ctx context.Context, realisation *Realisation, opts ...ExecOption) error {
 	// nil check
 	if realisation == nil {
 		return ErrNilRealisation
@@ -152,9 +152,9 @@ func (c *Client) RegisterDrvOutput(ctx context.Context, realisation *Realisation
 		return &ProtocolError{Op: "RegisterDrvOutput marshal JSON", Err: err}
 	}
 
-	resp, err := c.Execute(ctx, OpRegisterDrvOutput, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpRegisterDrvOutput, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return enc.WriteString(string(data))
-	})
+	}))...)
 	if err != nil {
 		return err
 	}
@@ -174,6 +174,7 @@ func (c *Client) AddToStoreNar(
 	info *PathInfo,
 	source io.Reader,
 	repair, dontCheckSigs bool,
+	opts ...ExecOption,
 ) error {
 	// nil checks
 	if info == nil {
@@ -185,7 +186,7 @@ func (c *Client) AddToStoreNar(
 	}
 
 	// send the request
-	resp, err := c.Execute(ctx, OpAddToStoreNar, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpAddToStoreNar, append(opts, WithBody(func(enc *wire.Encoder) error {
 		if err := WritePathInfo(enc, info, c.info.Version); err != nil {
 			return err
 		}
@@ -205,7 +206,7 @@ func (c *Client) AddToStoreNar(
 		}
 
 		return fw.Close()
-	})
+	}))...)
 	if err != nil {
 		return err
 	}
@@ -219,7 +220,7 @@ func (c *Client) AddToStoreNar(
 // AddBuildLog uploads a build log for the given derivation path.
 // The log data is streamed from the provided reader.
 // Requires protocol >= 1.32.
-func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader) error {
+func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader, opts ...ExecOption) error {
 	// nil check
 	if log == nil {
 		return ErrNilReader
@@ -236,7 +237,7 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 		return &ProtocolError{Op: "AddBuildLog validate drvPath", Err: err}
 	}
 
-	resp, err := c.Execute(ctx, OpAddBuildLog, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpAddBuildLog, append(opts, WithBody(func(enc *wire.Encoder) error {
 		if err := enc.WriteString(sp.String()); err != nil {
 			return err
 		}
@@ -248,7 +249,7 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 		}
 
 		return fw.Close()
-	})
+	}))...)
 	if err != nil {
 		return err
 	}
@@ -259,12 +260,12 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader)
 }
 
 // CollectGarbage performs a garbage collection operation on the store.
-func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCResult, error) {
+func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions, opts ...ExecOption) (*GCResult, error) {
 	if options == nil {
 		return nil, ErrNilOptions
 	}
 
-	resp, err := c.Execute(ctx, OpCollectGarbage, options.MarshalNix)
+	resp, err := c.Execute(ctx, OpCollectGarbage, append(opts, WithBody(options.MarshalNix))...)
 	if err != nil {
 		return nil, err
 	}
@@ -282,8 +283,8 @@ func (c *Client) CollectGarbage(ctx context.Context, options *GCOptions) (*GCRes
 }
 
 // OptimiseStore asks the daemon to optimise the Nix store by hard-linking identical files.
-func (c *Client) OptimiseStore(ctx context.Context) error {
-	resp, err := c.Execute(ctx, OpOptimiseStore, nil)
+func (c *Client) OptimiseStore(ctx context.Context, opts ...ExecOption) error {
+	resp, err := c.Execute(ctx, OpOptimiseStore, opts...)
 	if err != nil {
 		return err
 	}
@@ -296,14 +297,14 @@ func (c *Client) OptimiseStore(ctx context.Context) error {
 // VerifyStore checks the consistency of the Nix store.
 // If checkContents is true, the contents of each path are verified against their hash.
 // If repair is true, inconsistencies are repaired. Returns true if errors were found.
-func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair bool) (bool, error) {
-	resp, err := c.Execute(ctx, OpVerifyStore, func(enc *wire.Encoder) error {
+func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair bool, opts ...ExecOption) (bool, error) {
+	resp, err := c.Execute(ctx, OpVerifyStore, append(opts, WithBody(func(enc *wire.Encoder) error {
 		if err := enc.WriteBool(checkContents); err != nil {
 			return err
 		}
 
 		return enc.WriteBool(repair)
-	})
+	}))...)
 	if err != nil {
 		return false, err
 	}
@@ -322,10 +323,10 @@ func (c *Client) VerifyStore(ctx context.Context, checkContents bool, repair boo
 
 // SetOptions sends the client build settings to the daemon.
 // This should typically be called once after connecting.
-func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings) error {
-	resp, err := c.Execute(ctx, OpSetOptions, func(enc *wire.Encoder) error {
+func (c *Client) SetOptions(ctx context.Context, settings *ClientSettings, opts ...ExecOption) error {
+	resp, err := c.Execute(ctx, OpSetOptions, append(opts, WithBody(func(enc *wire.Encoder) error {
 		return WriteClientSettings(enc, settings, c.info.Version)
-	})
+	}))...)
 	if err != nil {
 		return err
 	}
@@ -359,6 +360,7 @@ func (c *Client) AddMultipleToStore(
 	ctx context.Context,
 	items []AddToStoreItem,
 	repair, dontCheckSigs bool,
+	opts ...ExecOption,
 ) error {
 	// version check
 	if err := c.requireVersion(OpAddMultipleToStore, ProtoVersionAddMultipleToStore); err != nil {
@@ -373,7 +375,7 @@ func (c *Client) AddMultipleToStore(
 	}
 
 	// send the request
-	resp, err := c.Execute(ctx, OpAddMultipleToStore, func(enc *wire.Encoder) error {
+	resp, err := c.Execute(ctx, OpAddMultipleToStore, append(opts, WithBody(func(enc *wire.Encoder) error {
 		// structured header (outside framed stream).
 		if err := enc.WriteBool(repair); err != nil {
 			return err
@@ -404,7 +406,7 @@ func (c *Client) AddMultipleToStore(
 		}
 
 		return fw.Close()
-	})
+	}))...)
 	if err != nil {
 		return err
 	}
