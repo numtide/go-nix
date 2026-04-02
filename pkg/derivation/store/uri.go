@@ -23,7 +23,7 @@ func NewFromURI(uri string) (derivation.Store, error) { //nolint:ireturn
 	case "":
 		return NewFSStore(u.Path)
 	case "badger":
-		return NewBadgerStore("")
+		return NewBadgerStore(u.Path)
 	case "file":
 		return NewFSStore(u.Path)
 	case "http":
