@@ -8,7 +8,7 @@ import (
 )
 
 type DumpPathCmd struct {
-	Path string `kong:"arg,type:'path',help:'The path to dump'"`
+	Path string
 }
 
 func (cmd *DumpPathCmd) Run() error {

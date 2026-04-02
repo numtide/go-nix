@@ -10,9 +10,9 @@ import (
 )
 
 type LsCmd struct {
-	Nar       string `kong:"arg,type:'existingfile',help='Path to the NAR'"`
-	Path      string `kong:"arg,optional,type='string',default='/',help='Path inside the NAR. Defaults to \"/\".'"`
-	Recursive bool   `kong:"short='R',help='Whether to list recursively, or only the current level.'"`
+	Nar       string
+	Path      string
+	Recursive bool
 }
 
 // headerLineString returns a one-line string describing a header.
