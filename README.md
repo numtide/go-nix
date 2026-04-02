@@ -78,6 +78,11 @@ A collection of interfaces and utilities for writing to and querying various `sq
 
 [SQLC] generated code for querying the main Nix database, typically located in `/nix/var/nix/db.sqlite`.
 
+## `pkg/daemon`
+
+A client for the Nix daemon worker protocol, communicating over a Unix domain socket. 
+Supports protocol versions 1.23 through 1.38 and covers query, store, build, and GC operations.
+
 ## `pkg/wire`
 
 Methods to parse and produce fields used in the low-level Nix wire protocol.
