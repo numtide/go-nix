@@ -33,12 +33,6 @@ pkgs.buildGo126Module (final: {
 
   env.GOTOOLCHAIN = "local";
 
-  # match CI: race detector + benchmarks
-  checkFlags = [
-    "-race"
-    "-bench=.+"
-  ];
-
   ldflags = [
     "-s"
     "-w"
@@ -70,15 +64,12 @@ pkgs.buildGo126Module (final: {
     };
 
     tests = {
-      golangci-lint = final.overrideAttrs (old: {
-        nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.golangci-lint ];
-        buildPhase = ''
-          HOME=$TMPDIR
-          golangci-lint run
-        '';
-        installPhase = ''
-          touch $out
-        '';
+      benchmark = final.overrideAttrs (_old: {
+        checkFlags = [
+          "-race"
+          "-bench=.+"
+        ];
+
       });
       integration = final.overrideAttrs (old: {
         nativeBuildInputs = old.nativeBuildInputs ++ [ perSystem.self.nix-test-daemons ];
@@ -87,6 +78,16 @@ pkgs.buildGo126Module (final: {
           go test -tags integration ./...
         '';
 
+        installPhase = ''
+          touch $out
+        '';
+      });
+      golangci-lint = final.overrideAttrs (old: {
+        nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.golangci-lint ];
+        buildPhase = ''
+          HOME=$TMPDIR
+          golangci-lint run
+        '';
         installPhase = ''
           touch $out
         '';
