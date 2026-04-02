@@ -1,53 +1,52 @@
 package drv
 
 import (
-	"context"
-	"encoding/json"
+	"flag"
 	"fmt"
-	"os"
 
-	"github.com/nix-community/go-nix/pkg/derivation"
+	derivationStore "github.com/nix-community/go-nix/pkg/derivation/store"
 )
 
-type Cmd struct {
-	DrvStore derivation.Store `kong:"type='drv-store-uri',default='',help='Path where derivations are read from.'"`
+const usage = `Usage:
+  gonix drv show [--drv-store URI] [--format aterm|json|json-pretty] <drv-path>
+`
 
-	Show ShowCmd `kong:"cmd,name='show',help='Show a derivation'"`
-}
-
-type ShowCmd struct {
-	Drv    string `kong:"arg,type='string',help='Path to the Derivation'"`
-	Format string `kong:"default='json-pretty',help='The format to use to show (aterm,json-pretty,json)'"`
-}
-
-func (cmd *ShowCmd) Run(drvCmd *Cmd) error {
-	drvStore := drvCmd.DrvStore
-
-	drv, err := drvStore.Get(context.Background(), cmd.Drv)
-	if err != nil {
-		return err
+// Main dispatches the drv subcommand. args excludes the leading "gonix drv".
+func Main(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("missing subcommand\n\n%s", usage)
 	}
 
-	// Keep in mind `nix show-derivation` started sorting all of the JSON alphabetically,
-	// while this still preserves the previous order of keys, as  encoding/json
-	// preserves struct element definition order when serializing.
-	switch cmd.Format {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		err = enc.Encode(drv)
-	case "json-pretty":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		err = enc.Encode(drv)
-	case "aterm":
-		err = drv.WriteDerivation(os.Stdout)
+	switch args[0] {
+	case "show":
+		fs := flag.NewFlagSet("drv show", flag.ExitOnError)
+		storeURI := fs.String("drv-store", "", "store URI to read derivations from")
+		format := fs.String("format", "json-pretty", "output format: aterm, json, or json-pretty")
+		fs.Usage = func() {
+			fmt.Fprint(fs.Output(), "Usage: gonix drv show [--drv-store URI] [--format FORMAT] <drv-path>\n")
+			fs.PrintDefaults()
+		}
+
+		_ = fs.Parse(args[1:])
+		if fs.NArg() != 1 {
+			fs.Usage()
+
+			return fmt.Errorf("show requires <drv-path>")
+		}
+
+		drvStore, err := derivationStore.NewFromURI(*storeURI)
+		if err != nil {
+			return fmt.Errorf("creating store from URI: %w", err)
+		}
+
+		return (&ShowCmd{Drv: fs.Arg(0), Format: *format}).Run(drvStore)
+
+	case "-h", "--help", "help":
+		fmt.Print(usage)
+
+		return nil
+
 	default:
-		err = fmt.Errorf("invalid format: %v", cmd.Format)
+		return fmt.Errorf("unknown subcommand %q\n\n%s", args[0], usage)
 	}
-
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

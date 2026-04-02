@@ -60,6 +60,9 @@ type Client struct {
 	DefaultExecOptions ExecOptions
 }
 
+// DefaultSocketPath is the conventional location of the nix-daemon Unix socket.
+const DefaultSocketPath = "/nix/var/nix/daemon-socket/socket"
+
 // Connect dials the Nix daemon Unix socket and performs the handshake.
 func Connect(ctx context.Context, path string) (*Client, error) {
 	var d net.Dialer

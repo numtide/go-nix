@@ -10,8 +10,8 @@ import (
 )
 
 type CatCmd struct {
-	Nar  string `kong:"arg,type='existingfile',help='Path to the NAR'"`
-	Path string `kong:"arg,type='string',help='Path inside the NAR, starting with \"/\".'"`
+	Nar  string
+	Path string
 }
 
 func (cmd *CatCmd) Run() error {

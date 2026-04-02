@@ -2,18 +2,44 @@ package fast_build
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/nix-community/go-nix/pkg/daemon"
 	"golang.org/x/sync/errgroup"
 )
 
-// Cmd is the kong command for building derivations from nix-eval-jobs output.
+// Main parses fast-build flags and runs the build pipeline. args excludes the
+// leading "gonix fast-build".
+func Main(args []string) error {
+	fs := flag.NewFlagSet("fast-build", flag.ExitOnError)
+	cmd := &Cmd{}
+	fs.IntVar(&cmd.MaxJobs, "j", 4, "number of parallel build connections")
+	fs.StringVar(&cmd.Socket, "socket", daemon.DefaultSocketPath, "nix daemon socket path")
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), "Usage: gonix fast-build [-j N] [--socket PATH]\n\n"+
+			"Reads nix-eval-jobs JSON from stdin, builds in parallel.\n\n")
+		fs.PrintDefaults()
+	}
+
+	_ = fs.Parse(args)
+	if fs.NArg() > 0 {
+		fs.Usage()
+
+		return fmt.Errorf("fast-build takes no positional arguments (got %q)", fs.Args())
+	}
+
+	return cmd.Run()
+}
+
+// Cmd holds fast-build options for building derivations from nix-eval-jobs output.
 type Cmd struct {
-	MaxJobs int    `kong:"short='j',default='4',help='Number of parallel build connections'"`
-	Socket  string `kong:"default='/nix/var/nix/daemon-socket/socket',help='Nix daemon socket path'"`
+	MaxJobs int
+	Socket  string
 }
 
 // Run executes the build pipeline.
