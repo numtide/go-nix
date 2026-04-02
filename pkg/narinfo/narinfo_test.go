@@ -324,7 +324,8 @@ func TestBigNarinfo(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	defer f.Close()
+
+	defer func() { _ = f.Close() }()
 
 	_, err = narinfo.Parse(f)
 	assert.NoError(t, err, "Parsing big .narinfo files shouldn't fail")

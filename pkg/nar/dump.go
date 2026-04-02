@@ -130,7 +130,8 @@ func dumpPath(nw *Writer, path string, subpath string, filter SourceFilterFunc) 
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+
+		defer func() { _ = f.Close() }()
 
 		// read in contents
 		n, err := io.Copy(nw, f)

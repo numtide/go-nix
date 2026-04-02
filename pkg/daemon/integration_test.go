@@ -1,0 +1,1423 @@
+//go:build integration
+
+package daemon_test
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/nix-community/go-nix/pkg/daemon"
+	"github.com/nix-community/go-nix/pkg/derivation"
+	"github.com/nix-community/go-nix/pkg/nar"
+	"github.com/nix-community/go-nix/pkg/nixbase32"
+	"github.com/stretchr/testify/require"
+)
+
+// nixBinary identifies a specific nix binary for multi-version testing.
+type nixBinary struct {
+	Name    string // e.g. "nix-2.18"
+	BinPath string // absolute path to the nix binary
+}
+
+// discoverNixBinaries returns the set of nix binaries available for testing.
+// When NIX_TEST_DAEMONS_DIR is set, it scans subdirectories for versioned binaries; otherwise it falls back to the
+// single nix on PATH.
+func discoverNixBinaries(t *testing.T) []nixBinary {
+	t.Helper()
+
+	rq := require.New(t)
+
+	dir := os.Getenv("NIX_TEST_DAEMONS_DIR")
+	if dir == "" {
+		// fall back to the single nix on PATH
+		bin, err := exec.LookPath("nix")
+		rq.NoError(err, "nix binary not found on PATH; run tests inside nix develop")
+
+		return []nixBinary{{Name: "nix", BinPath: bin}}
+	}
+
+	entries, err := os.ReadDir(dir)
+	rq.NoError(err, "failed to read NIX_TEST_DAEMONS_DIR: %s", dir)
+
+	var binaries []nixBinary
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+
+		bin := filepath.Join(dir, e.Name(), "bin", "nix")
+		if _, err = os.Stat(bin); err != nil { //nolint:gosec
+			continue
+		}
+
+		binaries = append(binaries, nixBinary{
+			Name:    e.Name(),
+			BinPath: bin,
+		})
+	}
+
+	rq.NotEmpty(binaries, "no nix binaries found in NIX_TEST_DAEMONS_DIR: %s", dir)
+
+	// sort by name before returning
+	sort.Slice(binaries, func(i, j int) bool {
+		return binaries[i].Name < binaries[j].Name
+	})
+
+	return binaries
+}
+
+// startTestDaemon starts an isolated nix daemon subprocess listening on a Unix socket and returns a connected client.
+// The daemon uses a temporary store under t.TempDir().
+// The daemon process is killed and cleaned up when the test finishes.
+func startTestDaemon(t *testing.T, bin nixBinary) *daemon.Client {
+	t.Helper()
+
+	rq := require.New(t)
+
+	storeRoot := t.TempDir()
+
+	// use a short path for the socket to stay within the 108-byte Unix socket address limit
+	// t.TempDir() paths include the full test name which can exceed this when version prefixes are added
+	socketDir, err := os.MkdirTemp("", "nix")
+	rq.NoError(err)
+
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+
+	socketPath := filepath.Join(socketDir, "d.sock")
+
+	//nolint:gosec
+	cmd := exec.Command(bin.BinPath, "daemon",
+		"--store", "local?root="+storeRoot,
+		"--extra-experimental-features", "daemon-trust-override nix-command",
+		"--force-trusted",
+	)
+
+	// tell the daemon to listen on our custom socket path
+	cmd.Env = append(os.Environ(), "NIX_DAEMON_SOCKET_PATH="+socketPath)
+
+	var stderrBuf bytes.Buffer
+
+	cmd.Stderr = &stderrBuf
+
+	rq.NoError(cmd.Start(), "failed to start nix daemon (%s)", bin.Name)
+
+	// ensure the daemon is cleaned up after the test
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+
+		// if the test failed, dump out the stderr for debugging
+		if t.Failed() {
+			stderr := stderrBuf.String()
+			if stderr != "" {
+				t.Logf("nix daemon stderr (%s):\n%s", bin.Name, stderr)
+			}
+		}
+	})
+
+	// wait up to 5 seconds for the socket to appear
+	for range 100 {
+		if _, err = os.Stat(socketPath); err == nil {
+			break
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// double-check the socket exists
+	rq.FileExists(socketPath, "daemon socket did not appear (%s)", bin.Name)
+
+	// open a new client
+	client, err := daemon.Connect(t.Context(), socketPath)
+	rq.NoError(err, "failed to connect to nix daemon (%s)", bin.Name)
+
+	t.Cleanup(func() {
+		_ = client.Close()
+	})
+
+	return client
+}
+
+// addTestPath creates a minimal store path in the daemon's isolated store and returns its store path and NAR data.
+// Uses dontCheckSigs=true which requires --force-trusted on the daemon.
+func addTestPath(t *testing.T, client *daemon.Client) (string, []byte) {
+	t.Helper()
+
+	rq := require.New(t)
+
+	// build a minimal NAR: a regular file with known content
+	var narBuf bytes.Buffer
+
+	nw, err := nar.NewWriter(&narBuf)
+	rq.NoError(err)
+
+	content := []byte("hello from go-nix integration test\n")
+	err = nw.WriteHeader(&nar.Header{
+		Path: "/",
+		Type: nar.TypeRegular,
+		Size: int64(len(content)),
+	})
+	rq.NoError(err)
+
+	_, err = nw.Write(content)
+	rq.NoError(err)
+	rq.NoError(nw.Close())
+
+	narData := narBuf.Bytes()
+
+	// compute SHA-256 hash of the NAR
+	h := sha256.Sum256(narData)
+	narHash := "sha256:" + nixbase32.EncodeToString(h[:])
+
+	// construct a store path from the truncated hash (simplified, not Nix-canonical)
+	// technically this isn't a proper store path, but it's enough for testing
+	storePath := "/nix/store/" + nixbase32.EncodeToString(h[:20]) + "-go-nix-integration-test"
+
+	info := &daemon.PathInfo{
+		StorePath:  storePath,
+		NarHash:    narHash,
+		NarSize:    uint64(len(narData)),
+		References: []string{},
+		Sigs:       []string{},
+	}
+
+	err = client.AddToStoreNar(t.Context(), info, bytes.NewReader(narData), false, true)
+	rq.NoError(err, "addTestPath: AddToStoreNar failed")
+
+	return storePath, narData
+}
+
+// testPathGraph holds the paths created by addTestPathWithDeps.
+type testPathGraph struct {
+	// depPath is a dependency with no references and no deriver.
+	DepPath string
+	// drvPath is a .drv-suffixed path that references depPath.
+	DrvPath string
+	// outPath is an output path that references depPath and has drvPath as its deriver.
+	OutPath string
+}
+
+// addTestPathWithDeps creates a small graph of store paths for testing reference and deriver queries.
+// The graph consists of three paths: a dependency, a real .drv derivation, and an output.
+// The derivation is serialized in ATerm format with a canonically computed .drv and output path.
+func addTestPathWithDeps(t *testing.T, client *daemon.Client) testPathGraph {
+	t.Helper()
+
+	rq := require.New(t)
+	ctx := t.Context()
+
+	// step 1: create the dependency path (no references, no deriver)
+	depNAR := buildTestNAR(t, []byte("dependency content\n"))
+	depHash := sha256.Sum256(depNAR)
+	depPath := "/nix/store/" + nixbase32.EncodeToString(depHash[:20]) + "-go-nix-dep"
+
+	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
+		StorePath:  depPath,
+		NarHash:    "sha256:" + nixbase32.EncodeToString(depHash[:]),
+		NarSize:    uint64(len(depNAR)),
+		References: []string{},
+		Sigs:       []string{},
+	}, bytes.NewReader(depNAR), false, true))
+
+	// step 2: build a real derivation with empty output path, then compute canonical paths
+	drv := &derivation.Derivation{
+		Outputs:          map[string]*derivation.Output{"out": {}},
+		InputSources:     []string{depPath},
+		InputDerivations: map[string][]string{},
+		Platform:         ":",
+		Builder:          ":",
+		Arguments:        []string{},
+		Env:              map[string]string{"name": "go-nix-test", "out": ""},
+	}
+
+	// compute the canonical output path from the derivation hash
+	outputPaths, err := drv.CalculateOutputPaths(nil)
+	rq.NoError(err)
+
+	outPath := outputPaths["out"]
+	rq.NotEmpty(outPath)
+
+	// fill in the computed output path
+	drv.Outputs["out"].Path = outPath
+	drv.Env["out"] = outPath
+
+	// serialize to ATerm and compute canonical .drv path
+	var drvBuf bytes.Buffer
+
+	rq.NoError(drv.WriteDerivation(&drvBuf))
+
+	drvPath, err := drv.DrvPath()
+	rq.NoError(err)
+
+	// wrap the ATerm content in a NAR and register the .drv path
+	drvNAR := buildTestNAR(t, drvBuf.Bytes())
+	drvNARHash := sha256.Sum256(drvNAR)
+
+	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
+		StorePath:  drvPath,
+		NarHash:    "sha256:" + nixbase32.EncodeToString(drvNARHash[:]),
+		NarSize:    uint64(len(drvNAR)),
+		References: []string{depPath},
+		Sigs:       []string{},
+	}, bytes.NewReader(drvNAR), false, true))
+
+	// step 3: register the output path with the derivation as its deriver
+	outNAR := buildTestNAR(t, []byte("output content\n"))
+	outNARHash := sha256.Sum256(outNAR)
+
+	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
+		StorePath:  outPath,
+		Deriver:    drvPath,
+		NarHash:    "sha256:" + nixbase32.EncodeToString(outNARHash[:]),
+		NarSize:    uint64(len(outNAR)),
+		References: []string{depPath},
+		Sigs:       []string{},
+	}, bytes.NewReader(outNAR), false, true))
+
+	return testPathGraph{DepPath: depPath, DrvPath: drvPath, OutPath: outPath}
+}
+
+// addUnbuiltDrv registers a .drv in the store whose output has NOT been built.
+// Returns a testPathGraph where OutPath is the expected (but missing) output.
+func addUnbuiltDrv(t *testing.T, client *daemon.Client) testPathGraph {
+	t.Helper()
+
+	rq := require.New(t)
+	ctx := t.Context()
+
+	// build a derivation with a unique name so it doesn't collide with addTestPathWithDeps
+	drv := &derivation.Derivation{
+		Outputs:          map[string]*derivation.Output{"out": {}},
+		InputSources:     []string{},
+		InputDerivations: map[string][]string{},
+		Platform:         ":",
+		Builder:          ":",
+		Arguments:        []string{},
+		Env:              map[string]string{"name": "go-nix-unbuilt", "out": ""},
+	}
+
+	outputPaths, err := drv.CalculateOutputPaths(nil)
+	rq.NoError(err)
+
+	outPath := outputPaths["out"]
+	drv.Outputs["out"].Path = outPath
+	drv.Env["out"] = outPath
+
+	var drvBuf bytes.Buffer
+
+	rq.NoError(drv.WriteDerivation(&drvBuf))
+
+	drvPath, err := drv.DrvPath()
+	rq.NoError(err)
+
+	drvNAR := buildTestNAR(t, drvBuf.Bytes())
+	drvNARHash := sha256.Sum256(drvNAR)
+
+	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
+		StorePath:  drvPath,
+		NarHash:    "sha256:" + nixbase32.EncodeToString(drvNARHash[:]),
+		NarSize:    uint64(len(drvNAR)),
+		References: []string{},
+		Sigs:       []string{},
+	}, bytes.NewReader(drvNAR), false, true))
+
+	// intentionally do NOT register outPath — it remains unbuilt
+	return testPathGraph{DrvPath: drvPath, OutPath: outPath}
+}
+
+// buildTestNAR creates a minimal NAR containing a single regular file with the given content.
+func buildTestNAR(t *testing.T, content []byte) []byte {
+	t.Helper()
+
+	rq := require.New(t)
+
+	var buf bytes.Buffer
+
+	nw, err := nar.NewWriter(&buf)
+	rq.NoError(err)
+
+	rq.NoError(nw.WriteHeader(&nar.Header{
+		Path: "/",
+		Type: nar.TypeRegular,
+		Size: int64(len(content)),
+	}))
+
+	_, err = nw.Write(content)
+	rq.NoError(err)
+	rq.NoError(nw.Close())
+
+	return buf.Bytes()
+}
+
+// skipIfUnsupported checks whether err is an UnsupportedOperationError and skips the test if so.
+// Returns true if the test was skipped.
+func skipIfUnsupported(t *testing.T, err error) bool {
+	t.Helper()
+
+	var unsupported *daemon.UnsupportedOperationError
+	if errors.As(err, &unsupported) {
+		t.Skipf("%v", unsupported)
+
+		return true
+	}
+
+	return false
+}
+
+// runParallel registers a named subtest that starts its own daemon and runs the given test function in parallel.
+func runParallel(t *testing.T, name string, bin nixBinary, fn func(t *testing.T, client *daemon.Client)) {
+	t.Helper()
+
+	t.Run(name, func(t *testing.T) {
+		t.Parallel()
+
+		client := startTestDaemon(t, bin)
+		fn(t, client)
+	})
+}
+
+// TestIntegration is the top-level entry point that runs the full integration suite against every Nix daemon version
+// discovered via NIX_TEST_DAEMONS_DIR (or the single nix on PATH as a fallback).
+func TestIntegration(t *testing.T) {
+	binaries := discoverNixBinaries(t)
+
+	for _, bin := range binaries {
+		t.Run(bin.Name, func(t *testing.T) {
+			t.Parallel()
+
+			// --- Connection & Handshake ---
+			runParallel(t, "Connect", bin, testConnect)
+			runParallel(t, "SetOptions", bin, testSetOptions)
+
+			// --- Validity & Path Queries ---
+			runParallel(t, "IsValidPath", bin, testIsValidPath)
+			runParallel(t, "IsValidPathTrue", bin, testIsValidPathTrue)
+			runParallel(t, "QueryAllValidPaths", bin, testQueryAllValidPaths)
+			runParallel(t, "QueryValidPaths", bin, testQueryValidPaths)
+			runParallel(t, "QueryValidPathsSubset", bin, testQueryValidPathsSubset)
+
+			// --- Path Info ---
+			runParallel(t, "QueryPathInfo", bin, testQueryPathInfo)
+			runParallel(t, "QueryPathInfoNotFound", bin, testQueryPathInfoNotFound)
+			runParallel(t, "QueryPathFromHashPart", bin, testQueryPathFromHashPart)
+			runParallel(t, "QueryPathFromHashPartNotFound", bin, testQueryPathFromHashPartNotFound)
+
+			// --- References & Derivers ---
+			runParallel(t, "QueryReferrers", bin, testQueryReferrers)
+			runParallel(t, "QueryValidDerivers", bin, testQueryValidDerivers)
+
+			// --- Substitutable & Missing ---
+			runParallel(t, "QuerySubstitutablePaths", bin, testQuerySubstitutablePaths)
+			runParallel(t, "QueryMissing", bin, testQueryMissing)
+
+			// --- NAR Streaming ---
+			runParallel(t, "NarFromPath", bin, testNarFromPath)
+
+			// --- GC Roots ---
+			runParallel(t, "FindRoots", bin, testFindRoots)
+			runParallel(t, "AddTempRoot", bin, testAddTempRoot)
+
+			// --- Verify & Optimise ---
+			runParallel(t, "VerifyStore", bin, testVerifyStore)
+
+			// --- Build Operations ---
+			runParallel(t, "BuildPaths", bin, testBuildPaths)
+			runParallel(t, "BuildPathsWithResults", bin, testBuildPathsWithResults)
+			runParallel(t, "EnsurePath", bin, testEnsurePath)
+
+			// --- Sequential Operations ---
+			runParallel(t, "SequentialOperations", bin, testSequentialOperations)
+
+			// --- Mutating Operations ---
+			runParallel(t, "AddToStoreNarRoundTrip", bin, testAddToStoreNarRoundTrip)
+			runParallel(t, "BuildDerivation", bin, testBuildDerivation)
+			runParallel(t, "AddBuildLog", bin, testAddBuildLog)
+			runParallel(t, "AddIndirectRoot", bin, testAddIndirectRoot)
+			runParallel(t, "SetOptionsWithOverrides", bin, testSetOptionsWithOverrides)
+
+			// --- Derivation Output Map ---
+			runParallel(t, "QueryDerivationOutputMap", bin, testQueryDerivationOutputMap)
+
+			// --- AddToStore ---
+			runParallel(t, "AddToStore", bin, testAddToStore)
+			runParallel(t, "AddToStoreFlat", bin, testAddToStoreFlat)
+			runParallel(t, "AddToStoreIdempotent", bin, testAddToStoreIdempotent)
+
+			// --- QuerySubstitutablePathInfos ---
+			runParallel(t, "QuerySubstitutablePathInfos", bin, testQuerySubstitutablePathInfos)
+			runParallel(t, "QuerySubstitutablePathInfosEmpty", bin, testQuerySubstitutablePathInfosEmpty)
+			runParallel(t, "QuerySubstitutablePathInfosMultiple", bin, testQuerySubstitutablePathInfosMultiple)
+
+			// --- QueryRealisation ---
+			runParallel(t, "QueryRealisation", bin, testQueryRealisation)
+
+			// --- AddPermRoot ---
+			runParallel(t, "AddPermRoot", bin, testAddPermRoot)
+
+			// --- AddSignatures ---
+			runParallel(t, "AddSignatures", bin, testAddSignatures)
+
+			// --- RegisterDrvOutput ---
+			runParallel(t, "RegisterDrvOutput", bin, testRegisterDrvOutput)
+
+			// --- CollectGarbage ---
+			runParallel(t, "CollectGarbage", bin, testCollectGarbage)
+			runParallel(t, "CollectGarbageReturnDead", bin, testCollectGarbageReturnDead)
+			runParallel(t, "CollectGarbageWithTempRoot", bin, testCollectGarbageWithTempRoot)
+
+			// --- OptimiseStore ---
+			runParallel(t, "OptimiseStore", bin, testOptimiseStore)
+
+			// --- Structured Error Parsing ---
+			runParallel(t, "StructuredError", bin, testStructuredError)
+			runParallel(t, "StructuredErrorBuildDerivation", bin, testStructuredErrorBuildDerivation)
+
+			// --- AddMultipleToStore ---
+			runParallel(t, "AddMultipleToStore", bin, testAddMultipleToStore)
+		})
+	}
+}
+
+// --- Connection & Handshake ---
+
+func testConnect(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	info := client.Info()
+
+	rq.True(info.Version >= daemon.MinProtocolVersion,
+		"negotiated protocol %#x below minimum %#x", info.Version, daemon.MinProtocolVersion)
+	rq.True(info.Version <= daemon.ProtocolVersion,
+		"negotiated protocol %#x above maximum %#x", info.Version, daemon.ProtocolVersion)
+
+	rq.NotEmpty(info.DaemonNixVersion)
+
+	t.Logf("Nix version: %s, protocol: %#x, trust: %d", info.DaemonNixVersion, info.Version, info.Trust)
+}
+
+func testSetOptions(t *testing.T, client *daemon.Client) {
+	settings := daemon.DefaultClientSettings()
+	err := client.SetOptions(t.Context(), settings)
+	require.NoError(t, err)
+}
+
+// --- Validity & Path Queries ---
+
+func testIsValidPath(t *testing.T, client *daemon.Client) {
+	// a path that definitely doesn't exist
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	require.NoError(t, err)
+	require.False(t, valid)
+}
+
+func testIsValidPathTrue(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	valid, err := client.IsValidPath(t.Context(), path)
+	require.NoError(t, err)
+	require.True(t, valid)
+}
+
+func testQueryAllValidPaths(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	paths, err := client.QueryAllValidPaths(t.Context())
+	require.NoError(t, err)
+	require.Contains(t, paths, path)
+	t.Logf("Store has %d valid paths", len(paths))
+}
+
+func testQueryValidPaths(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	valid, err := client.QueryValidPaths(t.Context(), []string{path}, false)
+	require.NoError(t, err)
+	require.Contains(t, valid, path)
+}
+
+func testQueryValidPathsSubset(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	path, _ := addTestPath(t, client)
+
+	bogus := "/nix/store/00000000000000000000000000000000-nonexistent"
+	valid, err := client.QueryValidPaths(t.Context(), []string{path, bogus}, false)
+	rq.NoError(err)
+	rq.Contains(valid, path)
+	rq.NotContains(valid, bogus)
+}
+
+// --- Path Info ---
+
+func testQueryPathInfo(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	graph := addTestPathWithDeps(t, client)
+
+	info, err := client.QueryPathInfo(t.Context(), graph.OutPath)
+	rq.NoError(err)
+	rq.NotNil(info)
+
+	rq.Equal(graph.OutPath, info.StorePath)
+	rq.Equal(graph.DrvPath, info.Deriver)
+	rq.Contains(info.References, graph.DepPath)
+	rq.NotEmpty(info.NarHash)
+	rq.True(info.NarSize > 0)
+}
+
+func testQueryPathInfoNotFound(t *testing.T, client *daemon.Client) {
+	_, err := client.QueryPathInfo(t.Context(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	require.ErrorIs(t, err, daemon.ErrNotFound)
+}
+
+func testQueryPathFromHashPart(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	// extract hash part: /nix/store/<hash>-<name> -> <hash>
+	hashPart := strings.TrimPrefix(path, "/nix/store/")
+	if idx := strings.Index(hashPart, "-"); idx > 0 {
+		hashPart = hashPart[:idx]
+	}
+
+	result, err := client.QueryPathFromHashPart(t.Context(), hashPart)
+	require.NoError(t, err)
+	require.Equal(t, path, result)
+}
+
+func testQueryPathFromHashPartNotFound(t *testing.T, client *daemon.Client) {
+	result, err := client.QueryPathFromHashPart(t.Context(), "00000000000000000000000000000000")
+	require.NoError(t, err)
+	require.Empty(t, result)
+}
+
+// --- References & Derivers ---
+
+func testQueryReferrers(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	graph := addTestPathWithDeps(t, client)
+
+	// depPath is referenced by both drvPath and outPath
+	referrers, err := client.QueryReferrers(t.Context(), graph.DepPath)
+	rq.NoError(err)
+	rq.Contains(referrers, graph.OutPath)
+	rq.Contains(referrers, graph.DrvPath)
+}
+
+func testQueryValidDerivers(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	graph := addTestPathWithDeps(t, client)
+
+	// outPath has drvPath as its deriver
+	derivers, err := client.QueryValidDerivers(t.Context(), graph.OutPath)
+	rq.NoError(err)
+	rq.Contains(derivers, graph.DrvPath)
+}
+
+// --- Substitutable & Missing ---
+
+func testQuerySubstitutablePaths(t *testing.T, client *daemon.Client) {
+	// query with a bogus path — should return empty (no substitutes for it)
+	substitutable, err := client.QuerySubstitutablePaths(t.Context(), []string{
+		"/nix/store/00000000000000000000000000000000-nonexistent",
+	})
+	require.NoError(t, err)
+	require.Empty(t, substitutable)
+}
+
+func testQueryMissing(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+	ctx := t.Context()
+
+	// a path already in the store should not be missing
+	path, _ := addTestPath(t, client)
+
+	missing, err := client.QueryMissing(ctx, []string{path})
+	rq.NoError(err)
+	rq.NotNil(missing)
+	rq.NotContains(missing.WillBuild, path)
+	rq.NotContains(missing.Unknown, path)
+
+	// a .drv whose output is not in the store should appear in WillBuild.
+	// register a derivation without registering its output.
+	unbuildable := addUnbuiltDrv(t, client)
+
+	missing, err = client.QueryMissing(ctx, []string{unbuildable.DrvPath + "!out"})
+	rq.NoError(err)
+	rq.NotNil(missing)
+	rq.Contains(missing.WillBuild, unbuildable.DrvPath)
+}
+
+// --- NAR Streaming ---
+
+func testNarFromPath(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	path, expectedNar := addTestPath(t, client)
+
+	// get expected NAR size
+	info, err := client.QueryPathInfo(t.Context(), path)
+	rq.NoError(err)
+	rq.NotNil(info)
+
+	rc, err := client.NarFromPath(t.Context(), path)
+	rq.NoError(err)
+	rq.NotNil(rc)
+
+	// read all NAR data
+	data, err := io.ReadAll(rc)
+	rq.NoError(err)
+	rq.NoError(rc.Close())
+
+	// verify NAR data starts with the magic header
+	rq.True(len(data) > 0, "NAR data should not be empty")
+	rq.True(bytes.Contains(data[:min(len(data), 64)], []byte("nix-archive-1")),
+		"NAR data should start with nix-archive-1 magic")
+
+	// verify NAR size matches what PathInfo reported
+	rq.Equal(info.NarSize, uint64(len(data)),
+		"NAR size should match PathInfo.NarSize")
+
+	// verify NAR content matches what we originally added
+	rq.Equal(expectedNar, data, "NAR content round-trip mismatch")
+
+	t.Logf("NAR from %s: %d bytes", path, len(data))
+}
+
+// --- GC Roots ---
+
+func testFindRoots(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	// add a temp root so FindRoots returns something
+	err := client.AddTempRoot(t.Context(), path)
+	require.NoError(t, err)
+
+	roots, err := client.FindRoots(t.Context())
+	require.NoError(t, err)
+	// note: FindRoots may or may not include temp roots depending on daemon version.
+	// we just verify the protocol round-trip works.
+	t.Logf("Found %d GC roots", len(roots))
+}
+
+func testAddTempRoot(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	err := client.AddTempRoot(t.Context(), path)
+	require.NoError(t, err)
+}
+
+// --- Verify & Optimise ---
+
+func testVerifyStore(t *testing.T, client *daemon.Client) {
+	if testing.Short() {
+		t.Skip("skipping store verification in short mode")
+	}
+
+	// checkContents=false, repair=false — just a quick metadata check
+	errorsFound, err := client.VerifyStore(t.Context(), false, false)
+	require.NoError(t, err)
+	t.Logf("VerifyStore found errors: %v", errorsFound)
+}
+
+// --- Build Operations ---
+
+func testBuildPaths(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	// building an already-valid path should succeed immediately
+	err := client.BuildPaths(t.Context(), []string{path}, daemon.BuildModeNormal)
+	require.NoError(t, err)
+}
+
+func testBuildPathsWithResults(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	results, err := client.BuildPathsWithResults(t.Context(), []string{path}, daemon.BuildModeNormal)
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	require.NoError(t, err)
+
+	for i, br := range results {
+		t.Logf("BuildResult[%d]: status=%s timesBuilt=%d", i, br.Status, br.TimesBuilt)
+	}
+}
+
+func testEnsurePath(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	err := client.EnsurePath(t.Context(), path)
+	require.NoError(t, err)
+}
+
+// --- Sequential Operations ---
+// Verify that multiple operations work on the same connection sequentially.
+
+func testSequentialOperations(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	path, _ := addTestPath(t, client)
+	ctx := t.Context()
+
+	// operation 1: QueryAllValidPaths
+	allPaths, err := client.QueryAllValidPaths(ctx)
+	rq.NoError(err)
+	rq.Contains(allPaths, path)
+
+	// operation 2: IsValidPath
+	valid, err := client.IsValidPath(ctx, path)
+	rq.NoError(err)
+	rq.True(valid)
+
+	// operation 3: QueryPathInfo
+	info, err := client.QueryPathInfo(ctx, path)
+	rq.NoError(err)
+	rq.NotNil(info)
+
+	// operation 4: NarFromPath + read + close
+	rc, err := client.NarFromPath(ctx, path)
+	rq.NoError(err)
+	_, err = io.ReadAll(rc)
+	rq.NoError(err)
+	rq.NoError(rc.Close())
+
+	// operation 5: QueryMissing (after releasing the NAR reader)
+	_, err = client.QueryMissing(ctx, []string{path})
+	rq.NoError(err)
+
+	// operation 6: FindRoots
+	_, err = client.FindRoots(ctx)
+	rq.NoError(err)
+
+	t.Logf("6 sequential operations completed successfully on the same connection")
+}
+
+// --- Mutating Operations ---
+
+func testAddToStoreNarRoundTrip(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	ctx := t.Context()
+
+	// 1. build a minimal NAR: a regular file with known content.
+	var narBuf bytes.Buffer
+
+	nw, err := nar.NewWriter(&narBuf)
+	rq.NoError(err)
+
+	content := []byte("hello from go-nix integration test\n")
+	err = nw.WriteHeader(&nar.Header{
+		Path: "/",
+		Type: nar.TypeRegular,
+		Size: int64(len(content)),
+	})
+	rq.NoError(err)
+	_, err = nw.Write(content)
+	rq.NoError(err)
+	rq.NoError(nw.Close())
+
+	narData := narBuf.Bytes()
+
+	// 2. compute SHA-256 hash of the NAR.
+	h := sha256.Sum256(narData)
+	narHash := "sha256:" + nixbase32.EncodeToString(h[:])
+
+	// 3. construct store path.
+	storePath := "/nix/store/" + nixbase32.EncodeToString(h[:20]) + "-go-nix-integration-test"
+
+	info := &daemon.PathInfo{
+		StorePath:  storePath,
+		NarHash:    narHash,
+		NarSize:    uint64(len(narData)),
+		References: []string{},
+		Sigs:       []string{},
+	}
+
+	// 4. AddToStoreNar with dontCheckSigs=true.
+	err = client.AddToStoreNar(ctx, info, bytes.NewReader(narData), false, true)
+	rq.NoError(err)
+
+	// 5. verify via QueryPathInfo.
+	gotInfo, err := client.QueryPathInfo(ctx, storePath)
+	rq.NoError(err)
+	rq.NotNil(gotInfo, "path should exist in store after AddToStoreNar")
+	rq.Equal(storePath, gotInfo.StorePath)
+	rq.Equal(uint64(len(narData)), gotInfo.NarSize)
+	t.Logf("AddToStoreNar round-trip: path=%s narSize=%d", gotInfo.StorePath, gotInfo.NarSize)
+
+	// 6. verify via NarFromPath: the retrieved NAR should match what we sent.
+	rc, err := client.NarFromPath(ctx, storePath)
+	rq.NoError(err)
+	gotNar, err := io.ReadAll(rc)
+	rq.NoError(err)
+	rq.NoError(rc.Close())
+	rq.Equal(narData, gotNar, "NAR content round-trip mismatch")
+}
+
+func testBuildDerivation(t *testing.T, client *daemon.Client) {
+	drv := &daemon.BasicDerivation{
+		Outputs: map[string]daemon.DerivationOutput{
+			"out": {Path: "/nix/store/00000000000000000000000000000000-go-nix-test-out"},
+		},
+		Inputs:   []string{},
+		Platform: "x86_64-linux",
+		Builder:  "/nix/store/00000000000000000000000000000000-nonexistent",
+		Args:     []string{},
+		Env:      map[string]string{"out": "/nix/store/00000000000000000000000000000000-go-nix-test-out"},
+	}
+
+	result, err := client.BuildDerivation(t.Context(), &daemon.BuildDerivationRequest{
+		DrvPath:    "/nix/store/00000000000000000000000000000000-go-nix-test.drv",
+		Derivation: drv,
+		Mode:       daemon.BuildModeNormal,
+	})
+	// the build should fail (nonexistent builder) but the protocol round-trip should work
+	if err != nil {
+		t.Logf("BuildDerivation returned error: %v (expected for nonexistent builder)", err)
+
+		return
+	}
+
+	require.NotEqual(t, daemon.BuildStatusBuilt, result.Status,
+		"build with nonexistent builder should not succeed")
+	t.Logf("BuildDerivation result: status=%s errorMsg=%q", result.Status, result.ErrorMsg)
+}
+
+func testAddBuildLog(t *testing.T, client *daemon.Client) {
+	graph := addTestPathWithDeps(t, client)
+
+	logContent := "test build log from go-nix\n"
+
+	err := client.AddBuildLog(t.Context(), graph.DrvPath, strings.NewReader(logContent))
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	require.NoError(t, err)
+}
+
+func testAddIndirectRoot(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	// create a temp symlink pointing to the valid store path
+	tmpDir := t.TempDir()
+	symlink := filepath.Join(tmpDir, "gc-root")
+	require.NoError(t, os.Symlink(path, symlink))
+
+	err := client.AddIndirectRoot(t.Context(), symlink)
+	require.NoError(t, err)
+}
+
+func testSetOptionsWithOverrides(t *testing.T, client *daemon.Client) {
+	ctx := t.Context()
+
+	settings := daemon.DefaultClientSettings()
+	settings.MaxBuildJobs = 2
+	settings.Overrides = map[string]string{
+		"max-build-log-size": "1048576",
+	}
+
+	err := client.SetOptions(ctx, settings)
+	require.NoError(t, err)
+
+	// verify connection is still healthy after SetOptions with overrides
+	_, err = client.QueryAllValidPaths(ctx)
+	require.NoError(t, err)
+}
+
+// --- Derivation Output Map ---
+
+func testQueryDerivationOutputMap(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	graph := addTestPathWithDeps(t, client)
+
+	outputs, err := client.QueryDerivationOutputMap(t.Context(), graph.DrvPath)
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	rq.NoError(err)
+	rq.Contains(outputs, "out")
+	rq.Equal(graph.OutPath, outputs["out"])
+}
+
+// --- AddToStore ---
+
+func testAddToStore(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	ctx := t.Context()
+
+	// build a minimal NAR: a regular file with known content.
+	var narBuf bytes.Buffer
+
+	nw, err := nar.NewWriter(&narBuf)
+	rq.NoError(err)
+
+	content := []byte("content-addressed import via AddToStore\n")
+	err = nw.WriteHeader(&nar.Header{
+		Path: "/",
+		Type: nar.TypeRegular,
+		Size: int64(len(content)),
+	})
+	rq.NoError(err)
+	_, err = nw.Write(content)
+	rq.NoError(err)
+	rq.NoError(nw.Close())
+
+	narData := narBuf.Bytes()
+
+	// use AddToStore with fixed:r:sha256 (recursive NAR, SHA-256).
+	// the daemon computes the store path from the content.
+	info, err := client.AddToStore(ctx, &daemon.AddToStoreRequest{
+		Name:             "go-nix-addtostore-test",
+		CAMethodWithAlgo: "fixed:r:sha256",
+		References:       []string{},
+		Source:           bytes.NewReader(narData),
+	})
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	rq.NoError(err)
+	rq.NotNil(info)
+
+	rq.NotEmpty(info.StorePath)
+	rq.True(strings.HasPrefix(info.StorePath, "/nix/store/"))
+	rq.Contains(info.StorePath, "go-nix-addtostore-test")
+	rq.NotEmpty(info.NarHash)
+	rq.Equal(uint64(len(narData)), info.NarSize)
+	rq.NotEmpty(info.CA, "content-addressed path should have a CA field")
+	t.Logf("AddToStore: path=%s narSize=%d ca=%s", info.StorePath, info.NarSize, info.CA)
+
+	// verify the path is now valid in the store
+	valid, err := client.IsValidPath(ctx, info.StorePath)
+	rq.NoError(err)
+	rq.True(valid)
+
+	// verify round-trip: retrieve the NAR and compare
+	rc, err := client.NarFromPath(ctx, info.StorePath)
+	rq.NoError(err)
+	gotNar, err := io.ReadAll(rc)
+	rq.NoError(err)
+	rq.NoError(rc.Close())
+	rq.Equal(narData, gotNar, "NAR content round-trip mismatch")
+}
+
+func testAddToStoreFlat(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	ctx := t.Context()
+
+	// for flat content addressing, the source is the raw file content (not NAR)
+	content := []byte("flat content-addressed file\n")
+
+	info, err := client.AddToStore(ctx, &daemon.AddToStoreRequest{
+		Name:             "go-nix-flat-test",
+		CAMethodWithAlgo: "fixed:sha256",
+		References:       []string{},
+		Source:           bytes.NewReader(content),
+	})
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	rq.NoError(err)
+	rq.NotNil(info)
+
+	rq.NotEmpty(info.StorePath)
+	rq.Contains(info.StorePath, "go-nix-flat-test")
+	rq.NotEmpty(info.CA)
+	t.Logf("AddToStore flat: path=%s ca=%s", info.StorePath, info.CA)
+
+	// verify the path exists
+	valid, err := client.IsValidPath(ctx, info.StorePath)
+	rq.NoError(err)
+	rq.True(valid)
+}
+
+func testAddToStoreIdempotent(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	ctx := t.Context()
+
+	content := []byte("idempotent content\n")
+
+	// add the same content twice — should return the same path both times
+	info1, err := client.AddToStore(ctx, &daemon.AddToStoreRequest{
+		Name:             "go-nix-idempotent",
+		CAMethodWithAlgo: "fixed:sha256",
+		Source:           bytes.NewReader(content),
+	})
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	rq.NoError(err)
+
+	info2, err := client.AddToStore(ctx, &daemon.AddToStoreRequest{
+		Name:             "go-nix-idempotent",
+		CAMethodWithAlgo: "fixed:sha256",
+		Source:           bytes.NewReader(content),
+	})
+	rq.NoError(err)
+
+	rq.Equal(info1.StorePath, info2.StorePath, "same content should produce same store path")
+	rq.Equal(info1.NarHash, info2.NarHash)
+}
+
+// --- QuerySubstitutablePathInfos ---
+
+func testQuerySubstitutablePathInfos(t *testing.T, client *daemon.Client) {
+	// with a local-only store and no substitutes configured, the result should be empty.
+	// the protocol round-trip must succeed.
+	result, err := client.QuerySubstitutablePathInfos(t.Context(), map[string]string{
+		"/nix/store/00000000000000000000000000000000-nonexistent": "",
+	})
+	require.NoError(t, err)
+	require.Empty(t, result)
+}
+
+func testQuerySubstitutablePathInfosEmpty(t *testing.T, client *daemon.Client) {
+	// empty input map should return empty result
+	result, err := client.QuerySubstitutablePathInfos(t.Context(), map[string]string{})
+	require.NoError(t, err)
+	require.Empty(t, result)
+}
+
+func testQuerySubstitutablePathInfosMultiple(t *testing.T, client *daemon.Client) {
+	// multiple paths, none substitutable in a local-only store
+	result, err := client.QuerySubstitutablePathInfos(t.Context(), map[string]string{
+		"/nix/store/00000000000000000000000000000000-foo": "",
+		"/nix/store/11111111111111111111111111111111-bar": "",
+		"/nix/store/22222222222222222222222222222222-baz": "",
+	})
+	require.NoError(t, err)
+	require.Empty(t, result)
+	t.Logf("QuerySubstitutablePathInfos: %d results for 3 queries", len(result))
+}
+
+// --- QueryRealisation ---
+
+func testQueryRealisation(t *testing.T, client *daemon.Client) {
+	// query a nonexistent output ID — should return empty, no error.
+	// note: some Nix versions crash with an SQLite assertion failure when the realisations DB is uninitialised
+	// (local?root= stores).
+	// tolerate errors here since we're testing the protocol round-trip.
+	realisations, err := client.QueryRealisation(t.Context(),
+		"sha256:0000000000000000000000000000000000000000000000000000000000000000!out")
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	if err != nil {
+		t.Logf("QueryRealisation returned error: %v (may be a Nix daemon bug with local?root= stores)", err)
+
+		return
+	}
+
+	require.Empty(t, realisations)
+}
+
+// --- AddPermRoot ---
+
+func testAddPermRoot(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	path, _ := addTestPath(t, client)
+
+	// create a symlink path for the permanent GC root
+	tmpDir := t.TempDir()
+	gcRoot := filepath.Join(tmpDir, "perm-gc-root")
+
+	resultPath, err := client.AddPermRoot(t.Context(), path, gcRoot)
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	rq.NoError(err)
+	rq.NotEmpty(resultPath)
+	t.Logf("AddPermRoot: %s -> %s (result: %s)", gcRoot, path, resultPath)
+
+	// the symlink should now exist and point to the store path
+	target, err := os.Readlink(resultPath)
+	rq.NoError(err)
+	rq.Equal(path, target)
+}
+
+// --- AddSignatures ---
+
+func testAddSignatures(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	path, _ := addTestPath(t, client)
+
+	// add a signature to the store path
+	sig := "test-key-1:c2lnbmF0dXJlZGF0YQ=="
+	err := client.AddSignatures(t.Context(), path, []string{sig})
+	rq.NoError(err)
+
+	// verify the signature was attached by querying the path info
+	info, err := client.QueryPathInfo(t.Context(), path)
+	rq.NoError(err)
+	rq.NotNil(info)
+	rq.Contains(info.Sigs, sig)
+	t.Logf("AddSignatures: path=%s sigs=%v", path, info.Sigs)
+}
+
+// --- RegisterDrvOutput ---
+
+func testRegisterDrvOutput(t *testing.T, client *daemon.Client) {
+	path, _ := addTestPath(t, client)
+
+	// compute a fake but structurally valid output ID.
+	// format: sha256:<hash>!<output-name>
+	h := sha256.Sum256([]byte("test-drv-output"))
+	outputID := "sha256:" + nixbase32.EncodeToString(h[:]) + "!out"
+
+	err := client.RegisterDrvOutput(t.Context(), &daemon.Realisation{
+		ID:      outputID,
+		OutPath: path,
+	})
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	if err != nil {
+		// some daemon versions may reject this depending on store configuration
+		t.Logf("RegisterDrvOutput returned error: %v (may be expected)", err)
+	} else {
+		t.Logf("RegisterDrvOutput succeeded for output %s", outputID)
+	}
+}
+
+// --- CollectGarbage ---
+
+func testCollectGarbage(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	ctx := t.Context()
+
+	// add a path, then collect garbage (without a temp root, it should be deletable)
+	path, _ := addTestPath(t, client)
+
+	// verify the path exists before GC
+	valid, err := client.IsValidPath(ctx, path)
+	rq.NoError(err)
+	rq.True(valid)
+
+	// run GC to delete dead paths
+	result, err := client.CollectGarbage(ctx, &daemon.GCOptions{
+		Action:   daemon.GCDeleteDead,
+		MaxFreed: 0, // unlimited
+	})
+	rq.NoError(err)
+	rq.NotNil(result)
+	t.Logf("CollectGarbage: deleted %d paths, freed %d bytes", len(result.Paths), result.BytesFreed)
+}
+
+func testCollectGarbageReturnDead(t *testing.T, client *daemon.Client) {
+	ctx := t.Context()
+
+	// gcReturnDead should return the list of dead paths without deleting them
+	result, err := client.CollectGarbage(ctx, &daemon.GCOptions{
+		Action:   daemon.GCReturnDead,
+		MaxFreed: 0,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	t.Logf("CollectGarbage(ReturnDead): %d dead paths", len(result.Paths))
+}
+
+func testCollectGarbageWithTempRoot(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	ctx := t.Context()
+
+	// add a path and protect it with a temp root
+	path, _ := addTestPath(t, client)
+	rq.NoError(client.AddTempRoot(ctx, path))
+
+	// gc should not delete the protected path
+	_, err := client.CollectGarbage(ctx, &daemon.GCOptions{
+		Action:   daemon.GCDeleteDead,
+		MaxFreed: 0,
+	})
+	rq.NoError(err)
+
+	// path should still be valid after GC
+	valid, err := client.IsValidPath(ctx, path)
+	rq.NoError(err)
+	rq.True(valid, "temp-rooted path should survive GC")
+}
+
+// --- OptimiseStore ---
+
+func testOptimiseStore(t *testing.T, client *daemon.Client) {
+	// add some content so the store is not empty
+	addTestPath(t, client)
+
+	err := client.OptimiseStore(t.Context())
+	require.NoError(t, err)
+}
+
+// --- Structured Error Parsing ---
+
+func testStructuredError(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	// ensurePath on a nonexistent, non-substitutable path should trigger a daemon error with structured fields
+	// (Type, Level, Name, Message)
+	err := client.EnsurePath(t.Context(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	rq.Error(err, "EnsurePath on a nonexistent path should fail")
+
+	var de *daemon.Error
+	rq.True(errors.As(err, &de), "error should be a *daemon.Error, got: %T: %v", err, err)
+
+	rq.NotEmpty(de.Type, "Error.Type should be populated")
+	rq.NotEmpty(de.Message, "Error.Message should be populated")
+
+	t.Logf("Structured error: type=%q level=%d name=%q message=%q traces=%d",
+		de.Type, de.Level, de.Name, de.Message, len(de.Traces))
+
+	for i, tr := range de.Traces {
+		t.Logf("  trace[%d]: havePos=%d message=%q", i, tr.HavePos, tr.Message)
+	}
+
+	// verify the connection is still usable after a daemon error
+	valid, err := client.IsValidPath(t.Context(), "/nix/store/00000000000000000000000000000000-nonexistent")
+	rq.NoError(err, "connection should remain usable after daemon error")
+	rq.False(valid)
+}
+
+func testStructuredErrorBuildDerivation(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	drv := &daemon.BasicDerivation{
+		Outputs: map[string]daemon.DerivationOutput{
+			"out": {Path: "/nix/store/00000000000000000000000000000000-go-nix-error-test-out"},
+		},
+		Inputs:   []string{},
+		Platform: "x86_64-linux",
+		Builder:  "/nix/store/00000000000000000000000000000000-nonexistent-builder",
+		Args:     []string{},
+		Env:      map[string]string{"out": "/nix/store/00000000000000000000000000000000-go-nix-error-test-out"},
+	}
+
+	result, err := client.BuildDerivation(t.Context(), &daemon.BuildDerivationRequest{
+		DrvPath:    "/nix/store/00000000000000000000000000000000-go-nix-error-test.drv",
+		Derivation: drv,
+		Mode:       daemon.BuildModeNormal,
+	})
+	if err != nil {
+		// some daemon configurations return a protocol-level error
+		var de *daemon.Error
+		if errors.As(err, &de) {
+			rq.NotEmpty(de.Type)
+			rq.NotEmpty(de.Message)
+			t.Logf("BuildDerivation daemon error: type=%q message=%q", de.Type, de.Message)
+		} else {
+			t.Logf("BuildDerivation error (non-daemon): %v", err)
+		}
+
+		return
+	}
+
+	// if we got a result, verify it reports a build failure
+	rq.NotEqual(daemon.BuildStatusBuilt, result.Status,
+		"build with nonexistent builder should not succeed")
+	rq.NotEmpty(result.ErrorMsg, "failed build should have an error message")
+	t.Logf("BuildDerivation result: status=%s errorMsg=%q", result.Status, result.ErrorMsg)
+}
+
+// --- AddMultipleToStore ---
+
+func testAddMultipleToStore(t *testing.T, client *daemon.Client) {
+	rq := require.New(t)
+
+	ctx := t.Context()
+
+	// build two distinct NARs with different content
+	makeNAR := func(content string) ([]byte, string, string) {
+		var buf bytes.Buffer
+
+		nw, err := nar.NewWriter(&buf)
+		rq.NoError(err)
+
+		data := []byte(content)
+		err = nw.WriteHeader(&nar.Header{
+			Path: "/",
+			Type: nar.TypeRegular,
+			Size: int64(len(data)),
+		})
+		rq.NoError(err)
+		_, err = nw.Write(data)
+		rq.NoError(err)
+		rq.NoError(nw.Close())
+
+		narData := buf.Bytes()
+		h := sha256.Sum256(narData)
+		narHash := "sha256:" + nixbase32.EncodeToString(h[:])
+		storePath := "/nix/store/" + nixbase32.EncodeToString(h[:20]) + "-" + content[:8]
+
+		return narData, narHash, storePath
+	}
+
+	nar1, hash1, path1 := makeNAR("multi-item-one-content\n")
+	nar2, hash2, path2 := makeNAR("multi-item-two-content\n")
+
+	items := []daemon.AddToStoreItem{
+		{
+			Info: daemon.PathInfo{
+				StorePath:  path1,
+				NarHash:    hash1,
+				NarSize:    uint64(len(nar1)),
+				References: []string{},
+				Sigs:       []string{},
+			},
+			Source: bytes.NewReader(nar1),
+		},
+		{
+			Info: daemon.PathInfo{
+				StorePath:  path2,
+				NarHash:    hash2,
+				NarSize:    uint64(len(nar2)),
+				References: []string{},
+				Sigs:       []string{},
+			},
+			Source: bytes.NewReader(nar2),
+		},
+	}
+
+	err := client.AddMultipleToStore(ctx, items, false, true)
+	if skipIfUnsupported(t, err) {
+		return
+	}
+
+	rq.NoError(err)
+
+	// both paths should now be valid
+	valid1, err := client.IsValidPath(ctx, path1)
+	rq.NoError(err)
+	rq.True(valid1, "first path should be valid after AddMultipleToStore")
+
+	valid2, err := client.IsValidPath(ctx, path2)
+	rq.NoError(err)
+	rq.True(valid2, "second path should be valid after AddMultipleToStore")
+
+	t.Logf("AddMultipleToStore: added %s and %s", path1, path2)
+}

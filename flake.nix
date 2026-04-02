@@ -20,6 +20,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-compat.url = "github:nix-community/flake-compat";
+    nixpkgs-24-05.url = "github:nixos/nixpkgs/nixos-24.05";
   };
 
   # Keep the magic invocations to minimum.
