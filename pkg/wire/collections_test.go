@@ -75,3 +75,26 @@ func TestWriteStringMapSorted(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "last", val3)
 }
+
+func TestReadStringsCountTooLarge(t *testing.T) {
+	var buf bytes.Buffer
+
+	// a count that cannot be backed by maxBytes worth of length fields
+	err := wire.WriteUint64(&buf, 1<<40)
+	assert.NoError(t, err)
+
+	result, err := wire.ReadStrings(&buf, 1024)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+}
+
+func TestReadStringMapCountTooLarge(t *testing.T) {
+	var buf bytes.Buffer
+
+	err := wire.WriteUint64(&buf, 1<<40)
+	assert.NoError(t, err)
+
+	result, err := wire.ReadStringMap(&buf, 1024)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+}

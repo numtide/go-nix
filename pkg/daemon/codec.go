@@ -1,16 +1,10 @@
 package daemon
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"sort"
-	"time"
 
 	"github.com/nix-community/go-nix/pkg/wire"
 )
-
-var ErrOptionalEmpty = errors.New("optional field is empty")
 
 // readAck reads the daemon's acknowledgment uint64 and verifies it equals 1.
 func readAck(dec *wire.Decoder) error {
@@ -29,63 +23,71 @@ func readAck(dec *wire.Decoder) error {
 	return nil
 }
 
-// ReadPathInfo reads a full PathInfo from the wire (UnkeyedValidPathInfo format).
-// storePath is provided separately (already known by the caller).
-// The version parameter is the negotiated protocol version.
-func ReadPathInfo(dec *wire.Decoder, storePath string, version uint64) (*PathInfo, error) {
-	deriver, err := dec.ReadString()
-	if err != nil {
-		return nil, &ProtocolError{Op: "read path info deriver", Err: err}
+func (info *UnkeyedPathInfo) Convert(c wire.Codec) error {
+	if err := c.String(&info.Deriver); err != nil {
+		return err
 	}
 
-	narHash, err := dec.ReadString()
-	if err != nil {
-		return nil, &ProtocolError{Op: "read path info narHash", Err: err}
+	if err := c.String(&info.NarHash); err != nil {
+		return err
 	}
 
-	references, err := dec.ReadStrings()
-	if err != nil {
-		return nil, &ProtocolError{Op: "read path info references", Err: err}
+	if err := c.Strings(&info.References); err != nil {
+		return err
 	}
 
-	registrationTime, err := dec.ReadUint64()
-	if err != nil {
-		return nil, &ProtocolError{Op: "read path info registrationTime", Err: err}
+	if err := c.Uint64(&info.RegistrationTime); err != nil {
+		return err
 	}
 
-	narSize, err := dec.ReadUint64()
-	if err != nil {
-		return nil, &ProtocolError{Op: "read path info narSize", Err: err}
-	}
-
-	info := &PathInfo{
-		StorePath:        storePath,
-		Deriver:          deriver,
-		NarHash:          narHash,
-		References:       references,
-		RegistrationTime: registrationTime,
-		NarSize:          narSize,
+	if err := c.Uint64(&info.NarSize); err != nil {
+		return err
 	}
 
 	// Protocol >= 1.16: ultimate, sigs, ca.
-	if version >= ProtoVersionPathInfoMeta {
-		info.Ultimate, err = dec.ReadBool()
-		if err != nil {
-			return nil, &ProtocolError{Op: "read path info ultimate", Err: err}
+	if c.Version() >= ProtoVersionPathInfoMeta {
+		if err := c.Bool(&info.Ultimate); err != nil {
+			return err
 		}
 
-		info.Sigs, err = dec.ReadStrings()
-		if err != nil {
-			return nil, &ProtocolError{Op: "read path info sigs", Err: err}
+		if err := c.Strings(&info.Sigs); err != nil {
+			return err
 		}
 
-		info.CA, err = dec.ReadString()
-		if err != nil {
-			return nil, &ProtocolError{Op: "read path info contentAddress", Err: err}
+		if err := c.String(&info.CA); err != nil {
+			return err
 		}
 	}
 
-	return info, nil
+	return nil
+}
+
+func (info *PathInfo) Convert(c wire.Codec) error {
+	if err := c.String(&info.StorePath); err != nil {
+		return err
+	}
+
+	return info.UnkeyedPathInfo.Convert(c)
+}
+
+// ReadPathInfo reads a PathInfo from the wire in ValidPathInfo format
+// (store path followed by UnkeyedValidPathInfo fields).
+// The version parameter is the negotiated protocol version.
+func ReadPathInfo(dec *wire.Decoder, version uint64) (*PathInfo, error) {
+	info := PathInfo{}
+	c := wire.NewDecoderNG(dec.Reader(), MaxStringSize, version)
+
+	return &info, info.Convert(c)
+}
+
+// ReadUnkeyedPathInfo reads an UnkeyedPathInfo from the wire in UnkeyedValidPathInfo
+// format (no store path; used e.g. by the QueryPathInfo response).
+// The version parameter is the negotiated protocol version.
+func ReadUnkeyedPathInfo(dec *wire.Decoder, version uint64) (*UnkeyedPathInfo, error) {
+	info := UnkeyedPathInfo{}
+	c := wire.NewDecoderNG(dec.Reader(), MaxStringSize, version)
+
+	return &info, info.Convert(c)
 }
 
 // WritePathInfo writes a PathInfo in ValidPathInfo wire format.
@@ -95,46 +97,45 @@ func WritePathInfo(enc *wire.Encoder, info *PathInfo, version uint64) error {
 		return ErrNilPathInfo
 	}
 
-	if err := enc.WriteString(info.StorePath); err != nil {
+	c := wire.NewEncoderNG(enc.Writer(), version)
+
+	return info.Convert(c)
+}
+
+func (out *DerivationOutput) Convert(c wire.Codec) error {
+	if err := c.String(&out.Path); err != nil {
 		return err
 	}
 
-	if err := enc.WriteString(info.Deriver); err != nil {
+	if err := c.String(&out.HashAlgorithm); err != nil {
 		return err
 	}
 
-	if err := enc.WriteString(info.NarHash); err != nil {
+	return c.String(&out.Hash)
+}
+
+func (drv *BasicDerivation) Convert(c wire.Codec) error {
+	if err := wire.ConvertMap(c, &drv.Outputs); err != nil {
 		return err
 	}
 
-	if err := enc.WriteStrings(info.References); err != nil {
+	if err := c.Strings(&drv.Inputs); err != nil {
 		return err
 	}
 
-	if err := enc.WriteUint64(info.RegistrationTime); err != nil {
+	if err := c.String(&drv.Platform); err != nil {
 		return err
 	}
 
-	if err := enc.WriteUint64(info.NarSize); err != nil {
+	if err := c.String(&drv.Builder); err != nil {
 		return err
 	}
 
-	// Protocol >= 1.16: ultimate, sigs, ca.
-	if version >= ProtoVersionPathInfoMeta {
-		if err := enc.WriteBool(info.Ultimate); err != nil {
-			return err
-		}
-
-		if err := enc.WriteStrings(info.Sigs); err != nil {
-			return err
-		}
-
-		if err := enc.WriteString(info.CA); err != nil {
-			return err
-		}
+	if err := c.Strings(&drv.Args); err != nil {
+		return err
 	}
 
-	return nil
+	return c.StringMap(&drv.Env)
 }
 
 // WriteBasicDerivation writes a BasicDerivation to the wire.
@@ -146,173 +147,93 @@ func WriteBasicDerivation(enc *wire.Encoder, drv *BasicDerivation) error {
 		return ErrNilDerivation
 	}
 
-	outputNames := make([]string, 0, len(drv.Outputs))
-	for name := range drv.Outputs {
-		outputNames = append(outputNames, name)
-	}
+	c := wire.NewEncoderNG(enc.Writer(), ProtoVersionFeatureExchange)
 
-	sort.Strings(outputNames)
-
-	if err := enc.WriteUint64(uint64(len(outputNames))); err != nil {
-		return err
-	}
-
-	for _, name := range outputNames {
-		out := drv.Outputs[name]
-
-		if err := enc.WriteString(name); err != nil {
-			return err
-		}
-
-		if err := enc.WriteString(out.Path); err != nil {
-			return err
-		}
-
-		if err := enc.WriteString(out.HashAlgorithm); err != nil {
-			return err
-		}
-
-		if err := enc.WriteString(out.Hash); err != nil {
-			return err
-		}
-	}
-
-	if err := enc.WriteStrings(drv.Inputs); err != nil {
-		return err
-	}
-
-	if err := enc.WriteString(drv.Platform); err != nil {
-		return err
-	}
-
-	if err := enc.WriteString(drv.Builder); err != nil {
-		return err
-	}
-
-	if err := enc.WriteStrings(drv.Args); err != nil {
-		return err
-	}
-
-	return enc.WriteStringMap(drv.Env)
+	return drv.Convert(c)
 }
 
-// readOptionalMicroseconds reads an optional<microseconds> from the wire.
-// Wire format: tag(uint64: 0=none, 1=some) [+ value(uint64) if tag=1].
-// Returns ErrOptionalEmpty if absent, or a pointer to the duration if present.
-func readOptionalMicroseconds(dec *wire.Decoder) (*time.Duration, error) {
-	tag, err := dec.ReadUint64()
-	if err != nil {
-		return nil, err
+func (o *OptionalMicroseconds) Convert(c wire.Codec) error {
+	tag := uint64(0)
+	if o.Tag {
+		tag = optionalSome
+	}
+
+	if err := c.Uint64(&tag); err != nil {
+		return err
 	}
 
 	switch tag {
 	case 0: // none
-		return nil, ErrOptionalEmpty
+		o.Tag = false
+
+		return nil
 	case optionalSome:
-		us, err := dec.ReadUint64()
-		if err != nil {
-			return nil, err
+		o.Tag = true
+
+		return c.Uint64(&o.Microseconds)
+	default:
+		return fmt.Errorf("unexpected optional tag %d", tag)
+	}
+}
+
+func (r *Realisation) Convert(c wire.Codec) error {
+	// Version gate here in the future
+	if err := c.JSON(r); err != nil {
+		return &ProtocolError{Op: "realisation JSON", Err: err}
+	}
+
+	return nil
+}
+
+func (res *BuildResult) Convert(c wire.Codec) error {
+	if err := c.Uint64((*uint64)(&res.Status)); err != nil {
+		return &ProtocolError{Op: "build result status", Err: err}
+	}
+
+	if err := c.String(&res.ErrorMsg); err != nil {
+		return &ProtocolError{Op: "build result errorMsg", Err: err}
+	}
+
+	if c.Version() >= ProtoVersionBuildTimes {
+		if err := c.Uint64(&res.TimesBuilt); err != nil {
+			return &ProtocolError{Op: "build result timesBuilt", Err: err}
 		}
 
-		d := time.Duration(us) * time.Microsecond //nolint:gosec // G115: microsecond values won't overflow int64
+		if err := c.Bool(&res.IsNonDeterministic); err != nil {
+			return &ProtocolError{Op: "build result isNonDeterministic", Err: err}
+		}
 
-		return &d, nil
-	default:
-		return nil, &ProtocolError{
-			Op:  "read optional microseconds",
-			Err: fmt.Errorf("unexpected optional tag %d", tag),
+		if err := c.Uint64(&res.StartTime); err != nil {
+			return &ProtocolError{Op: "build result startTime", Err: err}
+		}
+
+		if err := c.Uint64(&res.StopTime); err != nil {
+			return &ProtocolError{Op: "build result stopTime", Err: err}
 		}
 	}
+
+	if c.Version() >= ProtoVersionCPUTimes {
+		if err := res.CpuUser.Convert(c); err != nil {
+			return &ProtocolError{Op: "build result cpuUser", Err: err}
+		}
+
+		if err := res.CpuSystem.Convert(c); err != nil {
+			return &ProtocolError{Op: "build result cpuSystem", Err: err}
+		}
+	}
+
+	if c.Version() >= ProtoVersionBuiltOutputs {
+		return wire.ConvertMap(c, &res.BuiltOutputs)
+	}
+
+	return nil
 }
 
 // ReadBuildResult reads a BuildResult from the wire.
 // The version parameter is the negotiated protocol version.
 func ReadBuildResult(dec *wire.Decoder, version uint64) (*BuildResult, error) {
-	status, err := dec.ReadUint64()
-	if err != nil {
-		return nil, &ProtocolError{Op: "read build result status", Err: err}
-	}
+	res := BuildResult{}
+	c := wire.NewDecoderNG(dec.Reader(), MaxStringSize, version)
 
-	errorMsg, err := dec.ReadString()
-	if err != nil {
-		return nil, &ProtocolError{Op: "read build result errorMsg", Err: err}
-	}
-
-	result := &BuildResult{
-		Status:   BuildStatus(status),
-		ErrorMsg: errorMsg,
-	}
-
-	// Protocol >= 1.29: timing fields.
-	if version >= ProtoVersionBuildTimes {
-		result.TimesBuilt, err = dec.ReadUint64()
-		if err != nil {
-			return nil, &ProtocolError{Op: "read build result timesBuilt", Err: err}
-		}
-
-		result.IsNonDeterministic, err = dec.ReadBool()
-		if err != nil {
-			return nil, &ProtocolError{Op: "read build result isNonDeterministic", Err: err}
-		}
-
-		result.StartTime, err = dec.ReadUint64()
-		if err != nil {
-			return nil, &ProtocolError{Op: "read build result startTime", Err: err}
-		}
-
-		result.StopTime, err = dec.ReadUint64()
-		if err != nil {
-			return nil, &ProtocolError{Op: "read build result stopTime", Err: err}
-		}
-	}
-
-	// Protocol >= 1.37: cpuUser and cpuSystem as optional<microseconds>.
-	if version >= ProtoVersionCPUTimes {
-		result.CpuUser, err = readOptionalMicroseconds(dec)
-		if errors.Is(err, ErrOptionalEmpty) {
-			// do nothing
-		} else if err != nil {
-			return nil, &ProtocolError{Op: "read build result cpuUser", Err: err}
-		}
-
-		result.CpuSystem, err = readOptionalMicroseconds(dec)
-		if errors.Is(err, ErrOptionalEmpty) {
-			// do nothing
-		} else if err != nil {
-			return nil, &ProtocolError{Op: "read build result cpuSystem", Err: err}
-		}
-	}
-
-	// Protocol >= 1.28: builtOutputs map.
-	if version >= ProtoVersionBuiltOutputs {
-		nrOutputs, err := dec.ReadUint64()
-		if err != nil {
-			return nil, &ProtocolError{Op: "read build result builtOutputs count", Err: err}
-		}
-
-		builtOutputs := make(map[string]Realisation, nrOutputs)
-
-		for range nrOutputs {
-			name, err := dec.ReadString()
-			if err != nil {
-				return nil, &ProtocolError{Op: "read build result output name", Err: err}
-			}
-
-			realisationJSON, err := dec.ReadString()
-			if err != nil {
-				return nil, &ProtocolError{Op: "read build result realisation", Err: err}
-			}
-
-			var realisation Realisation
-			if err := json.Unmarshal([]byte(realisationJSON), &realisation); err != nil {
-				return nil, &ProtocolError{Op: "read build result realisation JSON", Err: err}
-			}
-
-			builtOutputs[name] = realisation
-		}
-
-		result.BuiltOutputs = builtOutputs
-	}
-
-	return result, nil
+	return &res, res.Convert(c)
 }

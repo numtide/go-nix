@@ -43,13 +43,7 @@ func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest, opts ..
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
-	// read response: ValidPathInfo = storePath + UnkeyedValidPathInfo.
-	storePath, err := dec.ReadString()
-	if err != nil {
-		return nil, &ProtocolError{Op: "AddToStore read storePath", Err: err}
-	}
-
-	return ReadPathInfo(dec, storePath, c.info.Version)
+	return ReadPathInfo(dec, c.info.Version)
 }
 
 // AddTempRoot adds a temporary GC root for the given store path.

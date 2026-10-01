@@ -184,11 +184,13 @@ func addTestPath(t *testing.T, client *daemon.Client) (string, []byte) {
 	storePath := "/nix/store/" + nixbase32.EncodeToString(h[:20]) + "-go-nix-integration-test"
 
 	info := &daemon.PathInfo{
-		StorePath:  storePath,
-		NarHash:    narHash,
-		NarSize:    uint64(len(narData)),
-		References: []string{},
-		Sigs:       []string{},
+		StorePath: storePath,
+		UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+			NarHash:    narHash,
+			NarSize:    uint64(len(narData)),
+			References: []string{},
+			Sigs:       []string{},
+		},
 	}
 
 	err = client.AddToStoreNar(t.Context(), info, bytes.NewReader(narData), false, true)
@@ -222,11 +224,13 @@ func addTestPathWithDeps(t *testing.T, client *daemon.Client) testPathGraph {
 	depPath := "/nix/store/" + nixbase32.EncodeToString(depHash[:20]) + "-go-nix-dep"
 
 	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
-		StorePath:  depPath,
-		NarHash:    "sha256:" + nixbase32.EncodeToString(depHash[:]),
-		NarSize:    uint64(len(depNAR)),
-		References: []string{},
-		Sigs:       []string{},
+		StorePath: depPath,
+		UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+			NarHash:    "sha256:" + nixbase32.EncodeToString(depHash[:]),
+			NarSize:    uint64(len(depNAR)),
+			References: []string{},
+			Sigs:       []string{},
+		},
 	}, bytes.NewReader(depNAR), false, true))
 
 	// step 2: build a real derivation with empty output path, then compute canonical paths
@@ -264,11 +268,13 @@ func addTestPathWithDeps(t *testing.T, client *daemon.Client) testPathGraph {
 	drvNARHash := sha256.Sum256(drvNAR)
 
 	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
-		StorePath:  drvPath,
-		NarHash:    "sha256:" + nixbase32.EncodeToString(drvNARHash[:]),
-		NarSize:    uint64(len(drvNAR)),
-		References: []string{depPath},
-		Sigs:       []string{},
+		StorePath: drvPath,
+		UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+			NarHash:    "sha256:" + nixbase32.EncodeToString(drvNARHash[:]),
+			NarSize:    uint64(len(drvNAR)),
+			References: []string{depPath},
+			Sigs:       []string{},
+		},
 	}, bytes.NewReader(drvNAR), false, true))
 
 	// step 3: register the output path with the derivation as its deriver
@@ -276,12 +282,14 @@ func addTestPathWithDeps(t *testing.T, client *daemon.Client) testPathGraph {
 	outNARHash := sha256.Sum256(outNAR)
 
 	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
-		StorePath:  outPath,
-		Deriver:    drvPath,
-		NarHash:    "sha256:" + nixbase32.EncodeToString(outNARHash[:]),
-		NarSize:    uint64(len(outNAR)),
-		References: []string{depPath},
-		Sigs:       []string{},
+		StorePath: outPath,
+		UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+			Deriver:    drvPath,
+			NarHash:    "sha256:" + nixbase32.EncodeToString(outNARHash[:]),
+			NarSize:    uint64(len(outNAR)),
+			References: []string{depPath},
+			Sigs:       []string{},
+		},
 	}, bytes.NewReader(outNAR), false, true))
 
 	return testPathGraph{DepPath: depPath, DrvPath: drvPath, OutPath: outPath}
@@ -324,11 +332,13 @@ func addUnbuiltDrv(t *testing.T, client *daemon.Client) testPathGraph {
 	drvNARHash := sha256.Sum256(drvNAR)
 
 	rq.NoError(client.AddToStoreNar(ctx, &daemon.PathInfo{
-		StorePath:  drvPath,
-		NarHash:    "sha256:" + nixbase32.EncodeToString(drvNARHash[:]),
-		NarSize:    uint64(len(drvNAR)),
-		References: []string{},
-		Sigs:       []string{},
+		StorePath: drvPath,
+		UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+			NarHash:    "sha256:" + nixbase32.EncodeToString(drvNARHash[:]),
+			NarSize:    uint64(len(drvNAR)),
+			References: []string{},
+			Sigs:       []string{},
+		},
 	}, bytes.NewReader(drvNAR), false, true))
 
 	// intentionally do NOT register outPath — it remains unbuilt
@@ -839,11 +849,13 @@ func testAddToStoreNarRoundTrip(t *testing.T, client *daemon.Client) {
 	storePath := "/nix/store/" + nixbase32.EncodeToString(h[:20]) + "-go-nix-integration-test"
 
 	info := &daemon.PathInfo{
-		StorePath:  storePath,
-		NarHash:    narHash,
-		NarSize:    uint64(len(narData)),
-		References: []string{},
-		Sigs:       []string{},
+		StorePath: storePath,
+		UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+			NarHash:    narHash,
+			NarSize:    uint64(len(narData)),
+			References: []string{},
+			Sigs:       []string{},
+		},
 	}
 
 	// 4. AddToStoreNar with dontCheckSigs=true.
@@ -1383,21 +1395,25 @@ func testAddMultipleToStore(t *testing.T, client *daemon.Client) {
 	items := []daemon.AddToStoreItem{
 		{
 			Info: daemon.PathInfo{
-				StorePath:  path1,
-				NarHash:    hash1,
-				NarSize:    uint64(len(nar1)),
-				References: []string{},
-				Sigs:       []string{},
+				StorePath: path1,
+				UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+					NarHash:    hash1,
+					NarSize:    uint64(len(nar1)),
+					References: []string{},
+					Sigs:       []string{},
+				},
 			},
 			Source: bytes.NewReader(nar1),
 		},
 		{
 			Info: daemon.PathInfo{
-				StorePath:  path2,
-				NarHash:    hash2,
-				NarSize:    uint64(len(nar2)),
-				References: []string{},
-				Sigs:       []string{},
+				StorePath: path2,
+				UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+					NarHash:    hash2,
+					NarSize:    uint64(len(nar2)),
+					References: []string{},
+					Sigs:       []string{},
+				},
 			},
 			Source: bytes.NewReader(nar2),
 		},

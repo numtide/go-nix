@@ -21,15 +21,17 @@ func TestAddToStore(t *testing.T) {
 		dumpData := []byte("fake-nar-content-for-testing")
 
 		expected := &daemon.PathInfo{
-			StorePath:        "/nix/store/abc123-hello-2.12.1",
-			Deriver:          "",
-			NarHash:          "sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
-			References:       []string{},
-			RegistrationTime: 1700000000,
-			NarSize:          uint64(len(dumpData)),
-			Ultimate:         true,
-			Sigs:             []string{},
-			CA:               "fixed:r:sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+			StorePath: "/nix/store/abc123-hello-2.12.1",
+			UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+				Deriver:          "",
+				NarHash:          "sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+				References:       []string{},
+				RegistrationTime: 1700000000,
+				NarSize:          uint64(len(dumpData)),
+				Ultimate:         true,
+				Sigs:             []string{},
+				CA:               "fixed:r:sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+			},
 		}
 
 		mock.onAccept(respondAddToStore(expected))
@@ -97,12 +99,14 @@ func TestAddToStoreNar(t *testing.T) {
 		narData := []byte("fake-nar-content-for-testing")
 
 		info := &daemon.PathInfo{
-			StorePath:  "/nix/store/abc-test",
-			Deriver:    "/nix/store/xyz-test.drv",
-			NarHash:    "sha256:fakehash",
-			References: []string{},
-			NarSize:    uint64(len(narData)),
-			Sigs:       []string{},
+			StorePath: "/nix/store/abc-test",
+			UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+				Deriver:    "/nix/store/xyz-test.drv",
+				NarHash:    "sha256:fakehash",
+				References: []string{},
+				NarSize:    uint64(len(narData)),
+				Sigs:       []string{},
+			},
 		}
 
 		mock.onAccept(func(conn net.Conn) error {
@@ -172,23 +176,27 @@ func TestAddMultipleToStore(t *testing.T) {
 		items := []daemon.AddToStoreItem{
 			{
 				Info: daemon.PathInfo{
-					StorePath:  "/nix/store/aaa-one",
-					Deriver:    "/nix/store/aaa-one.drv",
-					NarHash:    "sha256:aaaa",
-					References: []string{},
-					NarSize:    uint64(len(narData1)),
-					Sigs:       []string{},
+					StorePath: "/nix/store/aaa-one",
+					UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+						Deriver:    "/nix/store/aaa-one.drv",
+						NarHash:    "sha256:aaaa",
+						References: []string{},
+						NarSize:    uint64(len(narData1)),
+						Sigs:       []string{},
+					},
 				},
 				Source: bytes.NewReader(narData1),
 			},
 			{
 				Info: daemon.PathInfo{
-					StorePath:  "/nix/store/bbb-two",
-					Deriver:    "/nix/store/bbb-two.drv",
-					NarHash:    "sha256:bbbb",
-					References: []string{"/nix/store/aaa-one"},
-					NarSize:    uint64(len(narData2)),
-					Sigs:       []string{},
+					StorePath: "/nix/store/bbb-two",
+					UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+						Deriver:    "/nix/store/bbb-two.drv",
+						NarHash:    "sha256:bbbb",
+						References: []string{"/nix/store/aaa-one"},
+						NarSize:    uint64(len(narData2)),
+						Sigs:       []string{},
+					},
 				},
 				Source: bytes.NewReader(narData2),
 			},

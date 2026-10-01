@@ -94,17 +94,19 @@ func TestQueryPathInfo(t *testing.T) {
 		mock := newMockDaemon(t)
 
 		expected := &daemon.PathInfo{
-			StorePath:        "/nix/store/abc-test",
-			Deriver:          "/nix/store/xyz-test.drv",
-			NarHash:          "sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
-			References:       []string{"/nix/store/abc-test", "/nix/store/def-dep"},
-			RegistrationTime: 1700000000,
-			NarSize:          123456,
-			Ultimate:         true,
-			Sigs: []string{
-				"cache.nixos.org-1:TsTTb3WGTZKphvYdBHXwo13XoOdFhL2sw/8d16Xzm5NeXp+SuJgMHV1+U+5JxVuf2HuLci2x3Sa+l3KhADoCDQ==",
+			StorePath: "/nix/store/abc-test",
+			UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+				Deriver:          "/nix/store/xyz-test.drv",
+				NarHash:          "sha256:1b8m03r63zqhnjf7l5wnldhh7c134p5572hrber4jqabd5b2no80",
+				References:       []string{"/nix/store/abc-test", "/nix/store/def-dep"},
+				RegistrationTime: 1700000000,
+				NarSize:          123456,
+				Ultimate:         true,
+				Sigs: []string{
+					"cache.nixos.org-1:TsTTb3WGTZKphvYdBHXwo13XoOdFhL2sw/8d16Xzm5NeXp+SuJgMHV1+U+5JxVuf2HuLci2x3Sa+l3KhADoCDQ==",
+				},
+				CA: "",
 			},
-			CA: "",
 		}
 
 		mock.onAccept(respondQueryPathInfo(expected))

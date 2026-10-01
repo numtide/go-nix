@@ -59,6 +59,18 @@ type BuildDerivationRequest struct {
 	Mode       BuildMode
 }
 
+func (r *BuildDerivationRequest) Convert(c wire.Codec) (err error) {
+	if err := c.String(&r.DrvPath); err != nil {
+		return err
+	}
+
+	if err := r.Derivation.Convert(c); err != nil {
+		return err
+	}
+
+	return c.Uint64((*uint64)(&r.Mode))
+}
+
 // MarshalNix encodes BuildDerivationRequest in Nix wire format.
 func (r *BuildDerivationRequest) MarshalNix(enc *wire.Encoder) error {
 	if err := enc.WriteString(r.DrvPath); err != nil {

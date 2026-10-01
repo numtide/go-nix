@@ -69,6 +69,11 @@ func Connect(ctx context.Context, path string) (*Client, error) {
 		return nil, &ProtocolError{Op: "connect", Err: err}
 	}
 
+	return Establish(ctx, conn)
+}
+
+// Establish uses a connection to the Nix daemon socket to establish a new client.
+func Establish(ctx context.Context, conn net.Conn) (*Client, error) {
 	client := &Client{
 		conn: conn,
 		r:    bufio.NewReader(conn),
