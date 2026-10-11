@@ -671,7 +671,7 @@ func respondAddToStore(info *daemon.PathInfo) func(net.Conn) error {
 		_, _ = dec.ReadUint64() // repair
 
 		// read framed dump data (no padding in framed protocol).
-		fr := daemon.NewFramedReader(conn)
+		fr := wire.NewFramedReader(conn)
 		_, _ = io.ReadAll(fr)
 
 		// send LogLast.

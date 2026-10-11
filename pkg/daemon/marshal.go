@@ -35,7 +35,7 @@ func (r *AddToStoreRequest) MarshalNix(enc *wire.Encoder) (err error) {
 	}
 
 	// stream source data as framed.
-	fw := NewFramedWriter(enc.Writer())
+	fw := wire.NewFramedWriter(enc.Writer())
 
 	// ensure the fw is always closed and we catch the error
 	defer func() {

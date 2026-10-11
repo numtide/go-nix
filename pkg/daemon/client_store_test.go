@@ -135,7 +135,7 @@ func TestAddToStoreNar(t *testing.T) {
 			_, _ = dec.ReadUint64() // dontCheckSigs
 
 			// read framed NAR data (no padding in framed protocol)
-			fr := daemon.NewFramedReader(conn)
+			fr := wire.NewFramedReader(conn)
 			received, err := io.ReadAll(fr)
 			require.NoError(t, err)
 			require.Equal(t, narData, received)
@@ -216,7 +216,7 @@ func TestAddMultipleToStore(t *testing.T) {
 			require.Equal(t, uint64(0), dontCheckSigs)
 
 			// read all framed data into a buffer.
-			fr := daemon.NewFramedReader(conn)
+			fr := wire.NewFramedReader(conn)
 			framedData, err := io.ReadAll(fr)
 			require.NoError(t, err)
 
@@ -301,7 +301,7 @@ func TestAddMultipleToStore(t *testing.T) {
 			_, _ = dec.ReadUint64()
 
 			// read all framed data into a buffer.
-			fr := daemon.NewFramedReader(conn)
+			fr := wire.NewFramedReader(conn)
 			framedData, err := io.ReadAll(fr)
 			require.NoError(t, err)
 
@@ -363,7 +363,7 @@ func TestAddBuildLog(t *testing.T) {
 			require.Equal(t, "00000000000000000000000000000000-test.drv", drvPath)
 
 			// read framed log data (no padding in framed protocol)
-			fr := daemon.NewFramedReader(conn)
+			fr := wire.NewFramedReader(conn)
 			received, err := io.ReadAll(fr)
 			require.NoError(t, err)
 			require.Equal(t, logContent, string(received))
