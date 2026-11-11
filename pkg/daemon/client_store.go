@@ -43,13 +43,7 @@ func (c *Client) AddToStore(ctx context.Context, req *AddToStoreRequest, opts ..
 
 	dec := wire.NewDecoder(resp, MaxStringSize)
 
-	// read response: ValidPathInfo = storePath + UnkeyedValidPathInfo.
-	storePath, err := dec.ReadString()
-	if err != nil {
-		return nil, &ProtocolError{Op: "AddToStore read storePath", Err: err}
-	}
-
-	return ReadPathInfo(dec, storePath, c.info.Version)
+	return ReadPathInfo(dec, c.info.Version)
 }
 
 // AddTempRoot adds a temporary GC root for the given store path.
@@ -200,7 +194,7 @@ func (c *Client) AddToStoreNar(
 		}
 
 		// stream NAR data as framed.
-		fw := NewFramedWriter(enc.Writer())
+		fw := wire.NewFramedWriter(enc.Writer())
 		if _, err := io.Copy(fw, source); err != nil {
 			return err
 		}
@@ -243,7 +237,7 @@ func (c *Client) AddBuildLog(ctx context.Context, drvPath string, log io.Reader,
 		}
 
 		// stream log data as framed.
-		fw := NewFramedWriter(enc.Writer())
+		fw := wire.NewFramedWriter(enc.Writer())
 		if _, err := io.Copy(fw, log); err != nil {
 			return err
 		}
@@ -386,7 +380,7 @@ func (c *Client) AddMultipleToStore(
 		}
 
 		// create a single FramedWriter that wraps all item data.
-		fw := NewFramedWriter(enc.Writer())
+		fw := wire.NewFramedWriter(enc.Writer())
 
 		// write count inside the framed stream.
 		fwEnc := wire.NewEncoder(fw)

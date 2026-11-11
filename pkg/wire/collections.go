@@ -21,11 +21,22 @@ func WriteStrings(w io.Writer, ss []string) error {
 	return nil
 }
 
+// maxStringListCount is the maximum number of entries in a string list,
+// derived from maxBytes: each entry costs at least one 8-byte length word
+// on the wire, so a larger count can never be valid.
+func maxStringListCount(maxBytes uint64) uint64 {
+	return maxBytes / 8
+}
+
 // ReadStrings reads a list of strings (count + entries).
 func ReadStrings(r io.Reader, maxBytes uint64) ([]string, error) {
 	count, err := ReadUint64(r)
 	if err != nil {
 		return nil, fmt.Errorf("read string list count: %w", err)
+	}
+
+	if count > maxStringListCount(maxBytes) {
+		return nil, fmt.Errorf("read string list count: %v exceeds maximum of %v entries", count, maxStringListCount(maxBytes))
 	}
 
 	ss := make([]string, count)
@@ -73,6 +84,10 @@ func ReadStringMap(r io.Reader, maxBytes uint64) (map[string]string, error) {
 	count, err := ReadUint64(r)
 	if err != nil {
 		return nil, fmt.Errorf("read string map count: %w", err)
+	}
+
+	if count > maxStringListCount(maxBytes) {
+		return nil, fmt.Errorf("read string map count: %v exceeds maximum of %v entries", count, maxStringListCount(maxBytes))
 	}
 
 	m := make(map[string]string, count)

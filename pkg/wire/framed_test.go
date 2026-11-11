@@ -1,11 +1,11 @@
-package daemon_test
+package wire_test
 
 import (
 	"bytes"
 	"io"
 	"testing"
 
-	"github.com/nix-community/go-nix/pkg/daemon"
+	"github.com/nix-community/go-nix/pkg/wire"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,7 +18,7 @@ func TestFramedReader(t *testing.T) {
 		buf.Write([]byte{'h', 'e', 'l', 'l', 'o'}) // data (no padding)
 		buf.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0})  // terminator
 
-		fr := daemon.NewFramedReader(&buf)
+		fr := wire.NewFramedReader(&buf)
 		data, err := io.ReadAll(fr)
 		require.NoError(t, err)
 		require.Equal(t, []byte("hello"), data)
@@ -33,7 +33,7 @@ func TestFramedReader(t *testing.T) {
 		buf.Write([]byte{'d', 'e'})               // "de" (no padding)
 		buf.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0}) // terminator
 
-		fr := daemon.NewFramedReader(&buf)
+		fr := wire.NewFramedReader(&buf)
 		data, err := io.ReadAll(fr)
 		require.NoError(t, err)
 		require.Equal(t, []byte("abcde"), data)
@@ -44,7 +44,7 @@ func TestFramedReader(t *testing.T) {
 
 		buf.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0}) // just terminator
 
-		fr := daemon.NewFramedReader(&buf)
+		fr := wire.NewFramedReader(&buf)
 		data, err := io.ReadAll(fr)
 		require.NoError(t, err)
 		require.Empty(t, data)
@@ -58,7 +58,7 @@ func TestFramedReader(t *testing.T) {
 		buf.Write([]byte{1, 2, 3, 4, 5, 6, 7, 8}) // data
 		buf.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0}) // terminator
 
-		fr := daemon.NewFramedReader(&buf)
+		fr := wire.NewFramedReader(&buf)
 		data, err := io.ReadAll(fr)
 		require.NoError(t, err)
 		require.Equal(t, []byte{1, 2, 3, 4, 5, 6, 7, 8}, data)
@@ -72,7 +72,7 @@ func TestFramedReader(t *testing.T) {
 
 		var buf bytes.Buffer
 
-		fw := daemon.NewFramedWriter(&buf)
+		fw := wire.NewFramedWriter(&buf)
 		_, err := fw.Write(payload)
 		rq.NoError(err)
 
@@ -80,7 +80,7 @@ func TestFramedReader(t *testing.T) {
 		rq.NoError(err)
 
 		// Read with 1-byte Read calls to test partial-frame read path.
-		fr := daemon.NewFramedReader(&buf)
+		fr := wire.NewFramedReader(&buf)
 
 		var result []byte
 
@@ -110,7 +110,7 @@ func TestFramedReader(t *testing.T) {
 		buf.Write([]byte{100, 0, 0, 0, 0, 0, 0, 0}) // frame length = 100
 		buf.Write([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 
-		fr := daemon.NewFramedReader(&buf)
+		fr := wire.NewFramedReader(&buf)
 
 		// First read gets the 10 available bytes.
 		p := make([]byte, 100)
@@ -137,14 +137,14 @@ func TestFramedWriter(t *testing.T) {
 
 		var buf bytes.Buffer
 
-		fw := daemon.NewFramedWriter(&buf)
+		fw := wire.NewFramedWriter(&buf)
 		_, err := fw.Write(payload)
 		rq.NoError(err)
 		err = fw.Close()
 		rq.NoError(err)
 
 		// Read it back
-		fr := daemon.NewFramedReader(&buf)
+		fr := wire.NewFramedReader(&buf)
 		data, err := io.ReadAll(fr)
 		rq.NoError(err)
 		rq.Equal(payload, data)
@@ -153,7 +153,7 @@ func TestFramedWriter(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
 		var buf bytes.Buffer
 
-		fw := daemon.NewFramedWriter(&buf)
+		fw := wire.NewFramedWriter(&buf)
 		err := fw.Close()
 		require.NoError(t, err)
 
@@ -171,7 +171,7 @@ func TestFramedWriter(t *testing.T) {
 		//   [0,0,0,0,0,0,0,0] terminator
 		var buf bytes.Buffer
 
-		fw := daemon.NewFramedWriter(&buf)
+		fw := wire.NewFramedWriter(&buf)
 		_, err := fw.Write([]byte("hello"))
 		rq.NoError(err)
 		err = fw.Close()
@@ -196,7 +196,7 @@ func TestFramedWriter(t *testing.T) {
 
 		var buf bytes.Buffer
 
-		fw := daemon.NewFramedWriter(&buf)
+		fw := wire.NewFramedWriter(&buf)
 		n, err := fw.Write(payload)
 		rq.NoError(err)
 		rq.Equal(len(payload), n)
@@ -205,7 +205,7 @@ func TestFramedWriter(t *testing.T) {
 		rq.NoError(err)
 
 		// Read it back and verify round-trip.
-		fr := daemon.NewFramedReader(&buf)
+		fr := wire.NewFramedReader(&buf)
 		data, err := io.ReadAll(fr)
 		rq.NoError(err)
 		rq.Equal(payload, data)
@@ -216,7 +216,7 @@ func TestFramedWriter(t *testing.T) {
 
 		var buf bytes.Buffer
 
-		fw := daemon.NewFramedWriter(&buf)
+		fw := wire.NewFramedWriter(&buf)
 		err := fw.Close()
 		rq.NoError(err)
 
@@ -230,7 +230,7 @@ func TestFramedWriter(t *testing.T) {
 		rq := require.New(t)
 
 		ew := &errWriter{err: io.ErrClosedPipe}
-		fw := daemon.NewFramedWriter(ew)
+		fw := wire.NewFramedWriter(ew)
 
 		// Write enough data to trigger a flush (>= 32KB).
 		data := make([]byte, 33*1024)
@@ -243,7 +243,7 @@ func TestFramedWriter(t *testing.T) {
 		rq := require.New(t)
 
 		ew := &errWriter{err: io.ErrClosedPipe}
-		fw := daemon.NewFramedWriter(ew)
+		fw := wire.NewFramedWriter(ew)
 
 		// Write a small amount (stays buffered, no flush yet).
 		_, err := fw.Write([]byte("hello"))
@@ -260,7 +260,7 @@ func TestFramedWriter(t *testing.T) {
 
 		var buf bytes.Buffer
 
-		fw := daemon.NewFramedWriter(&buf)
+		fw := wire.NewFramedWriter(&buf)
 		rq.NoError(fw.Close())
 		rq.NoError(fw.Close()) // second close should be no-op
 	})

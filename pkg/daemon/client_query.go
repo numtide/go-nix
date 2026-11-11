@@ -55,7 +55,15 @@ func (c *Client) QueryPathInfo(ctx context.Context, path string, opts ...ExecOpt
 		return nil, ErrNotFound
 	}
 
-	return ReadPathInfo(dec, path, c.info.Version)
+	info, err := ReadUnkeyedPathInfo(dec, c.info.Version)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PathInfo{
+		StorePath:       path,
+		UnkeyedPathInfo: *info,
+	}, nil
 }
 
 // QueryPathFromHashPart looks up a store path by its hash part.

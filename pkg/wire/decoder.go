@@ -50,6 +50,12 @@ func (d *Decoder) Decode(v Unmarshaler) error {
 	return v.UnmarshalNix(d)
 }
 
+// Reader returns the underlying reader.
+// FIXME: this is needed to convert to ng.
+func (d *Decoder) Reader() io.Reader {
+	return d.r
+}
+
 // Unmarshaler is implemented by types that can deserialize themselves from Nix wire format.
 type Unmarshaler interface {
 	UnmarshalNix(dec *Decoder) error

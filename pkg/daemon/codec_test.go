@@ -3,7 +3,6 @@ package daemon_test
 import (
 	"bytes"
 	"testing"
-	"time"
 
 	"github.com/nix-community/go-nix/pkg/daemon"
 	"github.com/nix-community/go-nix/pkg/wire"
@@ -16,6 +15,7 @@ func TestPathInfoCodec(t *testing.T) {
 
 		var buf bytes.Buffer
 
+		writeTestString(&buf, "/nix/store/xyz-test")           // store path
 		writeTestString(&buf, "/nix/store/abc-foo.drv")        // deriver
 		writeTestString(&buf, "sha256:abcdef1234567890")       // narHash
 		writeTestUint64(&buf, 1)                               // references count
@@ -29,7 +29,7 @@ func TestPathInfoCodec(t *testing.T) {
 
 		dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
 
-		info, err := daemon.ReadPathInfo(dec, "/nix/store/xyz-test", daemon.ProtocolVersion)
+		info, err := daemon.ReadPathInfo(dec, daemon.ProtocolVersion)
 		rq.NoError(err)
 		rq.Equal("/nix/store/xyz-test", info.StorePath)
 		rq.Equal("/nix/store/abc-foo.drv", info.Deriver)
@@ -44,15 +44,17 @@ func TestPathInfoCodec(t *testing.T) {
 		rq := require.New(t)
 
 		info := &daemon.PathInfo{
-			StorePath:        "/nix/store/xyz-test",
-			Deriver:          "/nix/store/abc-foo.drv",
-			NarHash:          "sha256:abcdef",
-			References:       []string{"/nix/store/def-bar"},
-			RegistrationTime: 1700000000,
-			NarSize:          54321,
-			Ultimate:         true,
-			Sigs:             []string{"sig1"},
-			CA:               "",
+			StorePath: "/nix/store/xyz-test",
+			UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+				Deriver:          "/nix/store/abc-foo.drv",
+				NarHash:          "sha256:abcdef",
+				References:       []string{"/nix/store/def-bar"},
+				RegistrationTime: 1700000000,
+				NarSize:          54321,
+				Ultimate:         true,
+				Sigs:             []string{"sig1"},
+				CA:               "",
+			},
 		}
 
 		var buf bytes.Buffer
@@ -62,16 +64,9 @@ func TestPathInfoCodec(t *testing.T) {
 		err := daemon.WritePathInfo(enc, info, daemon.ProtocolVersion)
 		rq.NoError(err)
 
-		// ReadPathInfo reads UnkeyedValidPathInfo (no storePath prefix),
-		// but WritePathInfo writes ValidPathInfo (with storePath prefix).
-		// So we need to read the storePath first.
 		dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
 
-		storePath, err := dec.ReadString()
-		rq.NoError(err)
-		rq.Equal("/nix/store/xyz-test", storePath)
-
-		got, err := daemon.ReadPathInfo(dec, storePath, daemon.ProtocolVersion)
+		got, err := daemon.ReadPathInfo(dec, daemon.ProtocolVersion)
 		rq.NoError(err)
 		rq.Equal(info, got)
 	})
@@ -90,6 +85,7 @@ func TestPathInfoCodec(t *testing.T) {
 
 		// Proto 1.15 (0x010f): no ultimate/sigs/ca fields
 		var buf bytes.Buffer
+		writeTestString(&buf, "/nix/store/xyz-test")     // store path
 		writeTestString(&buf, "/nix/store/abc-foo.drv")  // deriver
 		writeTestString(&buf, "sha256:abcdef1234567890") // narHash
 		writeTestUint64(&buf, 1)                         // references count
@@ -100,7 +96,7 @@ func TestPathInfoCodec(t *testing.T) {
 
 		dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
 
-		info, err := daemon.ReadPathInfo(dec, "/nix/store/xyz-test", daemon.ProtoVersion(1, 15))
+		info, err := daemon.ReadPathInfo(dec, daemon.ProtoVersion(1, 15))
 		rq.NoError(err)
 		rq.Equal("/nix/store/xyz-test", info.StorePath)
 		rq.Equal("/nix/store/abc-foo.drv", info.Deriver)
@@ -117,15 +113,17 @@ func TestPathInfoCodec(t *testing.T) {
 		rq := require.New(t)
 
 		info := &daemon.PathInfo{
-			StorePath:        "/nix/store/xyz-test",
-			Deriver:          "/nix/store/abc-foo.drv",
-			NarHash:          "sha256:abcdef",
-			References:       []string{"/nix/store/def-bar"},
-			RegistrationTime: 1700000000,
-			NarSize:          54321,
-			Ultimate:         true,               // Set, but should NOT be written at proto 1.15
-			Sigs:             []string{"sig1"},   // Should NOT be written
-			CA:               "fixed:sha256:abc", // Should NOT be written
+			StorePath: "/nix/store/xyz-test",
+			UnkeyedPathInfo: daemon.UnkeyedPathInfo{
+				Deriver:          "/nix/store/abc-foo.drv",
+				NarHash:          "sha256:abcdef",
+				References:       []string{"/nix/store/def-bar"},
+				RegistrationTime: 1700000000,
+				NarSize:          54321,
+				Ultimate:         true,               // Set, but should NOT be written at proto 1.15
+				Sigs:             []string{"sig1"},   // Should NOT be written
+				CA:               "fixed:sha256:abc", // Should NOT be written
+			},
 		}
 
 		var buf bytes.Buffer
@@ -135,15 +133,8 @@ func TestPathInfoCodec(t *testing.T) {
 		err := daemon.WritePathInfo(enc, info, daemon.ProtoVersion(1, 15))
 		rq.NoError(err)
 
-		// Read back storePath (WritePathInfo writes it as first field)
 		dec := wire.NewDecoder(&buf, daemon.MaxStringSize)
-
-		storePath, err := dec.ReadString()
-		rq.NoError(err)
-		rq.Equal("/nix/store/xyz-test", storePath)
-
-		// Read PathInfo at proto 1.15
-		got, err := daemon.ReadPathInfo(dec, storePath, daemon.ProtoVersion(1, 15))
+		got, err := daemon.ReadPathInfo(dec, daemon.ProtoVersion(1, 15))
 		rq.NoError(err)
 
 		// At proto 1.15: ultimate/sigs/ca are NOT written or read
@@ -416,8 +407,8 @@ func TestBuildResultCodec(t *testing.T) {
 		rq.False(result.IsNonDeterministic)
 		rq.Equal(uint64(1700000000), result.StartTime)
 		rq.Equal(uint64(1700000060), result.StopTime)
-		rq.Nil(result.CpuUser)
-		rq.Nil(result.CpuSystem)
+		rq.False(result.CpuUser.Tag)
+		rq.False(result.CpuSystem.Tag)
 		rq.Len(result.BuiltOutputs, 1)
 
 		realisation := result.BuiltOutputs["out"]
@@ -448,8 +439,8 @@ func TestBuildResultCodec(t *testing.T) {
 		rq.NoError(err)
 		rq.Equal(daemon.BuildStatusPermanentFailure, result.Status)
 		rq.Equal("build failed", result.ErrorMsg)
-		rq.Nil(result.CpuUser)
-		rq.Nil(result.CpuSystem)
+		rq.False(result.CpuUser.Tag)
+		rq.False(result.CpuSystem.Tag)
 		rq.Empty(result.BuiltOutputs)
 	})
 
@@ -480,9 +471,9 @@ func TestBuildResultCodec(t *testing.T) {
 		rq.Equal(uint64(1700000000), result.StartTime)
 		rq.Equal(uint64(1700000060), result.StopTime)
 
-		expectedCpuUser := 500 * time.Millisecond
-		rq.Equal(&expectedCpuUser, result.CpuUser)
-		rq.Nil(result.CpuSystem)
+		rq.True(result.CpuUser.Tag)
+		rq.Equal(uint64(500000), result.CpuUser.Microseconds)
+		rq.False(result.CpuSystem.Tag)
 
 		rq.Empty(result.BuiltOutputs)
 		rq.Equal(0, buf.Len())
@@ -519,11 +510,10 @@ func TestBuildResultCodec(t *testing.T) {
 		rq.Equal(daemon.BuildStatusBuilt, result.Status)
 		rq.Equal(uint64(2), result.TimesBuilt)
 
-		expectedCpuUser := time.Second
-		expectedCpuSystem := 250 * time.Millisecond
-
-		rq.Equal(&expectedCpuUser, result.CpuUser)
-		rq.Equal(&expectedCpuSystem, result.CpuSystem)
+		rq.True(result.CpuUser.Tag)
+		rq.Equal(uint64(1000000), result.CpuUser.Microseconds)
+		rq.True(result.CpuSystem.Tag)
+		rq.Equal(uint64(250000), result.CpuSystem.Microseconds)
 
 		rq.Len(result.BuiltOutputs, 1)
 		rq.Equal("sha256:def456!out", result.BuiltOutputs["out"].ID)
@@ -550,8 +540,8 @@ func TestBuildResultCodec(t *testing.T) {
 
 		result, err := daemon.ReadBuildResult(dec, daemon.ProtoVersion(1, 37))
 		rq.NoError(err)
-		rq.Nil(result.CpuUser)
-		rq.Nil(result.CpuSystem)
+		rq.False(result.CpuUser.Tag)
+		rq.False(result.CpuSystem.Tag)
 		rq.Equal(0, buf.Len())
 	})
 

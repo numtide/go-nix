@@ -1,10 +1,8 @@
-package daemon
+package wire
 
 import (
 	"fmt"
 	"io"
-
-	"github.com/nix-community/go-nix/pkg/wire"
 )
 
 const defaultFrameSize = 32 * 1024 // 32KB
@@ -65,7 +63,7 @@ func (fr *FramedReader) Read(p []byte) (int, error) {
 // nextFrame reads the next frame header.
 // If a zero-length frame is encountered, fr.done is set to true.
 func (fr *FramedReader) nextFrame() error {
-	frameLen, err := wire.ReadUint64(fr.r)
+	frameLen, err := ReadUint64(fr.r)
 	if err != nil {
 		return err
 	}
@@ -146,7 +144,7 @@ func (fw *FramedWriter) Close() error {
 	}
 
 	// write terminator frame (zero-length).
-	return wire.WriteUint64(fw.w, 0)
+	return WriteUint64(fw.w, 0)
 }
 
 // flush writes the current buffer as a single frame: [length][data], no padding.
@@ -157,7 +155,7 @@ func (fw *FramedWriter) flush() error {
 	}
 
 	// write the frame header
-	if err := wire.WriteUint64(fw.w, n); err != nil {
+	if err := WriteUint64(fw.w, n); err != nil {
 		return err
 	}
 

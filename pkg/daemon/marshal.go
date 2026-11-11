@@ -35,7 +35,7 @@ func (r *AddToStoreRequest) MarshalNix(enc *wire.Encoder) (err error) {
 	}
 
 	// stream source data as framed.
-	fw := NewFramedWriter(enc.Writer())
+	fw := wire.NewFramedWriter(enc.Writer())
 
 	// ensure the fw is always closed and we catch the error
 	defer func() {
@@ -59,6 +59,18 @@ type BuildDerivationRequest struct {
 	Mode       BuildMode
 }
 
+func (r *BuildDerivationRequest) Convert(c wire.Codec) (err error) {
+	if err := c.String(&r.DrvPath); err != nil {
+		return err
+	}
+
+	if err := r.Derivation.Convert(c); err != nil {
+		return err
+	}
+
+	return c.Uint64((*uint64)(&r.Mode))
+}
+
 // MarshalNix encodes BuildDerivationRequest in Nix wire format.
 func (r *BuildDerivationRequest) MarshalNix(enc *wire.Encoder) error {
 	if err := enc.WriteString(r.DrvPath); err != nil {
@@ -72,139 +84,103 @@ func (r *BuildDerivationRequest) MarshalNix(enc *wire.Encoder) error {
 	return enc.WriteUint64(uint64(r.Mode))
 }
 
-// MarshalNix encodes GCOptions in Nix wire format.
-func (o *GCOptions) MarshalNix(enc *wire.Encoder) error {
-	if err := enc.WriteUint64(uint64(o.Action)); err != nil {
+func (o *GCOptions) Convert(c wire.Codec) error {
+	if err := c.Uint64((*uint64)(&o.Action)); err != nil {
 		return err
 	}
 
-	if err := enc.WriteStrings(o.PathsToDelete); err != nil {
+	if err := c.Strings(&o.PathsToDelete); err != nil {
 		return err
 	}
 
-	if err := enc.WriteBool(o.IgnoreLiveness); err != nil {
+	if err := c.Bool(&o.IgnoreLiveness); err != nil {
 		return err
 	}
 
-	if err := enc.WriteUint64(o.MaxFreed); err != nil {
+	if err := c.Uint64(&o.MaxFreed); err != nil {
 		return err
 	}
 
 	// deprecated fields, always zero.
+	var deprecated uint64
 	for range numDeprecatedGCFields {
-		if err := enc.WriteUint64(0); err != nil {
+		if err := c.Uint64(&deprecated); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// MarshalNix encodes GCOptions in Nix wire format.
+func (o *GCOptions) MarshalNix(enc *wire.Encoder) error {
+	c := wire.NewEncoderNG(enc.Writer(), ProtoVersionFeatureExchange)
+
+	return o.Convert(c)
 }
 
 // UnmarshalNix decodes GCOptions from Nix wire format.
 func (o *GCOptions) UnmarshalNix(dec *wire.Decoder) error {
-	action, err := dec.ReadUint64()
-	if err != nil {
-		return err
-	}
+	c := wire.NewDecoderNG(dec.Reader(), MaxStringSize, ProtoVersionFeatureExchange)
 
-	o.Action = GCAction(action)
-
-	o.PathsToDelete, err = dec.ReadStrings()
-	if err != nil {
-		return err
-	}
-
-	o.IgnoreLiveness, err = dec.ReadBool()
-	if err != nil {
-		return err
-	}
-
-	o.MaxFreed, err = dec.ReadUint64()
-	if err != nil {
-		return err
-	}
-
-	// deprecated fields, discard.
-	for range numDeprecatedGCFields {
-		if _, err = dec.ReadUint64(); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return o.Convert(c)
 }
 
-// MarshalNix encodes GCResult in Nix wire format.
-func (r *GCResult) MarshalNix(enc *wire.Encoder) error {
-	if err := enc.WriteStrings(r.Paths); err != nil {
+func (r *GCResult) Convert(c wire.Codec) error {
+	if err := c.Strings(&r.Paths); err != nil {
 		return err
 	}
 
-	if err := enc.WriteUint64(r.BytesFreed); err != nil {
+	if err := c.Uint64(&r.BytesFreed); err != nil {
 		return err
 	}
 
 	// deprecated field, always zero.
-	return enc.WriteUint64(0)
+	var deprecated uint64
+
+	return c.Uint64(&deprecated)
+}
+
+// MarshalNix encodes GCResult in Nix wire format.
+func (r *GCResult) MarshalNix(enc *wire.Encoder) error {
+	c := wire.NewEncoderNG(enc.Writer(), ProtoVersionFeatureExchange)
+
+	return r.Convert(c)
 }
 
 // UnmarshalNix decodes GCResult from Nix wire format.
 func (r *GCResult) UnmarshalNix(dec *wire.Decoder) error {
-	var err error
+	c := wire.NewDecoderNG(dec.Reader(), MaxStringSize, ProtoVersionFeatureExchange)
 
-	r.Paths, err = dec.ReadStrings()
-	if err != nil {
+	return r.Convert(c)
+}
+
+func (s *SubstitutablePathInfo) Convert(c wire.Codec) error {
+	if err := c.String(&s.Deriver); err != nil {
 		return err
 	}
 
-	r.BytesFreed, err = dec.ReadUint64()
-	if err != nil {
+	if err := c.Strings(&s.References); err != nil {
 		return err
 	}
 
-	// deprecated field, discard.
-	_, err = dec.ReadUint64()
+	if err := c.Uint64(&s.DownloadSize); err != nil {
+		return err
+	}
 
-	return err
+	return c.Uint64(&s.NarSize)
 }
 
 // MarshalNix encodes SubstitutablePathInfo in Nix wire format.
 func (s *SubstitutablePathInfo) MarshalNix(enc *wire.Encoder) error {
-	if err := enc.WriteString(s.Deriver); err != nil {
-		return err
-	}
+	c := wire.NewEncoderNG(enc.Writer(), ProtoVersionFeatureExchange)
 
-	if err := enc.WriteStrings(s.References); err != nil {
-		return err
-	}
-
-	if err := enc.WriteUint64(s.DownloadSize); err != nil {
-		return err
-	}
-
-	return enc.WriteUint64(s.NarSize)
+	return s.Convert(c)
 }
 
 // UnmarshalNix decodes SubstitutablePathInfo from Nix wire format.
 func (s *SubstitutablePathInfo) UnmarshalNix(dec *wire.Decoder) error {
-	var err error
+	c := wire.NewDecoderNG(dec.Reader(), MaxStringSize, ProtoVersionFeatureExchange)
 
-	s.Deriver, err = dec.ReadString()
-	if err != nil {
-		return err
-	}
-
-	s.References, err = dec.ReadStrings()
-	if err != nil {
-		return err
-	}
-
-	s.DownloadSize, err = dec.ReadUint64()
-	if err != nil {
-		return err
-	}
-
-	s.NarSize, err = dec.ReadUint64()
-
-	return err
+	return s.Convert(c)
 }
